@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "node -e \"if(process.env.CONVEX_DEPLOY_KEY){require('child_process').execSync('npx convex deploy',{stdio:'inherit'})}\" && next build",
+    "build": "node scripts/vercel-build.mjs",
     "convex:deploy": "npx convex deploy",
     "start": "next start",
     "lint": "next lint",
