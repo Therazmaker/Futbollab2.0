@@ -88,6 +88,10 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
   const [actualRating, setActualRating] = useState<string>("");
   // Stats pegadas desde Sofascore/FotMob (se guardan todas con el partido)
   const [pastedText, setPastedText] = useState<string>("");
+  // Partido del equipo elegido (si otro jugador ya lo registró) y marcador opcional
+  const [selectedTeamMatch, setSelectedTeamMatch] = useState<any | null>(null);
+  const [teamGoals, setTeamGoals] = useState<string>("");
+  const [opponentGoals, setOpponentGoals] = useState<string>("");
   const [pastedStats, setPastedStats] = useState<Record<string, number> | null>(null);
   const [pasteInfo, setPasteInfo] = useState<string | null>(null);
 
@@ -141,6 +145,23 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
   const activePlayer = profileData?.player;
   const isDemoPlayer = !!activePlayer && !(activePlayer as any).legacyId && activePlayer.name === INITIAL_PLAYER.name;
   const activeTeam = profileData?.team;
+  const teamRecentMatches =
+    useQuery(
+      api.teams.recentMatches,
+      isModalOpen && activeTeam ? { teamId: activeTeam._id, playerId: activePlayer?._id, limit: 12 } : "skip"
+    ) ?? [];
+
+  const pickTeamMatch = (m: any | null) => {
+    setSelectedTeamMatch(m);
+    if (!m) return;
+    setMatchDate(m.date);
+    setMatchOpponent(m.opponent);
+    setSelectedOpponentTeamId(m.opponentId);
+    setMatchIsAway(!m.isHome);
+    setMatchCompetition(m.competition);
+    setTeamGoals(m.goalsFor === null ? "" : String(m.goalsFor));
+    setOpponentGoals(m.goalsAgainst === null ? "" : String(m.goalsAgainst));
+  };
 
   // El formulario de partido arranca en la liga del equipo del jugador
   useEffect(() => {
@@ -251,6 +272,9 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
           isAway: matchIsAway,
           minutesPlayed: matchMinutes,
           rawStats,
+          matchId: selectedTeamMatch?._id,
+          teamGoals: teamGoals === "" ? undefined : Number(teamGoals),
+          opponentGoals: opponentGoals === "" ? undefined : Number(opponentGoals),
         }),
       });
 
@@ -272,6 +296,9 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
         setPastedText("");
         setPastedStats(null);
         setPasteInfo(null);
+        setSelectedTeamMatch(null);
+        setTeamGoals("");
+        setOpponentGoals("");
         setActualRating("");
       } else {
         setLastCalibrationNotice(`No se registró: ${data.error}`);
@@ -1359,6 +1386,83 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                 recalcula con todos los partidos. Deja vacío lo que no tengas: no se inventa nada.
               </p>
 
+              {/* Partido del equipo: elegir uno ya creado o crear uno nuevo */}
+              <div className="rounded-lg border border-primary/30 bg-primary/5 p-2.5 flex flex-col gap-1.5">
+                <span className="flex items-center gap-1 text-[10px] font-mono text-primary uppercase">
+                  <span className="material-symbols-outlined text-[14px]">event</span>
+                  Partido de {activeTeam?.name ?? "su equipo"}
+                </span>
+                {selectedTeamMatch ? (
+                  <div className="flex items-center justify-between font-mono text-[11px]">
+                    <span className="text-on-surface">
+                      {selectedTeamMatch.date} · {selectedTeamMatch.isHome ? "vs" : "en"} {selectedTeamMatch.opponent} ·{" "}
+                      {competitionLabel(selectedTeamMatch.competition)}
+                    </span>
+                    <button type="button" onClick={() => pickTeamMatch(null)} className="text-secondary text-[10px]">
+                      cambiar
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {teamRecentMatches.length > 0 && (
+                      <div className="flex flex-col gap-1 max-h-36 overflow-y-auto">
+                        {(teamRecentMatches as any[]).map((m: any) => (
+                          <button
+                            key={m._id}
+                            type="button"
+                            disabled={m.loggedByPlayer}
+                            onClick={() => pickTeamMatch(m)}
+                            className="flex items-center justify-between px-2 py-1.5 rounded bg-surface-container hover:bg-surface-container-high text-left font-mono text-[10px] disabled:opacity-40"
+                          >
+                            <span className="truncate">
+                              {m.date} · {m.isHome ? "vs" : "en"} {m.opponent}
+                              <span className="text-on-surface-variant"> · {competitionLabel(m.competition)}</span>
+                            </span>
+                            <span className="shrink-0 ml-2 text-on-surface-variant">
+                              {m.goalsFor !== null ? `${m.goalsFor}-${m.goalsAgainst}` : "s/m"}
+                              {m.playersLogged ? ` · ${m.playersLogged}👤` : ""}
+                              {m.loggedByPlayer ? " · ya registrado" : ""}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <p className="font-mono text-[9px] text-on-surface-variant">
+                      {teamRecentMatches.length
+                        ? "Toca un partido para reutilizarlo (fecha, rival y competición se rellenan solos), o completa los datos de abajo para uno nuevo."
+                        : "Completa los datos de abajo: se creará el partido en el perfil del equipo."}
+                    </p>
+                  </>
+                )}
+                {(!selectedTeamMatch || selectedTeamMatch.goalsFor === null) && (
+                  <div className="flex items-center gap-2 font-mono text-[10px] text-on-surface-variant">
+                    <span>Marcador (opcional):</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={teamGoals}
+                      onChange={(e) => setTeamGoals(e.target.value)}
+                      placeholder={activeTeam?.shortName ?? "Equipo"}
+                      className="w-16 h-8 px-2 rounded bg-surface-container text-on-surface border border-surface-container-high"
+                    />
+                    <span>-</span>
+                    <input
+                      type="number"
+                      min="0"
+                      value={opponentGoals}
+                      onChange={(e) => setOpponentGoals(e.target.value)}
+                      placeholder="Rival"
+                      className="w-16 h-8 px-2 rounded bg-surface-container text-on-surface border border-surface-container-high"
+                    />
+                  </div>
+                )}
+                {!selectedTeamMatch && !selectedOpponentTeamId && (
+                  <p className="font-mono text-[9px] text-tertiary">
+                    Elige el rival de la lista para que el partido quede también en el perfil del equipo.
+                  </p>
+                )}
+              </div>
+
               {/* Pegar estadísticas de Sofascore / FotMob */}
               <div className="rounded-lg border border-secondary/30 bg-secondary/5 p-2.5 flex flex-col gap-1.5">
                 <label className="flex items-center justify-between text-[10px] font-mono text-secondary uppercase">
@@ -1408,6 +1512,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                   </label>
                   <select
                     value={matchCompetition}
+                    disabled={!!selectedTeamMatch}
                     onChange={(e) => setMatchCompetition(e.target.value)}
                     className="w-full h-9 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
                   >
@@ -1426,6 +1531,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                   <input
                     type="date"
                     value={matchDate}
+                    disabled={!!selectedTeamMatch}
                     onChange={(e) => setMatchDate(e.target.value)}
                     className="w-full h-9 px-2.5 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
                     required
@@ -1447,6 +1553,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                 <div className="flex flex-col gap-1.5">
                   <select
                     value={selectedOpponentTeamId}
+                    disabled={!!selectedTeamMatch}
                     onChange={(e) => {
                       const id = e.target.value;
                       setSelectedOpponentTeamId(id);
@@ -1475,6 +1582,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                   <input
                     type="text"
                     value={matchOpponent}
+                    disabled={!!selectedTeamMatch}
                     onChange={(e) => setMatchOpponent(e.target.value)}
                     placeholder="Nombre del rival..."
                     className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
@@ -1488,6 +1596,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                   <input
                     type="radio"
                     checked={matchIsAway}
+                    disabled={!!selectedTeamMatch}
                     onChange={() => setMatchIsAway(true)}
                     className="accent-primary"
                   />
@@ -1497,6 +1606,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                   <input
                     type="radio"
                     checked={!matchIsAway}
+                    disabled={!!selectedTeamMatch}
                     onChange={() => setMatchIsAway(false)}
                     className="accent-primary"
                   />

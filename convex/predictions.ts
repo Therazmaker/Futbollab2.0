@@ -2,6 +2,7 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { forecast, STATS, STAT_LABELS, summarizeWalkForward } from "./lib/engine";
 import { buildReport, loadPlayerModelInput, syncPlayerWeights } from "./lib/playerModel";
+import { findOrCreateTeamMatch } from "./lib/teamMatches";
 
 const round = (x: number, d = 2) => +x.toFixed(d);
 
@@ -93,20 +94,72 @@ export const recordMatchAndCalibrate = mutation({
     rawStats: v.any(),
     tacticalRole: v.optional(v.string()),
     contextFeatures: v.optional(v.array(v.string())),
+    // Partido del equipo ya existente (otro jugador ya lo registró)
+    matchId: v.optional(v.id("matches")),
+    // Marcador desde el punto de vista del equipo del jugador (opcional)
+    teamGoals: v.optional(v.number()),
+    opponentGoals: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     if (!(args.minutesPlayed > 0)) throw new Error("minutesPlayed debe ser > 0");
+    const player = await ctx.db.get(args.playerId);
+    if (!player) throw new Error("Jugador no encontrado");
+    const team = await ctx.db.get(player.teamId);
+
+    let { matchDate, opponent, opponentTeamId, isAway, competition } = args;
+    let matchId = args.matchId;
+    if (matchId) {
+      // Se toma todo del partido del equipo: fecha, rival, casa/fuera, competición
+      const m = await ctx.db.get(matchId);
+      if (!m) throw new Error("Partido del equipo no encontrado");
+      if (m.homeTeamId !== player.teamId && m.awayTeamId !== player.teamId) {
+        throw new Error("Ese partido no es del equipo del jugador");
+      }
+      isAway = m.awayTeamId === player.teamId;
+      opponentTeamId = isAway ? m.homeTeamId : m.awayTeamId;
+      opponent = (await ctx.db.get(opponentTeamId))?.name ?? opponent;
+      matchDate = m.date;
+      competition = m.league;
+      if (args.teamGoals !== undefined && args.opponentGoals !== undefined) {
+        await findOrCreateTeamMatch(ctx.db, {
+          teamId: player.teamId, opponentTeamId, isAway, date: matchDate,
+          teamGoals: args.teamGoals, opponentGoals: args.opponentGoals,
+        });
+      }
+    } else if (opponentTeamId) {
+      matchId =
+        (await findOrCreateTeamMatch(ctx.db, {
+          teamId: player.teamId,
+          opponentTeamId,
+          isAway,
+          date: matchDate,
+          competition: competition || team?.league,
+          teamGoals: args.teamGoals,
+          opponentGoals: args.opponentGoals,
+        })) ?? undefined;
+    }
+    if (matchId) {
+      const dup = await ctx.db
+        .query("playerMatchLogs")
+        .withIndex("by_match", (q) => q.eq("matchId", matchId))
+        .collect();
+      if (dup.some((l) => l.playerId === args.playerId)) {
+        throw new Error("Este jugador ya tiene registrado ese partido. Edítalo desde su historial.");
+      }
+    }
+
     const matchLogId = await ctx.db.insert("playerMatchLogs", {
       playerId: args.playerId,
-      matchDate: args.matchDate,
-      opponent: args.opponent,
-      opponentTeamId: args.opponentTeamId,
-      competition: args.competition || "laliga",
-      isAway: args.isAway,
+      matchDate,
+      opponent,
+      opponentTeamId,
+      competition: competition || team?.league || "laliga",
+      isAway,
       tacticalRole: args.tacticalRole,
       minutesPlayed: args.minutesPlayed,
       contextFeatures: args.contextFeatures,
       rawStats: args.rawStats,
+      matchId,
     });
 
     const synced = await syncPlayerWeights(ctx.db, args.playerId);
@@ -128,6 +181,7 @@ export const recordMatchAndCalibrate = mutation({
     const venue = synced.state.beta.is_away;
     return {
       matchLogId,
+      teamMatchId: matchId ?? null,
       predictedBefore,
       actualMetrics,
       deltas,

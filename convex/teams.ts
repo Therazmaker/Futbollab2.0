@@ -2,6 +2,7 @@ import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { recomputeLeague } from "./lib/leagueTable";
+import { findTeamMatch } from "./lib/teamMatches";
 
 /**
  * Returns all registered leagues and continental tournaments.
@@ -302,15 +303,21 @@ export const getTeamProfile = query({
       isHome: boolean;
       opponentId: Id<"teams">;
       opponent: string;
-      goalsFor: number;
-      goalsAgainst: number;
-      result: "W" | "D" | "L";
+      goalsFor: number | null;
+      goalsAgainst: number | null;
+      result: "W" | "D" | "L" | null;
+      competition: string;
+      playersLogged: number;
     };
     const results: ResultRow[] = [];
     for (const m of all) {
       const isHome = m.homeTeamId === teamId;
-      const gf = isHome ? m.homeGoals : m.awayGoals;
-      const ga = isHome ? m.awayGoals : m.homeGoals;
+      const gf = (isHome ? m.homeGoals : m.awayGoals) ?? null;
+      const ga = (isHome ? m.awayGoals : m.homeGoals) ?? null;
+      const logs = await ctx.db
+        .query("playerMatchLogs")
+        .withIndex("by_match", (q) => q.eq("matchId", m._id))
+        .collect();
       results.push({
         _id: m._id,
         date: m.date,
@@ -319,17 +326,22 @@ export const getTeamProfile = query({
         opponent: await nameOf(isHome ? m.awayTeamId : m.homeTeamId),
         goalsFor: gf,
         goalsAgainst: ga,
-        result: (gf > ga ? "W" : gf === ga ? "D" : "L") as ResultRow["result"],
+        result: (gf === null || ga === null ? null : gf > ga ? "W" : gf === ga ? "D" : "L") as ResultRow["result"],
+        competition: m.league,
+        playersLogged: logs.length,
       });
     }
-    const split = (rows: ResultRow[]) => ({
+    const split = (all: ResultRow[]) => {
+      const rows = all.filter((r) => r.result !== null) as Array<ResultRow & { goalsFor: number; goalsAgainst: number }>;
+      return {
       played: rows.length,
       wins: rows.filter((r) => r.result === "W").length,
       draws: rows.filter((r) => r.result === "D").length,
       losses: rows.filter((r) => r.result === "L").length,
       goalsFor: rows.reduce((a, r) => a + r.goalsFor, 0),
       goalsAgainst: rows.reduce((a, r) => a + r.goalsAgainst, 0),
-    });
+      };
+    };
 
     const players = await ctx.db
       .query("players")
@@ -378,7 +390,11 @@ export const getTeamProfile = query({
     return {
       team,
       league: league ?? null,
-      record: { total: split(results), home: split(results.filter((r) => r.isHome)), away: split(results.filter((r) => !r.isHome)) },
+      // Récord de LIGA (igual que los puntos); la lista `results` incluye todas las competiciones
+      record: (() => {
+        const league = results.filter((r) => r.competition === team.league);
+        return { total: split(league), home: split(league.filter((r) => r.isHome)), away: split(league.filter((r) => !r.isHome)) };
+      })(),
       results,
       squad,
       table,
@@ -454,14 +470,30 @@ export const addMatchResult = mutation({
     homeGoals: v.number(),
     awayGoals: v.number(),
     date: v.string(),
+    competition: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     if (args.homeTeamId === args.awayTeamId) throw new Error("Local y visitante deben ser distintos");
     if (args.homeGoals < 0 || args.awayGoals < 0) throw new Error("Goles no válidos");
     const home = await ctx.db.get(args.homeTeamId);
     if (!home) throw new Error("Equipo local no encontrado");
-    const id = await ctx.db.insert("matches", { ...args, league: home.league });
-    await recomputeLeague(ctx.db, home.league);
+    // Si ya existe (p. ej. creado al registrar un jugador), solo se pone el marcador
+    const existing = await findTeamMatch(ctx.db, args.homeTeamId, args.awayTeamId, args.date);
+    if (existing) {
+      await ctx.db.patch(existing._id, { homeGoals: args.homeGoals, awayGoals: args.awayGoals });
+      await recomputeLeague(ctx.db, existing.league);
+      return existing._id;
+    }
+    const league = args.competition || home.league;
+    const id = await ctx.db.insert("matches", {
+      homeTeamId: args.homeTeamId,
+      awayTeamId: args.awayTeamId,
+      homeGoals: args.homeGoals,
+      awayGoals: args.awayGoals,
+      date: args.date,
+      league,
+    });
+    await recomputeLeague(ctx.db, league);
     return id;
   },
 });
@@ -471,8 +503,124 @@ export const deleteMatchResult = mutation({
   handler: async (ctx, { matchId }) => {
     const m = await ctx.db.get(matchId);
     if (!m) return null;
+    // Los partidos de jugadores no se borran: solo se desvinculan
+    const logs = await ctx.db
+      .query("playerMatchLogs")
+      .withIndex("by_match", (q) => q.eq("matchId", matchId))
+      .collect();
+    for (const l of logs) await ctx.db.patch(l._id, { matchId: undefined });
     await ctx.db.delete(matchId);
     await recomputeLeague(ctx.db, m.league);
     return matchId;
+  },
+});
+
+/** Pone o cambia el marcador de un partido del equipo. */
+export const setMatchScore = mutation({
+  args: { matchId: v.id("matches"), homeGoals: v.number(), awayGoals: v.number() },
+  handler: async (ctx, { matchId, homeGoals, awayGoals }) => {
+    const m = await ctx.db.get(matchId);
+    if (!m) throw new Error("Partido no encontrado");
+    if (homeGoals < 0 || awayGoals < 0) throw new Error("Goles no válidos");
+    await ctx.db.patch(matchId, { homeGoals, awayGoals });
+    await recomputeLeague(ctx.db, m.league);
+    return matchId;
+  },
+});
+
+/** Partidos recientes de un equipo (para elegirlos al registrar un jugador). */
+export const recentMatches = query({
+  args: { teamId: v.id("teams"), playerId: v.optional(v.id("players")), limit: v.optional(v.number()) },
+  handler: async (ctx, { teamId, playerId, limit }) => {
+    const take = Math.min(30, limit ?? 12);
+    const home = await ctx.db
+      .query("matches")
+      .withIndex("by_home_and_date", (q) => q.eq("homeTeamId", teamId))
+      .order("desc")
+      .take(take);
+    const away = await ctx.db
+      .query("matches")
+      .withIndex("by_away_and_date", (q) => q.eq("awayTeamId", teamId))
+      .order("desc")
+      .take(take);
+    const rows = [...home, ...away].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, take);
+    const out = [];
+    for (const m of rows) {
+      const isHome = m.homeTeamId === teamId;
+      const opponentId = isHome ? m.awayTeamId : m.homeTeamId;
+      const logs = await ctx.db
+        .query("playerMatchLogs")
+        .withIndex("by_match", (q) => q.eq("matchId", m._id))
+        .collect();
+      out.push({
+        _id: m._id,
+        date: m.date,
+        isHome,
+        opponentId,
+        opponent: (await ctx.db.get(opponentId))?.name ?? "?",
+        competition: m.league,
+        goalsFor: (isHome ? m.homeGoals : m.awayGoals) ?? null,
+        goalsAgainst: (isHome ? m.awayGoals : m.homeGoals) ?? null,
+        playersLogged: logs.length,
+        loggedByPlayer: playerId ? logs.some((l) => l.playerId === playerId) : false,
+      });
+    }
+    return out;
+  },
+});
+
+/** Claves que no tiene sentido sumar entre jugadores. */
+const NON_ADDITIVE = /(Pct|^rating$|^topSpeedKmh$|^longestProgressiveCarryM$)/;
+
+/** Detalle de un partido de equipo: marcador, quién jugó, sus stats y los totales. */
+export const getMatchDetail = query({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, { matchId }) => {
+    const m = await ctx.db.get(matchId);
+    if (!m) return null;
+    const home = await ctx.db.get(m.homeTeamId);
+    const away = await ctx.db.get(m.awayTeamId);
+    const logs = await ctx.db
+      .query("playerMatchLogs")
+      .withIndex("by_match", (q) => q.eq("matchId", matchId))
+      .collect();
+    const side = (teamId: Id<"teams">) => ({ teamId, players: [] as any[], totals: {} as Record<string, number>, ratingAvg: null as number | null });
+    const sides = { home: side(m.homeTeamId), away: side(m.awayTeamId) };
+    for (const l of logs) {
+      const p = await ctx.db.get(l.playerId);
+      if (!p) continue;
+      const s = p.teamId === m.homeTeamId ? sides.home : p.teamId === m.awayTeamId ? sides.away : null;
+      if (!s) continue;
+      s.players.push({
+        logId: l._id,
+        playerId: p._id,
+        name: p.name,
+        position: p.position,
+        number: p.number ?? null,
+        minutesPlayed: l.minutesPlayed,
+        rawStats: l.rawStats ?? {},
+      });
+    }
+    for (const s of [sides.home, sides.away]) {
+      s.players.sort((a, b) => b.minutesPlayed - a.minutesPlayed || a.name.localeCompare(b.name));
+      const ratings: number[] = [];
+      for (const pl of s.players) {
+        for (const [k, val] of Object.entries(pl.rawStats as Record<string, unknown>)) {
+          const n = Number(val);
+          if (!Number.isFinite(n)) continue;
+          if (k === "rating") ratings.push(n);
+          if (NON_ADDITIVE.test(k)) continue;
+          s.totals[k] = +((s.totals[k] ?? 0) + n).toFixed(2);
+        }
+      }
+      s.ratingAvg = ratings.length ? +(ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(2) : null;
+      if (s.totals.totalPasses) s.totals.accuratePassesPct = Math.round(((s.totals.accuratePasses ?? 0) / s.totals.totalPasses) * 100);
+    }
+    return {
+      match: m,
+      competition: m.league,
+      home: { name: home?.name ?? "?", ...sides.home },
+      away: { name: away?.name ?? "?", ...sides.away },
+    };
   },
 });

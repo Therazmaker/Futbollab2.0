@@ -4,12 +4,14 @@ import React, { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { TeamMatchSheet } from "./TeamMatchSheet";
+import { competitionLabel } from "@/lib/competitions";
 
 interface TeamProfileProps {
   teamId: Id<"teams">;
   onBack: () => void;
   onOpenTeam: (teamId: Id<"teams">) => void;
-  onOpenPlayer: (playerId: Id<"players">) => void;
+  onOpenPlayer: (playerId: Id<"players">, teamId?: Id<"teams">) => void;
 }
 
 const POSITION_GROUPS: Array<{ key: string; label: string; test: (p: string) => boolean }> = [
@@ -34,7 +36,14 @@ const input =
 const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
-function FormChip({ r }: { r: string }) {
+function FormChip({ r }: { r: string | null }) {
+  if (!r) {
+    return (
+      <span className="w-5 h-5 rounded flex items-center justify-center font-mono text-[10px] font-bold border border-outline-variant/40 text-on-surface-variant">
+        ?
+      </span>
+    );
+  }
   const cls =
     r === "W"
       ? "bg-primary/20 text-primary border-primary/30"
@@ -86,6 +95,7 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
   const [simRival, setSimRival] = useState<string>("");
   const [simAway, setSimAway] = useState(false);
   const [showAllResults, setShowAllResults] = useState(false);
+  const [openMatchId, setOpenMatchId] = useState<Id<"matches"> | null>(null);
   const [resultModal, setResultModal] = useState(false);
   const [playerModal, setPlayerModal] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -407,22 +417,42 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
         {results.length === 0 && <p className="font-mono text-[11px] text-on-surface-variant">Sin resultados registrados.</p>}
         <div className="flex flex-col divide-y divide-surface-container-high/40">
           {visibleResults.map((r) => (
-            <div key={r._id} className="flex items-center justify-between py-1.5 font-mono text-[11px] group">
+            <div
+              key={r._id}
+              onClick={() => setOpenMatchId(r._id)}
+              className="flex items-center justify-between py-1.5 font-mono text-[11px] group cursor-pointer hover:bg-surface-container/60 rounded px-1 -mx-1"
+            >
               <div className="flex items-center gap-2 min-w-0">
                 <FormChip r={r.result} />
                 <span className="text-on-surface-variant w-20 shrink-0">{r.date}</span>
                 <span className="text-on-surface-variant w-4">{r.isHome ? "C" : "F"}</span>
-                <button onClick={() => onOpenTeam(r.opponentId)} className="truncate text-on-surface hover:text-primary text-left">
-                  {r.opponent}
-                </button>
+                <span className="truncate text-on-surface">{r.opponent}</span>
+                {r.competition !== team.league && (
+                  <span className="shrink-0 text-[9px] px-1 rounded bg-cyan-950/70 text-cyan-300 border border-cyan-800/50">
+                    {r.competition === "ucl" ? "UCL" : competitionLabel(r.competition)}
+                  </span>
+                )}
+                {r.playersLogged > 0 && (
+                  <span className="shrink-0 text-[9px] px-1 rounded bg-primary/15 text-primary" title="Jugadores registrados">
+                    {r.playersLogged}👤
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <span className="font-bold text-on-surface">
-                  {r.goalsFor}-{r.goalsAgainst}
+                <span className={`font-bold ${r.result ? "text-on-surface" : "text-on-surface-variant"}`}>
+                  {r.result ? `${r.goalsFor}-${r.goalsAgainst}` : "sin marcador"}
                 </span>
                 <button
-                  onClick={() => {
-                    if (window.confirm(`¿Borrar ${team.name} ${r.goalsFor}-${r.goalsAgainst} ${r.opponent} (${r.date})?`)) {
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const label = r.result ? `${r.goalsFor}-${r.goalsAgainst}` : "(sin marcador)";
+                    if (
+                      window.confirm(
+                        `¿Borrar ${team.name} ${label} ${r.opponent} (${r.date})?${
+                          r.playersLogged ? `\nLos ${r.playersLogged} partidos de jugadores se conservan, solo se desvinculan.` : ""
+                        }`
+                      )
+                    ) {
                       deleteResult({ matchId: r._id });
                     }
                   }}
@@ -471,6 +501,22 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
             ))}
           </div>
         </div>
+      )}
+
+      {openMatchId && (
+        <TeamMatchSheet
+          matchId={openMatchId}
+          teamId={teamId}
+          onClose={() => setOpenMatchId(null)}
+          onOpenPlayer={(pid, tid) => {
+            setOpenMatchId(null);
+            onOpenPlayer(pid, tid);
+          }}
+          onOpenTeam={(tid) => {
+            setOpenMatchId(null);
+            if (tid !== teamId) onOpenTeam(tid);
+          }}
+        />
       )}
 
       {/* Modal: resultado */}

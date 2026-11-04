@@ -164,6 +164,10 @@ export async function POST(req: NextRequest) {
     if (body.tacticalRole) tacticalRole = body.tacticalRole;
     if (Array.isArray(body.contextFeatures)) contextFeatures = body.contextFeatures;
     if (body.nextFixture?.opponent && typeof body.nextFixture.isAway === "boolean") nextFixture = body.nextFixture;
+    const teamMatchId = body.matchId || undefined;
+    const goals = (v: any) => (v === "" || v === null || v === undefined || !Number.isFinite(Number(v)) ? undefined : Number(v));
+    const teamGoals = goals(body.teamGoals);
+    const opponentGoals = goals(body.opponentGoals);
 
     // Lo que el usuario escribe manda sobre lo que lee el OCR
     opponent = body.opponent || extracted?.opponent || null;
@@ -206,6 +210,9 @@ export async function POST(req: NextRequest) {
       rawStats,
       tacticalRole,
       contextFeatures,
+      matchId: teamMatchId,
+      teamGoals,
+      opponentGoals,
     });
 
     // Solo se pronostica el próximo partido si nos dicen cuál es
