@@ -120,7 +120,7 @@ describe("Convex: registro, informe e importación", () => {
     const t = convexTest(schema, modules);
     await t.mutation(api.teams.seedInitialCompetitionsAndTeams, {});
     const r1 = await t.action(api.legacy.importLegacyData, {});
-    expect(r1.matches).toBe(1330);
+    expect(r1.matches).toBe(1324);
     expect(r1.teamsLinked).toBeGreaterThanOrEqual(2); // Manchester City e Inter ya existían
     const r2 = await t.action(api.legacy.importLegacyData, {});
     expect(r2.matches).toBe(0);
@@ -136,5 +136,32 @@ describe("Convex: registro, informe e importación", () => {
     expect(meanDef).toBeLessThan(1.15);
     const status = await t.query(api.legacy.legacyStatus, {});
     expect(status.importedMatches).toBe(status.availableMatches);
+    expect(status.needsImport).toBe(false);
+    const villa = teams.filter((x) => x.name === "Aston Villa");
+    expect(villa.length).toBe(1);
+    expect(villa[0].points).toBeGreaterThan(30);
+    expect(teams.filter((x) => x.league === "premier").length).toBe(20);
+  }, 120_000);
+
+  test("repara equipos duplicados de una importación anterior", async () => {
+    const t = convexTest(schema, modules);
+    await t.action(api.legacy.importLegacyData, {});
+    // Simula la importación vieja: un segundo "Aston Villa" con un partido propio
+    await t.run(async (ctx) => {
+      const keep = await ctx.db.query("teams").withIndex("by_legacyId", (q) => q.eq("legacyId", "tm_sd1ef75fw7n")).first();
+      const rival = await ctx.db.query("teams").filter((q) => q.eq(q.field("name"), "Arsenal")).first();
+      const dup = await ctx.db.insert("teams", { legacyId: "team_1772204890146_685085", name: "Aston Villa", league: "premier" });
+      await ctx.db.insert("matches", { league: "premier", date: "2026-05-20", homeTeamId: dup, awayTeamId: rival!._id, homeGoals: 2, awayGoals: 0 });
+      expect(keep).not.toBeNull();
+    });
+    const before = await t.query(api.legacy.legacyStatus, {});
+    expect(before.duplicateTeams).toBe(1);
+    expect(before.needsImport).toBe(true);
+    const r = await t.action(api.legacy.importLegacyData, {});
+    expect(r.teamsMerged).toBe(1);
+    const villas = await t.run((ctx) => ctx.db.query("teams").filter((q) => q.eq(q.field("name"), "Aston Villa")).collect());
+    expect(villas.length).toBe(1);
+    const after = await t.query(api.legacy.legacyStatus, {});
+    expect(after.needsImport).toBe(false);
   }, 120_000);
 });
