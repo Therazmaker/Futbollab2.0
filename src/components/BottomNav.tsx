@@ -2,19 +2,22 @@
 
 import React from "react";
 
-export type TabKey = "explorer" | "tactics" | "players" | "predict";
+export type TabKey = "explorer" | "team" | "player";
 
 interface BottomNavProps {
   activeTab: TabKey;
   onSelectTab: (tab: TabKey) => void;
+  /** Nombres del último equipo/jugador abiertos (para que la pestaña diga a dónde va) */
+  teamLabel?: string | null;
+  playerLabel?: string | null;
 }
 
-export function BottomNav({ activeTab, onSelectTab }: BottomNavProps) {
+export function BottomNav({ activeTab, onSelectTab, teamLabel, playerLabel }: BottomNavProps) {
+  const short = (s?: string | null) => (s ? (s.length > 12 ? s.slice(0, 11) + "…" : s) : null);
   const tabs: Array<{ id: TabKey; label: string; icon: string }> = [
-    { id: "explorer", label: "Explorer", icon: "sports_soccer" },
-    { id: "tactics", label: "Tactics", icon: "stadium" },
-    { id: "players", label: "Players", icon: "psychology" },
-    { id: "predict", label: "Predict Lab", icon: "analytics" },
+    { id: "explorer", label: "Ligas", icon: "sports_soccer" },
+    { id: "team", label: short(teamLabel) ?? "Equipo", icon: "shield" },
+    { id: "player", label: short(playerLabel) ?? "Jugador", icon: "psychology" },
   ];
 
   return (

@@ -3,23 +3,44 @@
 import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
-import { ClubData, INITIAL_CLUBS } from "@/data/mock-data";
-import { syncEngine, useSyncTelemetry } from "@/lib/offline-sync";
+import type { Id } from "../../convex/_generated/dataModel";
+import { useSyncTelemetry } from "@/lib/offline-sync";
 
 interface LeaguesExplorerProps {
-  onSelectClub: (club: ClubData) => void;
-  onNavigateToPlayer: () => void;
+  onSelectTeam: (teamId: Id<"teams">) => void;
 }
 
-export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExplorerProps) {
+interface TeamCard {
+  id: Id<"teams">;
+  name: string;
+  shortName: string;
+  leagueCode: string;
+  leagueName: string;
+  rank: number | null;
+  points: number;
+  played: number;
+  goalDifference: number;
+  goalsForPg: number | null;
+  goalsAgainstPg: number | null;
+  attack: number | null;
+  defense: number | null;
+  form: string[];
+  badgeUrl?: string;
+  competitions: string[];
+}
+
+const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
+
+export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
   const [selectedLeague, setSelectedLeague] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
-  const [sortBy, setSortBy] = useState<"density" | "points" | "accuracy">("density");
+  const [sortBy, setSortBy] = useState<"points" | "attack" | "defense" | "name">("points");
   const { isOnline } = useSyncTelemetry();
 
   // Convex Reactive Queries & Mutations
   const convexLeagues = useQuery(api.teams.getLeagues);
   const convexTeams = useQuery(api.teams.getTeams, { league: selectedLeague });
+  const allTeams = useQuery(api.teams.getTeams, {});
   const createLeagueMutation = useMutation(api.teams.createLeague);
   const createTeamMutation = useMutation(api.teams.createTeam);
   const linkTeamMutation = useMutation(api.teams.linkTeamToCompetition);
@@ -51,14 +72,11 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
   const [leagueIsTournament, setLeagueIsTournament] = useState(true);
 
   // Form State: Add Club
-  const [teamName, setTeamName] = useState("Inter de Milán");
-  const [teamShortName, setTeamShortName] = useState("INT");
+  const [teamName, setTeamName] = useState("");
+  const [teamShortName, setTeamShortName] = useState("");
   const [teamDomesticLeague, setTeamDomesticLeague] = useState("seriea");
   const [teamLinkUcl, setTeamLinkUcl] = useState(true);
   const [teamFormation, setTeamFormation] = useState("3-5-2");
-  const [teamPoints, setTeamPoints] = useState(66);
-  const [teamGd, setTeamGd] = useState(37);
-  const [teamXg, setTeamXg] = useState(2.38);
 
   // League selector list
   const leaguesList = useMemo(() => {
@@ -70,14 +88,16 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
       isTournament?: boolean;
     }
 
+    const count = (code: string) =>
+      (allTeams ?? []).filter((t: any) => t.league === code || t.competitions?.includes(code)).length;
     const base: LeagueTab[] = [
-      { code: "all", label: "Todas las Ligas", count: convexTeams?.length ?? 110, icon: "sports_soccer" },
-      { code: "laliga", label: "LaLiga", count: 20 },
-      { code: "premier", label: "Premier League", count: 20 },
-      { code: "seriea", label: "Serie A", count: 20 },
-      { code: "ucl", label: "Champions League (UCL)", count: 32, isTournament: true },
-      { code: "bundesliga", label: "Bundesliga", count: 18 },
-      { code: "ligue1", label: "Ligue 1", count: 18 },
+      { code: "all", label: "Todas las Ligas", count: allTeams?.length ?? 0, icon: "sports_soccer" },
+      { code: "laliga", label: "LaLiga", count: count("laliga") },
+      { code: "premier", label: "Premier League", count: count("premier") },
+      { code: "seriea", label: "Serie A", count: count("seriea") },
+      { code: "bundesliga", label: "Bundesliga", count: count("bundesliga") },
+      { code: "ligue1", label: "Ligue 1", count: count("ligue1") },
+      { code: "ucl", label: "Champions League (UCL)", count: count("ucl"), isTournament: true },
     ];
 
     if (!convexLeagues || convexLeagues.length === 0) return base;
@@ -89,62 +109,44 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
       .map((lg: any) => ({
         code: lg.code.toLowerCase(),
         label: lg.name,
-        count: 20,
+        count: count(lg.code.toLowerCase()),
         isTournament: lg.isTournament,
       }));
 
     return [...base, ...extra];
-  }, [convexLeagues, convexTeams]);
+  }, [convexLeagues, allTeams]);
 
-  // Map Convex teams to ClubData format with fallback to INITIAL_CLUBS
-  const displayClubs: (ClubData & { competitions?: string[] })[] = useMemo(() => {
-    if (convexTeams && convexTeams.length > 0) {
-      return convexTeams.map((t: any) => {
-        const domestic = t.league?.toLowerCase();
-        const leagueLabel =
-          domestic === "seriea"
-            ? "Serie A"
-            : domestic === "laliga"
-            ? "LaLiga"
-            : domestic === "premier"
-            ? "Premier League"
-            : domestic === "bundesliga"
-            ? "Bundesliga"
-            : domestic === "ligue1"
-            ? "Ligue 1"
-            : domestic === "ucl"
-            ? "Champions League"
-            : t.league;
-
-        return {
-          id: t._id,
-          name: t.name,
-          shortName: t.shortName || t.name.slice(0, 3).toUpperCase(),
-          leagueCode: t.league,
-          leagueName: leagueLabel,
-          rank: t.rank ?? 1,
-          points: t.points ?? 65,
-          goalDifference: t.goalDifference ?? 30,
-          winRate: 80,
-          meanXg: t.meanXg ?? 2.2,
-          ppda: t.ppda ?? 8.5,
-          tempo: t.tempo ?? "17.6 m/s",
-          form: t.form ?? ["W", "W", "W", "D", "W"],
-          formation: t.formation ?? "4-3-3",
-          badgeUrl:
-            t.crestUrl ||
-            "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=256&q=80",
-          density: t.density ?? 94.0,
-          predAccuracy: t.predAccuracy ?? 95.0,
-          competitions: t.competitions || [t.league],
-        };
-      });
-    }
-
-    return INITIAL_CLUBS.map((c) => ({
-      ...c,
-      competitions: [c.leagueCode, ...(c.id === "rmd" || c.id === "mci" || c.id === "bar" ? ["ucl"] : [])],
-    }));
+  // Equipos reales de Convex (sin datos de ejemplo)
+  const displayClubs: TeamCard[] = useMemo(() => {
+    const labels: Record<string, string> = {
+      seriea: "Serie A",
+      laliga: "LaLiga",
+      premier: "Premier League",
+      bundesliga: "Bundesliga",
+      ligue1: "Ligue 1",
+      ucl: "Champions League",
+    };
+    return (convexTeams ?? []).map((t: any) => {
+      const played = t.played ?? 0;
+      return {
+        id: t._id,
+        name: t.name,
+        shortName: t.shortName || t.name.slice(0, 3).toUpperCase(),
+        leagueCode: t.league,
+        leagueName: labels[t.league?.toLowerCase()] ?? t.league,
+        rank: t.rank ?? null,
+        points: t.points ?? 0,
+        played,
+        goalDifference: t.goalDifference ?? 0,
+        goalsForPg: played ? t.goalsFor / played : null,
+        goalsAgainstPg: played ? t.goalsAgainst / played : null,
+        attack: t.attackRating ?? null,
+        defense: t.defenseRating ?? null,
+        form: t.played ? t.form ?? [] : [],
+        badgeUrl: t.crestUrl,
+        competitions: t.competitions || [t.league],
+      };
+    });
   }, [convexTeams]);
 
   const filteredClubs = useMemo(() => {
@@ -157,24 +159,16 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
 
         const matchesSearch =
           c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-          c.formation.toLowerCase().includes(searchQuery.toLowerCase()) ||
           c.shortName.toLowerCase().includes(searchQuery.toLowerCase());
         return matchesLeague && matchesSearch;
       })
       .sort((a, b) => {
-        if (sortBy === "points") return b.points - a.points;
-        if (sortBy === "accuracy") return b.predAccuracy - a.predAccuracy;
-        return b.density - a.density;
+        if (sortBy === "name") return a.name.localeCompare(b.name);
+        if (sortBy === "attack") return (b.attack ?? 0) - (a.attack ?? 0);
+        if (sortBy === "defense") return (a.defense ?? 9) - (b.defense ?? 9);
+        return b.points - a.points || b.goalDifference - a.goalDifference || a.name.localeCompare(b.name);
       });
   }, [displayClubs, selectedLeague, searchQuery, sortBy]);
-
-  const handleQuickTacticalBoost = async (clubId: string, e: React.MouseEvent) => {
-    e.stopPropagation();
-    await syncEngine.enqueue("UPDATE_TACTICS", `club_${clubId}`, {
-      boostedAt: Date.now(),
-      clubId,
-    });
-  };
 
   const handleCreateLeagueSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -214,19 +208,11 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
         league: teamDomesticLeague.toLowerCase(),
         competitions: comps,
         formation: teamFormation,
-        rank: 1,
-        points: teamPoints,
-        goalDifference: teamGd,
-        meanXg: teamXg,
-        ppda: 8.8,
-        tempo: "17.8 m/s",
-        form: ["W", "W", "W", "D", "W"],
-        density: 95.0,
-        predAccuracy: 95.0,
       });
 
       setIsAddTeamOpen(false);
       setTeamName("");
+      setTeamShortName("");
     } catch (err) {
       console.error("Error creating club:", err);
     } finally {
@@ -365,7 +351,7 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Buscar por club, táctica o competición..."
+            placeholder="Buscar club..."
             className="w-full h-10 pl-9 pr-3 rounded-xl bg-surface-container-low text-on-surface placeholder:text-outline text-sm focus:bg-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary transition-all border border-surface-container-high"
           />
         </div>
@@ -374,7 +360,7 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
         <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar">
           <div className="flex items-center gap-1 shrink-0">
             <span className="font-mono text-[10px] text-on-surface-variant uppercase mr-1">Ordenar:</span>
-            {(["density", "points", "accuracy"] as const).map((s) => (
+            {(["points", "attack", "defense", "name"] as const).map((s) => (
               <button
                 key={s}
                 onClick={() => setSortBy(s)}
@@ -384,7 +370,7 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
                     : "bg-surface-container text-on-surface-variant hover:text-on-surface"
                 }`}
               >
-                <span className="capitalize">{s === "accuracy" ? "Pred. Acc" : s}</span>
+                <span>{{ points: "Puntos", attack: "Ataque", defense: "Defensa", name: "A-Z" }[s]}</span>
                 {sortBy === s && (
                   <span className="material-symbols-outlined text-[13px]">arrow_downward</span>
                 )}
@@ -392,19 +378,17 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
             ))}
           </div>
 
-          <button
-            onClick={onNavigateToPlayer}
-            className="px-2.5 py-1 rounded-lg bg-surface-container-high text-secondary hover:text-primary shrink-0 flex items-center gap-1 text-[11px] font-mono border border-secondary/20"
-          >
-            <span>Ver Jude Bellingham</span>
-            <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
-          </button>
+
         </div>
       </div>
 
       {/* Club Cards Catalog List */}
       <div className="flex flex-col gap-3">
-        {filteredClubs.length === 0 ? (
+        {convexTeams === undefined ? (
+          <div className="p-6 text-center bg-surface-container-low rounded-xl border border-surface-container-high/60 font-mono text-xs text-on-surface-variant">
+            Cargando equipos…
+          </div>
+        ) : filteredClubs.length === 0 ? (
           <div className="p-8 text-center bg-surface-container-low rounded-xl border border-surface-container-high/60 flex flex-col items-center justify-center gap-2">
             <span className="material-symbols-outlined text-4xl text-on-surface-variant">search_off</span>
             <p className="text-sm font-mono text-on-surface-variant">
@@ -423,20 +407,22 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
             return (
               <div
                 key={club.id}
-                onClick={() => onSelectClub(club)}
+                onClick={() => onSelectTeam(club.id)}
                 className="bg-surface-container-low hover:bg-surface-container rounded-xl p-space-md border border-surface-container-high/60 transition-all cursor-pointer relative overflow-hidden group shadow-md"
               >
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-center gap-3 min-w-0">
                     <div className="relative w-12 h-12 rounded-xl bg-surface-container-highest flex items-center justify-center p-2 shrink-0 border border-outline-variant/30">
-                      <img
-                        src={club.badgeUrl}
-                        alt={club.name}
-                        className="w-full h-full object-contain"
-                      />
-                      <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-primary text-on-primary rounded-full flex items-center justify-center font-mono text-[10px] font-bold">
-                        {club.rank}
-                      </span>
+                      {club.badgeUrl ? (
+                        <img src={club.badgeUrl} alt={club.name} className="w-full h-full object-contain" />
+                      ) : (
+                        <span className="font-mono text-[11px] font-bold text-secondary">{club.shortName}</span>
+                      )}
+                      {club.rank !== null && (
+                        <span className="absolute -bottom-1 -right-1 min-w-4 h-4 px-0.5 bg-primary text-on-primary rounded-full flex items-center justify-center font-mono text-[10px] font-bold">
+                          {club.rank}
+                        </span>
+                      )}
                     </div>
                     <div className="flex flex-col min-w-0">
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -457,15 +443,15 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
                       <div className="flex items-center gap-2 text-xs text-on-surface-variant mt-0.5 font-mono">
                         <span className="text-primary font-semibold">{club.points} Pts</span>
                         <span>•</span>
-                        <span>GD +{club.goalDifference}</span>
+                        <span>{club.played} PJ</span>
                         <span>•</span>
-                        <span className="text-secondary font-semibold">{club.formation}</span>
+                        <span>DG {signed(club.goalDifference)}</span>
                       </div>
                     </div>
                   </div>
 
                   <div className="flex flex-col items-end gap-1">
-                    <span className="font-mono text-[10px] text-on-surface-variant uppercase">Tactical Form</span>
+                    <span className="font-mono text-[10px] text-on-surface-variant uppercase">Forma</span>
                     <div className="flex items-center gap-0.5">
                       {club.form.map((res, i) => (
                         <span
@@ -485,32 +471,31 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
                   </div>
                 </div>
 
-                {/* Metrics Rail */}
+                {/* Métricas reales */}
                 <div className="grid grid-cols-3 gap-2 mt-3 pt-2 border-t border-surface-container-high/40">
                   <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
-                    <span className="font-mono text-[9px] text-on-surface-variant uppercase">xG / 90</span>
-                    <span className="font-mono text-xs font-bold text-primary mt-0.5">{club.meanXg}</span>
-                  </div>
-                  <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
-                    <span className="font-mono text-[9px] text-on-surface-variant uppercase">PPDA Metric</span>
-                    <span className="font-mono text-xs font-bold text-secondary mt-0.5">{club.ppda}</span>
-                  </div>
-                  <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
-                    <span className="font-mono text-[9px] text-on-surface-variant uppercase">Pred. Acc</span>
-                    <span className="font-mono text-xs font-bold text-on-surface mt-0.5">
-                      {club.predAccuracy}%
+                    <span className="font-mono text-[9px] text-on-surface-variant uppercase">Goles / PJ</span>
+                    <span className="font-mono text-xs font-bold text-primary mt-0.5">
+                      {club.goalsForPg !== null ? `${club.goalsForPg.toFixed(2)} : ${club.goalsAgainstPg!.toFixed(2)}` : "—"}
                     </span>
+                  </div>
+                  <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
+                    <span className="font-mono text-[9px] text-on-surface-variant uppercase">Ataque</span>
+                    <span className="font-mono text-xs font-bold text-secondary mt-0.5">{club.attack?.toFixed(2) ?? "—"}</span>
+                  </div>
+                  <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
+                    <span className="font-mono text-[9px] text-on-surface-variant uppercase">Defensa</span>
+                    <span className="font-mono text-xs font-bold text-on-surface mt-0.5">{club.defense?.toFixed(2) ?? "—"}</span>
                   </div>
                 </div>
 
-                {/* Quick Action Button for Instant/Offline Simulation */}
                 <div className="mt-2.5 flex items-center justify-between">
                   <span className="font-mono text-[10px] text-on-surface-variant flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                    <span>Tempo: {club.tempo}</span>
+                    Ver perfil y plantilla
+                    <span className="material-symbols-outlined text-[13px]">chevron_right</span>
                   </span>
 
-                  <div className="flex items-center gap-1.5">
+                <div className="flex items-center gap-1.5">
                     {!playsUcl && (
                       <button
                         onClick={(e) => handleLinkToUcl(club.id, e)}
@@ -520,14 +505,7 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
                         <span>+ Vincular UCL</span>
                       </button>
                     )}
-                    <button
-                      onClick={(e) => handleQuickTacticalBoost(club.id, e)}
-                      title="Aplica ajuste táctico (optimistic update con sync offline)"
-                      className="px-2 py-0.5 rounded bg-surface-container-highest hover:bg-primary hover:text-on-primary text-secondary text-[10px] font-mono transition-colors flex items-center gap-1 border border-outline-variant/30"
-                    >
-                      <span className="material-symbols-outlined text-[12px]">tune</span>
-                      <span>Optimizar Táctica</span>
-                    </button>
+
                   </div>
                 </div>
               </div>
@@ -740,42 +718,9 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
                 </label>
               </div>
 
-              <div className="grid grid-cols-3 gap-2">
-                <div>
-                  <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
-                    Puntos
-                  </label>
-                  <input
-                    type="number"
-                    value={teamPoints}
-                    onChange={(e) => setTeamPoints(Number(e.target.value))}
-                    className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
-                    Dif. Gol
-                  </label>
-                  <input
-                    type="number"
-                    value={teamGd}
-                    onChange={(e) => setTeamGd(Number(e.target.value))}
-                    className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
-                    xG / 90
-                  </label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={teamXg}
-                    onChange={(e) => setTeamXg(Number(e.target.value))}
-                    className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
-                  />
-                </div>
-              </div>
+              <p className="font-mono text-[10px] text-on-surface-variant">
+                Puntos, forma y fuerza se calculan solos con los resultados que registres en su perfil.
+              </p>
 
               <div className="mt-3 pt-3 border-t border-surface-container-high flex items-center justify-end gap-2">
                 <button

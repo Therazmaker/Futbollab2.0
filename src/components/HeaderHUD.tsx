@@ -15,13 +15,11 @@ export function HeaderHUD({ currentTab, onSearchClick, onFilterClick }: HeaderHU
   const getTabLabel = () => {
     switch (currentTab) {
       case "explorer":
-        return "Leagues Hub";
-      case "players":
-        return "Players Radar";
-      case "tactics":
-        return "Teams Tactics";
-      case "predict":
-        return "Predictive Engine";
+        return "Ligas";
+      case "team":
+        return "Perfil de equipo";
+      case "player":
+        return "Perfil de jugador";
       default:
         return "Tactical HUD";
     }

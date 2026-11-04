@@ -10,8 +10,11 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { MatchDetailView } from "./MatchDetailView";
 
 interface PlayerProfileLabProps {
-  onBackToExplorer: () => void;
-  onOpenTactics: () => void;
+  /** Jugador a mostrar. Sin él, se abre el primero de la base. */
+  playerId?: Id<"players">;
+  onSelectPlayer: (playerId: Id<"players">, teamId?: Id<"teams">) => void;
+  onOpenTeam: (teamId: Id<"teams">) => void;
+  onBack: () => void;
 }
 
 const STAT_ORDER = [
@@ -26,9 +29,9 @@ const fmt = (x: number | null | undefined, d = 2) =>
 const signed = (x: number, d = 2) => (x >= 0 ? `+${fmt(x, d)}` : fmt(x, d));
 const pct = (x: number, d = 1) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(d)}%`;
 
-export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProfileLabProps) {
-  // Jugador seleccionado (por defecto, el primero de la base)
-  const [selectedPlayerId, setSelectedPlayerId] = useState<Id<"players"> | undefined>(undefined);
+export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack }: PlayerProfileLabProps) {
+  // Jugador seleccionado (viene de la URL; por defecto, el primero de la base)
+  const selectedPlayerId = playerId;
   const [playerSearch, setPlayerSearch] = useState<string>("");
 
   // Convex Reactive Hooks
@@ -87,7 +90,13 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
   useEffect(() => setRadarIndex(null), [selectedPlayerId]);
 
   const activePlayer = profileData?.player;
-  const isDemoPlayer = !!activePlayer && !(activePlayer as any).legacyId && !selectedPlayerId;
+  const isDemoPlayer = !!activePlayer && !(activePlayer as any).legacyId && activePlayer.name === INITIAL_PLAYER.name;
+  const activeTeam = profileData?.team;
+
+  // El formulario de partido arranca en la liga del equipo del jugador
+  useEffect(() => {
+    if (activeTeam?.league) setMatchCompetition(activeTeam.league);
+  }, [activeTeam?.league]);
   const activeWeights = profileData?.weights || [];
   const activeMatchLogs = profileData?.matchLogs || [];
   const latestPrediction = profileData?.latestPrediction;
@@ -254,7 +263,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
       <div className="flex items-center justify-between px-space-xs text-on-surface-variant">
         <div className="flex items-center gap-1.5 overflow-hidden">
           <button
-            onClick={onBackToExplorer}
+            onClick={onBack}
             className="flex items-center text-secondary hover:text-primary transition-colors text-[16px]"
           >
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>
@@ -262,7 +271,10 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
           <div className="flex items-center gap-1 truncate font-mono text-[11px] uppercase tracking-wider">
             <span className="text-on-surface-variant/70">{profileData?.team?.league ?? ""}</span>
             <span className="text-outline-variant">/</span>
-            <span className="text-on-surface-variant/70 cursor-pointer" onClick={onOpenTactics}>
+            <span
+              className="text-on-surface-variant/70 cursor-pointer hover:text-primary"
+              onClick={() => activeTeam && onOpenTeam(activeTeam._id)}
+            >
               {profileData?.team?.name ?? ""}
             </span>
             <span className="text-outline-variant">/</span>
@@ -289,10 +301,13 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
           />
           <select
             value={selectedPlayerId ?? ""}
-            onChange={(e) => setSelectedPlayerId((e.target.value || undefined) as any)}
+            onChange={(e) => {
+              const p = (playerOptions as any[]).find((x: any) => x._id === e.target.value);
+              if (p) onSelectPlayer(p._id, p.teamId);
+            }}
             className="flex-1 h-8 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
           >
-            <option value="">{activePlayer && !selectedPlayerId ? activePlayer.name : "Elegir jugador"}</option>
+            <option value="">{activePlayer ? `${activePlayer.name} (actual)` : "Elegir jugador"}</option>
             {(playerOptions as any[]).map((p: any) => (
               <option key={p._id} value={p._id}>
                 {p.hasMatches ? "● " : ""}
@@ -1045,7 +1060,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                     Rival del Partido
                   </label>
                   <span className="text-[10px] font-mono text-secondary">
-                    {registeredTeams.length} clubes en Convex
+                    elegirlo de la lista usa su fuerza defensiva
                   </span>
                 </div>
 
@@ -1057,22 +1072,24 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                       setSelectedOpponentTeamId(id);
                       if (id) {
                         const found = (registeredTeams as any[]).find((t: any) => t._id === id);
-                        if (found) {
-                          setMatchOpponent(found.name);
-                          if (found.competitions?.includes("ucl")) {
-                            setMatchCompetition("ucl");
-                          }
-                        }
+                        if (found) setMatchOpponent(found.name);
                       }
                     }}
                     className="w-full h-9 px-2.5 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
                   >
                     <option value="">-- Seleccionar club existente o escribir manual --</option>
-                    {(registeredTeams as any[]).map((tm: any) => (
-                      <option key={tm._id} value={tm._id}>
-                        {tm.name} ({tm.league?.toUpperCase()}{tm.competitions?.includes("ucl") ? " + UCL" : ""})
-                      </option>
-                    ))}
+                    {(registeredTeams as any[])
+                      .filter((tm: any) => tm._id !== activeTeam?._id)
+                      .sort(
+                        (x: any, y: any) =>
+                          Number(y.league === activeTeam?.league) - Number(x.league === activeTeam?.league) ||
+                          x.name.localeCompare(y.name)
+                      )
+                      .map((tm: any) => (
+                        <option key={tm._id} value={tm._id}>
+                          {tm.name} ({tm.league?.toUpperCase()})
+                        </option>
+                      ))}
                   </select>
 
                   <input

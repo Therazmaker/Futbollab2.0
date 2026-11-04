@@ -4,7 +4,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import type { GenericDatabaseWriter } from "convex/server";
 import type { DataModel } from "./_generated/dataModel";
-import { fitTeamRatings, standings } from "./lib/teamRatings";
+import { recomputeLeague } from "./lib/leagueTable";
 import legacyLeagues from "../data/legacy/leagues.json";
 import legacyTeams from "../data/legacy/teams.json";
 import legacyMatches from "../data/legacy/matches.json";
@@ -244,48 +244,6 @@ export const importPlayersChunk = internalMutation({
   },
 });
 
-async function recomputeLeague(db: Db, league: string) {
-  const rows = await db
-    .query("matches")
-    .withIndex("by_league_and_date", (q) => q.eq("league", league))
-    .collect();
-  if (!rows.length) return 0;
-  // Un mismo partido no puede contar dos veces (pasaba con los equipos duplicados)
-  const seen = new Set<string>();
-  const unique = [];
-  for (const r of rows) {
-    const key = `${r.homeTeamId}|${r.awayTeamId}|${r.date}`;
-    if (seen.has(key)) {
-      await db.delete(r._id);
-      continue;
-    }
-    seen.add(key);
-    unique.push(r);
-  }
-  const results = unique.map((r) => ({
-    home: r.homeTeamId as string,
-    away: r.awayTeamId as string,
-    homeGoals: r.homeGoals,
-    awayGoals: r.awayGoals,
-    date: r.date,
-  }));
-  const { ratings } = fitTeamRatings(results);
-  for (const row of standings(results)) {
-    const rating = ratings.get(row.team);
-    await db.patch(row.team as Id<"teams">, {
-      rank: row.rank,
-      points: row.points,
-      played: row.played,
-      goalsFor: row.gf,
-      goalsAgainst: row.ga,
-      goalDifference: row.gf - row.ga,
-      form: row.form,
-      attackRating: rating ? +rating.attack.toFixed(3) : undefined,
-      defenseRating: rating ? +rating.defense.toFixed(3) : undefined,
-    });
-  }
-  return unique.length;
-}
 
 /** Recalcula tablas y fuerza de equipos (llámalo tras añadir resultados). */
 export const recomputeTeamStrength = mutation({

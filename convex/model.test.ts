@@ -165,3 +165,50 @@ describe("Convex: registro, informe e importación", () => {
     expect(after.needsImport).toBe(false);
   }, 120_000);
 });
+
+describe("Convex: flujo equipo → jugador", () => {
+  test("perfil de equipo, simulador, resultados y alta de jugador", async () => {
+    const t = convexTest(schema, modules);
+    await t.action(api.legacy.importLegacyData, {});
+    const teams = await t.run((ctx) => ctx.db.query("teams").collect());
+    const arsenal = teams.find((x) => x.name === "Arsenal")!;
+    const chelsea = teams.find((x) => x.name === "Chelsea")!;
+
+    const profile = await t.query(api.teams.getTeamProfile, { teamId: arsenal._id });
+    expect(profile!.record.total.played).toBe(arsenal.played);
+    expect(profile!.record.total.wins + profile!.record.total.draws + profile!.record.total.losses).toBe(arsenal.played);
+    expect(profile!.squad.length).toBeGreaterThan(10);
+    expect(profile!.table.length).toBe(20);
+    expect(profile!.results[0].date >= profile!.results[profile!.results.length - 1].date).toBe(true);
+
+    const sim = await t.query(api.teams.predictMatch, { homeTeamId: arsenal._id, awayTeamId: chelsea._id });
+    const sum = sim!.probabilities.home + sim!.probabilities.draw + sim!.probabilities.away;
+    expect(sum).toBeCloseTo(1, 2);
+    expect(sim!.expectedGoals.home).toBeGreaterThan(0);
+
+    const before = arsenal.points!;
+    const matchId = await t.mutation(api.teams.addMatchResult, {
+      homeTeamId: arsenal._id,
+      awayTeamId: chelsea._id,
+      homeGoals: 3,
+      awayGoals: 0,
+      date: "2026-05-30",
+    });
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(before + 3);
+    await t.mutation(api.teams.deleteMatchResult, { matchId });
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(before);
+
+    const playerId = await t.mutation(api.players.createPlayer, { teamId: arsenal._id, name: "Nuevo Nueve", position: "FW" });
+    await t.mutation(api.predictions.recordMatchAndCalibrate, {
+      playerId,
+      matchDate: "2026-05-30",
+      opponent: "Chelsea",
+      opponentTeamId: chelsea._id,
+      isAway: false,
+      minutesPlayed: 90,
+      rawStats: { totalShots: 4, xG: 0.6 },
+    });
+    const after = await t.query(api.teams.getTeamProfile, { teamId: arsenal._id });
+    expect(after!.squad.find((p) => p._id === playerId)!.loggedMatches).toBe(1);
+  }, 120_000);
+});
