@@ -4,8 +4,9 @@ import React, { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { INITIAL_PLAYER, PlayerData } from "@/data/mock-data";
-import { syncEngine } from "@/lib/offline-sync";
 import { BrainTargetRadar, PredictionMetricPoint } from "./BrainTargetRadar";
+import { LearningCurve } from "./LearningCurve";
+import type { Id } from "../../convex/_generated/dataModel";
 import { MatchDetailView } from "./MatchDetailView";
 
 interface PlayerProfileLabProps {
@@ -13,21 +14,35 @@ interface PlayerProfileLabProps {
   onOpenTactics: () => void;
 }
 
+const STAT_ORDER = [
+  { key: "totalShots", name: "Tiros", angle: 45 },
+  { key: "xG", name: "xG", angle: 135 },
+  { key: "keyPasses", name: "Pases Clave", angle: 225 },
+  { key: "groundDuelsWon", name: "Duelos", angle: 315 },
+] as const;
+
+const fmt = (x: number | null | undefined, d = 2) =>
+  x === null || x === undefined || !Number.isFinite(x) ? "—" : String(+Number(x).toFixed(d));
+const signed = (x: number, d = 2) => (x >= 0 ? `+${fmt(x, d)}` : fmt(x, d));
+const pct = (x: number, d = 1) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(d)}%`;
+
 export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProfileLabProps) {
+  // Jugador seleccionado (por defecto, el primero de la base)
+  const [selectedPlayerId, setSelectedPlayerId] = useState<Id<"players"> | undefined>(undefined);
+  const [playerSearch, setPlayerSearch] = useState<string>("");
+
   // Convex Reactive Hooks
-  const profileData = useQuery(api.players.getPlayerProfile, {});
+  const profileData = useQuery(api.players.getPlayerProfile, selectedPlayerId ? { playerId: selectedPlayerId } : {});
+  const report = useQuery(api.predictions.getModelReport, selectedPlayerId ? { playerId: selectedPlayerId } : {});
+  const playerOptions = useQuery(api.players.listPlayers, { search: playerSearch || undefined, limit: 25 }) || [];
   const registeredTeams = useQuery(api.teams.getTeams, {}) || [];
   const seedDemo = useMutation(api.players.seedBellinghamDemo);
-  const calibrateMutation = useMutation(api.predictions.recordMatchAndCalibrate);
   const predictMutation = useMutation(api.predictions.calculateAndPredict);
   const deleteMatchMutation = useMutation(api.players.deleteMatchLog);
   const updateMatchMutation = useMutation(api.players.updateMatchLog);
 
-  // Local state fallbacks & Interactive Sandbox
-  const [player, setPlayer] = useState<PlayerData>(INITIAL_PLAYER);
-  const [isSimulating, setIsSimulating] = useState<boolean>(false);
-  const [fatigueFactor, setFatigueFactor] = useState<number>(15);
-  const [tacticalDepth, setTacticalDepth] = useState<number>(75);
+  // La ficha de demo (foto, nacionalidad...) solo se usa para el jugador de ejemplo
+  const player: PlayerData = INITIAL_PLAYER;
 
   // Selected Match for Full Detail View Screen
   const [selectedMatchLog, setSelectedMatchLog] = useState<any | null>(null);
@@ -36,151 +51,112 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
   const [editingLog, setEditingLog] = useState<any | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
-  // Radar fixture switch state
-  const [selectedRadarFixture, setSelectedRadarFixture] = useState<"p1" | "p2" | "p3">("p2");
+  // Partido seleccionado en el radar (índice en report.points; null = el último)
+  const [radarIndex, setRadarIndex] = useState<number | null>(null);
+
+  // Próximo partido (pronóstico)
+  const [isSimulating, setIsSimulating] = useState<boolean>(false);
+  const [nextOpponentTeamId, setNextOpponentTeamId] = useState<string>("");
+  const [nextOpponent, setNextOpponent] = useState<string>("");
+  const [nextIsAway, setNextIsAway] = useState<boolean>(false);
+  const [nextMinutes, setNextMinutes] = useState<string>("");
 
   // Ingest / Calibrate Modal state
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [isSubmittingMatch, setIsSubmittingMatch] = useState<boolean>(false);
-  const [matchOpponent, setMatchOpponent] = useState<string>("Inter de Milán");
+  const [matchOpponent, setMatchOpponent] = useState<string>("");
   const [selectedOpponentTeamId, setSelectedOpponentTeamId] = useState<string>("");
-  const [matchCompetition, setMatchCompetition] = useState<string>("ucl");
-  const [matchDate, setMatchDate] = useState<string>("2024-09-08");
+  const [matchCompetition, setMatchCompetition] = useState<string>("laliga");
+  const [matchDate, setMatchDate] = useState<string>(new Date().toISOString().split("T")[0]);
   const [matchIsAway, setMatchIsAway] = useState<boolean>(false);
-  const [actualShots, setActualShots] = useState<number>(3);
-  const [actualXg, setActualXg] = useState<number>(0.42);
-  const [actualKeyPasses, setActualKeyPasses] = useState<number>(3);
-  const [actualRating, setActualRating] = useState<number>(8.3);
+  const [matchMinutes, setMatchMinutes] = useState<number>(90);
+  const [actualShots, setActualShots] = useState<string>("");
+  const [actualXg, setActualXg] = useState<string>("");
+  const [actualKeyPasses, setActualKeyPasses] = useState<string>("");
+  const [actualDuels, setActualDuels] = useState<string>("");
+  const [actualRating, setActualRating] = useState<string>("");
   const [lastCalibrationNotice, setLastCalibrationNotice] = useState<string | null>(null);
 
   // Auto-seed demo on first mount if database is empty
   useEffect(() => {
-    if (profileData === null) {
+    if (profileData === null && !selectedPlayerId) {
       seedDemo().catch(() => {});
     }
-  }, [profileData, seedDemo]);
+  }, [profileData, seedDemo, selectedPlayerId]);
 
-  // Sync profile data from Convex when available
+  useEffect(() => setRadarIndex(null), [selectedPlayerId]);
+
   const activePlayer = profileData?.player;
+  const isDemoPlayer = !!activePlayer && !(activePlayer as any).legacyId && !selectedPlayerId;
   const activeWeights = profileData?.weights || [];
   const activeMatchLogs = profileData?.matchLogs || [];
   const latestPrediction = profileData?.latestPrediction;
+  const forecastMetrics: any =
+    latestPrediction?.kind === "forecast" ? latestPrediction.predictedMetrics : null;
 
-  const currentPredictiveForm =
-    latestPrediction?.predictedMetrics?.predictiveForm ?? player.predictiveForm;
+  const points = report?.points ?? [];
+  const summary = report?.summary;
+  const profile = report?.profile;
+  const selIdx = radarIndex ?? points.length - 1;
+  const selectedPoint: any = points[selIdx] ?? null;
+
+  const currentPredictiveForm = forecastMetrics?.predictiveForm ?? profile?.rating ?? "—";
   const currentConfidence =
-    latestPrediction?.predictedMetrics?.confidence ?? player.confidence;
+    forecastMetrics?.confidence ?? (selectedPoint ? Math.round(selectedPoint.dataShare * 100) : 0);
+  const awayEffect = profile?.effects.find((e: any) => e.feature === "is_away");
 
-  const currentShotsPred =
-    latestPrediction?.predictedMetrics?.shotsPredicted ?? player.metrics.shotsPredicted;
-  const currentShotsObs =
-    latestPrediction?.actualMetrics?.totalShots ?? player.metrics.shotsObserved;
-  const shotsDelta = latestPrediction?.deltas?.totalShots ?? -0.3;
-
-  const currentXgPred = latestPrediction?.predictedMetrics?.xG ?? 0.35;
-  const currentXgObs = latestPrediction?.actualMetrics?.xG ?? 0.31;
-  const xgDelta = latestPrediction?.deltas?.xG ?? -0.04;
-
-  const currentKpPred =
-    latestPrediction?.predictedMetrics?.keyPassesPredicted ?? player.metrics.keyPassesPredicted;
-  const currentKpObs =
-    latestPrediction?.actualMetrics?.keyPasses ?? player.metrics.keyPassesObserved;
-  const kpDelta = latestPrediction?.deltas?.keyPasses ?? -0.3;
-
-  // Radar Metrics calculation based on selected fixture / Convex state
+  // Radar: error de la predicción pre-partido del partido seleccionado, en σ
   const radarMetrics: PredictionMetricPoint[] = useMemo(() => {
-    if (selectedRadarFixture === "p1") {
-      return [
-        { id: "shots_p1", name: "Tiros", predicted: 3.4, actual: 2.0, matchIndex: 1, categoryAngle: 45 },
-        { id: "xg_p1", name: "xG Gen", predicted: 0.52, actual: 0.25, matchIndex: 1, categoryAngle: 135 },
-        { id: "kp_p1", name: "Pases Clave", predicted: 3.8, actual: 2.2, matchIndex: 1, categoryAngle: 225 },
-        { id: "duels_p1", name: "Duelos %", predicted: 76, actual: 52, matchIndex: 1, categoryAngle: 315 },
-      ];
-    }
+    if (!selectedPoint) return [];
+    return STAT_ORDER.filter((s) => selectedPoint.stats[s.key]).map((s) => {
+      const st = selectedPoint.stats[s.key];
+      return {
+        id: `${s.key}_${selIdx}`,
+        name: s.name,
+        predicted: st.predicted,
+        actual: st.actual,
+        sd: st.sd,
+        matchIndex: selIdx + 1,
+        categoryAngle: s.angle,
+      };
+    });
+  }, [selectedPoint, selIdx]);
 
-    if (selectedRadarFixture === "p3") {
-      return [
-        { id: "shots_p3", name: "Tiros", predicted: 2.3, actual: 2.2, matchIndex: 3, categoryAngle: 45 },
-        { id: "xg_p3", name: "xG Gen", predicted: 0.34, actual: 0.33, matchIndex: 3, categoryAngle: 135 },
-        { id: "kp_p3", name: "Pases Clave", predicted: 2.9, actual: 2.9, matchIndex: 3, categoryAngle: 225 },
-        { id: "duels_p3", name: "Duelos %", predicted: 67, actual: 65, matchIndex: 3, categoryAngle: 315 },
-      ];
-    }
-
-    return [
-      {
-        id: "shots_p2",
-        name: "Tiros",
-        predicted: currentShotsPred,
-        actual: currentShotsObs,
-        matchIndex: 2,
-        categoryAngle: 45,
-      },
-      {
-        id: "xg_p2",
-        name: "xG Gen",
-        predicted: currentXgPred,
-        actual: currentXgObs,
-        matchIndex: 2,
-        categoryAngle: 135,
-      },
-      {
-        id: "kp_p2",
-        name: "Pases Clave",
-        predicted: currentKpPred,
-        actual: currentKpObs,
-        matchIndex: 2,
-        categoryAngle: 225,
-      },
-      {
-        id: "duels_p2",
-        name: "Duelos %",
-        predicted: 68.4,
-        actual: 64.0,
-        matchIndex: 2,
-        categoryAngle: 315,
-      },
-    ];
-  }, [
-    selectedRadarFixture,
-    currentShotsPred,
-    currentShotsObs,
-    currentXgPred,
-    currentXgObs,
-    currentKpPred,
-    currentKpObs,
-  ]);
+  const teamName = (id: string) => (registeredTeams as any[]).find((t: any) => t._id === id)?.name ?? "";
 
   const runPredictiveSimulation = async () => {
+    if (!activePlayer?._id) return;
+    const opponent = nextOpponent || teamName(nextOpponentTeamId) || "Próximo rival";
     setIsSimulating(true);
-    await new Promise((r) => setTimeout(r, 400));
-
-    if (activePlayer?._id) {
-      try {
-        await predictMutation({
-          playerId: activePlayer._id,
-          opponent: matchOpponent,
-          isAway: matchIsAway,
-          tacticalRole: "AM / Box-to-Box",
-          contextFeatures: matchIsAway ? ["is_away"] : ["home_pitch_bias"],
-        });
-      } catch (e) {
-        console.warn("Convex predict mutation fallback:", e);
-      }
+    try {
+      await predictMutation({
+        playerId: activePlayer._id,
+        opponent,
+        isAway: nextIsAway,
+        opponentTeamId: (nextOpponentTeamId || undefined) as any,
+        expectedMinutes: nextMinutes ? Number(nextMinutes) : undefined,
+      });
+    } catch (e) {
+      console.warn("Convex predict mutation error:", e);
+    } finally {
+      setIsSimulating(false);
     }
-
-    await syncEngine.enqueue("SIMULATE_MATCH", `player_${player.id}`, {
-      fatigueFactor,
-      tacticalDepth,
-      timestamp: Date.now(),
-    });
-
-    setIsSimulating(false);
   };
 
   const handleRegisterMatch = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmittingMatch(true);
+
+    // Solo se envían las stats que el usuario rellenó (nada inventado)
+    const rawStats: Record<string, number> = {};
+    const put = (k: string, v: string) => {
+      if (v.trim() !== "" && Number.isFinite(Number(v))) rawStats[k] = Number(v);
+    };
+    put("totalShots", actualShots);
+    put("xG", actualXg);
+    put("keyPasses", actualKeyPasses);
+    put("groundDuelsWon", actualDuels);
+    put("rating", actualRating);
 
     try {
       const response = await fetch("/api/ingest-match", {
@@ -193,25 +169,29 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
           opponentTeamId: selectedOpponentTeamId || undefined,
           competition: matchCompetition || "laliga",
           isAway: matchIsAway,
-          minutesPlayed: 90,
-          rawStats: {
-            totalShots: actualShots,
-            shotsOnTarget: Math.max(1, actualShots - 1),
-            xG: actualXg,
-            keyPasses: actualKeyPasses,
-            rating: actualRating,
-            touches: 78,
-          },
+          minutesPlayed: matchMinutes,
+          rawStats,
         }),
       });
 
       const data = await response.json();
       if (data.success) {
+        const err = data.calibration?.error;
+        const w = data.calibration?.calibratedWeight;
         setLastCalibrationNotice(
-          `¡Calibración exitosa! Delta disparos: ${data.calibration?.deltas?.totalShots ?? 0}. Peso recalculado: ${data.calibration?.calibratedWeight?.featureName} (${data.calibration?.calibratedWeight?.newValue})`
+          err
+            ? `Partido registrado. Error de la predicción previa: ${fmt(err.model)} (ingenuo ${fmt(err.naive)}, ruido ${fmt(err.noiseFloor)}). Efecto visitante ahora ${pct(w?.newValue ?? 0)}.`
+            : "Partido registrado."
         );
-        setSelectedRadarFixture("p2");
+        setRadarIndex(null);
         setIsModalOpen(false);
+        setActualShots("");
+        setActualXg("");
+        setActualKeyPasses("");
+        setActualDuels("");
+        setActualRating("");
+      } else {
+        setLastCalibrationNotice(`No se registró: ${data.error}`);
       }
     } catch (err) {
       console.error("Match calibration error:", err);
@@ -259,7 +239,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
       <MatchDetailView
         matchLog={selectedMatchLog}
         playerName={activePlayer?.name || player.name}
-        playerNumber={player.number}
+        playerNumber={(activePlayer as any)?.number ?? (isDemoPlayer ? player.number : 0)}
         onBack={() => setSelectedMatchLog(null)}
         onMatchUpdated={() => {
           setSelectedMatchLog(null);
@@ -280,23 +260,51 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>
           </button>
           <div className="flex items-center gap-1 truncate font-mono text-[11px] uppercase tracking-wider">
-            <span className="text-on-surface-variant/70">LaLiga</span>
+            <span className="text-on-surface-variant/70">{profileData?.team?.league ?? ""}</span>
             <span className="text-outline-variant">/</span>
             <span className="text-on-surface-variant/70 cursor-pointer" onClick={onOpenTactics}>
-              Real Madrid
+              {profileData?.team?.name ?? ""}
             </span>
             <span className="text-outline-variant">/</span>
-            <span className="text-primary font-semibold">
-              {activePlayer?.name || player.name} #{player.number}
-            </span>
+            <span className="text-primary font-semibold">{activePlayer?.name ?? "…"}</span>
           </div>
         </div>
         <div className="flex items-center gap-1 bg-surface-container-high px-2 py-0.5 rounded shadow-sm shrink-0 border border-primary/20">
           <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
           <span className="font-mono text-[10px] text-primary font-bold">
-            MODEL RUN: {currentConfidence}% CONF
+            DATOS PROPIOS: {currentConfidence}%
           </span>
         </div>
+      </div>
+
+      {/* Selector de jugador (incluye los importados del histórico) */}
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <input
+            type="search"
+            value={playerSearch}
+            onChange={(e) => setPlayerSearch(e.target.value)}
+            placeholder="Buscar jugador…"
+            className="flex-1 h-8 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+          />
+          <select
+            value={selectedPlayerId ?? ""}
+            onChange={(e) => setSelectedPlayerId((e.target.value || undefined) as any)}
+            className="flex-1 h-8 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+          >
+            <option value="">{activePlayer && !selectedPlayerId ? activePlayer.name : "Elegir jugador"}</option>
+            {(playerOptions as any[]).map((p: any) => (
+              <option key={p._id} value={p._id}>
+                {p.hasMatches ? "● " : ""}
+                {p.name} · {p.teamName} ({p.position})
+              </option>
+            ))}
+          </select>
+        </div>
+        <p className="font-mono text-[9px] text-on-surface-variant px-1">
+          ● = tiene partidos registrados. Sin partidos, el perfil parte de la tasa base de su posición
+          {` `}(y de sus goles/minutos de temporada si vienen del histórico).
+        </p>
       </div>
 
       {/* Calibration Notification Banner */}
@@ -324,12 +332,12 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
             <div className="flex items-center gap-space-md">
               <div className="relative shrink-0">
                 <img
-                  src={activePlayer?.photoUrl || player.photoUrl}
+                  src={activePlayer?.photoUrl || (isDemoPlayer ? player.photoUrl : "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=128&q=60")}
                   alt={activePlayer?.name || player.name}
                   className="w-14 h-14 rounded-xl object-cover bg-surface-container shadow-md border border-primary/30"
                 />
                 <span className="absolute -bottom-1 -right-1 bg-surface-container-lowest text-secondary font-mono text-[10px] font-bold px-1.5 py-0.2 rounded shadow-sm border border-secondary/30">
-                  #{player.number}
+                  #{(activePlayer as any)?.number ?? (isDemoPlayer ? player.number : "–")}
                 </span>
               </div>
               <div className="flex flex-col min-w-0">
@@ -337,16 +345,23 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                   <h2 className="text-lg font-bold text-on-surface tracking-tight truncate">
                     {activePlayer?.name || player.name}
                   </h2>
-                  <span className="bg-surface-container-highest text-secondary font-mono text-[10px] px-1.5 py-0.5 rounded uppercase font-semibold">
-                    {player.nationality}
-                  </span>
+                  {isDemoPlayer && (
+                    <span className="bg-surface-container-highest text-secondary font-mono text-[10px] px-1.5 py-0.5 rounded uppercase font-semibold">
+                      {player.nationality}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                   <span className="bg-primary/10 text-primary font-mono text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider border border-primary/20">
                     {activePlayer?.position || player.position}
                   </span>
                   <span className="text-on-surface-variant text-xs font-sans">
-                    Age {player.age} • {player.height} cm
+                    {(activePlayer as any)?.age
+                      ? `${(activePlayer as any).age} años`
+                      : isDemoPlayer
+                      ? `Age ${player.age} • ${player.height} cm`
+                      : ""}
+                    {profile ? ` • ${profile.matches} partidos` : ""}
                   </span>
                 </div>
               </div>
@@ -355,7 +370,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
             <div className="flex items-center gap-1.5">
               <button
                 onClick={() => setIsModalOpen(true)}
-                title="Registrar resultado de partido para recalibrar pesos (P1 -> P2)"
+                title="Registrar un partido jugado: se compara con la predicción previa y se recalibra el perfil"
                 className="flex items-center gap-1 bg-primary text-on-primary font-mono text-[11px] font-bold px-2.5 py-1.5 rounded transition-transform active:scale-95 shadow-md hover:opacity-90"
               >
                 <span className="material-symbols-outlined text-[14px]">add_circle</span>
@@ -384,7 +399,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
             <div className="bg-surface-container rounded-lg p-space-sm flex items-center justify-between shadow-inner border border-outline-variant/20">
               <div className="flex flex-col">
                 <span className="font-mono text-[9px] text-on-surface-variant uppercase tracking-wider">
-                  Predictive Form
+                  Rating esperado
                 </span>
                 <div className="flex items-baseline gap-1 mt-0.5">
                   <span className="font-mono text-2xl font-bold text-primary drop-shadow-[0_0_12px_rgba(78,222,163,0.45)]">
@@ -401,15 +416,17 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
             <div className="bg-surface-container rounded-lg p-space-sm flex flex-col justify-between shadow-inner border border-outline-variant/20">
               <div className="flex items-center justify-between">
                 <span className="font-mono text-[9px] text-on-surface-variant uppercase tracking-wider">
-                  Pitch Bias Delta
+                  Efecto visitante
                 </span>
                 <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-ping"></span>
               </div>
               <div className="flex items-center gap-1 mt-1">
                 <span className="bg-secondary/15 text-secondary font-mono text-[11px] px-1.5 py-0.2 rounded font-bold">
-                  +{player.pitchBiasDelta}%
+                  {awayEffect ? pct(awayEffect.impact) : "—"}
                 </span>
-                <span className="text-xs text-on-surface truncate">Home Advantage</span>
+                <span className="text-[10px] text-on-surface-variant truncate font-mono">
+                  {awayEffect ? `80%: ${pct(awayEffect.low, 0)} a ${pct(awayEffect.high, 0)}` : "sin datos"}
+                </span>
               </div>
             </div>
           </div>
@@ -421,15 +438,18 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
         <div className="flex items-center justify-between px-space-xs">
           <span className="font-mono text-[10px] text-on-surface-variant uppercase tracking-wider font-semibold flex items-center gap-1">
             <span className="material-symbols-outlined text-[14px] text-secondary">tune</span>
-            <span>Active Contextual Weights (Convex Model)</span>
+            <span>Modus operandi: efectos de contexto</span>
           </span>
-          <span className="font-mono text-[10px] text-primary">GRADIENT LEARNING</span>
+          <span className="font-mono text-[10px] text-primary">BAYES + NEWTON</span>
         </div>
 
         <div className="grid grid-cols-2 xs:grid-cols-4 gap-2">
           {activeWeights.length > 0 ? (
             activeWeights.map((w: any) => {
-              const pct = (w.weightValue * 100).toFixed(1);
+              const isElasticity = w.featureName === "opponent_defense";
+              const pct = isElasticity
+                ? `elast. ${Math.log(1 + w.weightValue).toFixed(2)}`
+                : `${(w.weightValue * 100).toFixed(1)}%`;
               const isPositive = w.weightValue >= 0;
               return (
                 <div
@@ -437,7 +457,11 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                   className="bg-surface-container-low rounded-lg p-2 border border-surface-container-high flex flex-col justify-between"
                 >
                   <span className="font-mono text-[9px] text-on-surface-variant truncate uppercase">
-                    {w.featureName.replace(/_/g, " ")}
+                    {w.featureName === "is_away"
+                      ? "visitante"
+                      : w.featureName === "opponent_defense"
+                      ? "defensa rival"
+                      : w.featureName.replace(/_/g, " ")}
                   </span>
                   <div className="flex items-baseline justify-between mt-1">
                     <span
@@ -445,213 +469,173 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                         isPositive ? "text-primary" : "text-tertiary"
                       }`}
                     >
-                      {isPositive ? `+${pct}%` : `${pct}%`}
+                      {isPositive && !isElasticity ? `+${pct}` : pct}
                     </span>
-                    <span className="font-mono text-[9px] text-on-surface-variant">
-                      {(w.confidenceScore * 100).toFixed(0)}% conf
+                    <span
+                      className="font-mono text-[9px] text-on-surface-variant"
+                      title="Qué parte de este efecto sale de los partidos del jugador (el resto es la tasa base)"
+                    >
+                      {(w.confidenceScore * 100).toFixed(0)}% datos · {w.matches ?? 0}p
                     </span>
                   </div>
                 </div>
               );
             })
           ) : (
-            <>
-              <div className="bg-surface-container-low rounded-lg p-2 border border-surface-container-high flex flex-col justify-between">
-                <span className="font-mono text-[9px] text-on-surface-variant uppercase">is away</span>
-                <div className="flex items-baseline justify-between mt-1">
-                  <span className="font-mono text-xs font-bold text-tertiary">-12.0%</span>
-                  <span className="font-mono text-[9px] text-on-surface-variant">85% conf</span>
-                </div>
-              </div>
-              <div className="bg-surface-container-low rounded-lg p-2 border border-surface-container-high flex flex-col justify-between">
-                <span className="font-mono text-[9px] text-on-surface-variant uppercase">low block</span>
-                <div className="flex items-baseline justify-between mt-1">
-                  <span className="font-mono text-xs font-bold text-tertiary">-8.0%</span>
-                  <span className="font-mono text-[9px] text-on-surface-variant">72% conf</span>
-                </div>
-              </div>
-              <div className="bg-surface-container-low rounded-lg p-2 border border-surface-container-high flex flex-col justify-between">
-                <span className="font-mono text-[9px] text-on-surface-variant uppercase">partner rest</span>
-                <div className="flex items-baseline justify-between mt-1">
-                  <span className="font-mono text-xs font-bold text-primary">+6.0%</span>
-                  <span className="font-mono text-[9px] text-on-surface-variant">65% conf</span>
-                </div>
-              </div>
-              <div className="bg-surface-container-low rounded-lg p-2 border border-surface-container-high flex flex-col justify-between">
-                <span className="font-mono text-[9px] text-on-surface-variant uppercase">home pitch</span>
-                <div className="flex items-baseline justify-between mt-1">
-                  <span className="font-mono text-xs font-bold text-primary">+8.4%</span>
-                  <span className="font-mono text-[9px] text-on-surface-variant">90% conf</span>
-                </div>
-              </div>
-            </>
+            <p className="col-span-full font-mono text-[10px] text-on-surface-variant">
+              Aún no hay efectos calculados. Se calculan al registrar partidos o pronosticar.
+            </p>
           )}
         </div>
       </div>
 
-      {/* 90-Minute Expected vs Observed Metric Grid */}
+      {/* Perfil por 90' + último partido: predicho (antes del partido) vs real */}
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between px-space-xs">
           <span className="font-mono text-[10px] text-on-surface-variant uppercase tracking-wider font-semibold">
-            90-Minute Expected vs Observed & Error Deltas
+            {selectedPoint
+              ? `Partido ${selIdx + 1}/${points.length}: predicho antes vs real`
+              : "Perfil por 90 minutos"}
           </span>
-          <span className="font-mono text-[10px] text-secondary">CALIBRATED DELTAS</span>
+          <span className="font-mono text-[10px] text-secondary">
+            {selectedPoint ? `${selectedPoint.matchDate} · ${selectedPoint.minutes}'` : "SIN PARTIDOS"}
+          </span>
         </div>
 
         <div className="grid grid-cols-2 gap-space-sm">
-          {/* Shots */}
-          <div className="bg-surface-container-low rounded-xl p-space-sm flex flex-col justify-between shadow-md border border-surface-container-high/60">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-on-surface-variant font-medium">Shots / 90</span>
-              <span
-                className={`font-mono text-[10px] px-1.5 py-0.2 rounded font-bold ${
-                  shotsDelta >= 0 ? "bg-primary/10 text-primary" : "bg-tertiary/10 text-tertiary"
-                }`}
+          {STAT_ORDER.map((s) => {
+            const st = selectedPoint?.stats?.[s.key];
+            const p90 = profile?.per90?.[s.key];
+            const delta = st ? st.actual - st.predicted : null;
+            const z = st && st.sd > 0 ? Math.abs(st.actual - st.predicted) / st.sd : null;
+            return (
+              <div
+                key={s.key}
+                className="bg-surface-container-low rounded-xl p-space-sm flex flex-col justify-between shadow-md border border-surface-container-high/60"
               >
-                {shotsDelta >= 0 ? `+${shotsDelta}` : `${shotsDelta}`} delta
-              </span>
-            </div>
-            <div className="my-2">
-              <div className="flex items-baseline justify-between font-mono text-lg font-bold">
-                <span className="text-on-surface">{currentShotsObs}</span>
-                <span className="text-xs text-on-surface-variant/80">pred {currentShotsPred}</span>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-on-surface-variant font-medium">{s.name}</span>
+                  {delta !== null && (
+                    <span
+                      className={`font-mono text-[10px] px-1.5 py-0.2 rounded font-bold ${
+                        z !== null && z <= 1 ? "bg-primary/10 text-primary" : "bg-tertiary/10 text-tertiary"
+                      }`}
+                      title="real − predicho (y en desviaciones σ)"
+                    >
+                      {signed(delta)} {z !== null ? `· ${z.toFixed(1)}σ` : ""}
+                    </span>
+                  )}
+                </div>
+                <div className="my-2">
+                  {st ? (
+                    <div className="flex items-baseline justify-between font-mono text-lg font-bold">
+                      <span className="text-on-surface">{fmt(st.actual)}</span>
+                      <span className="text-xs text-on-surface-variant/80">
+                        pred {fmt(st.predicted)} ± {fmt(st.sd, 1)}
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="font-mono text-xs text-on-surface-variant">sin dato en este partido</div>
+                  )}
+                  {p90 && (
+                    <div className="mt-1.5">
+                      <div className="flex justify-between font-mono text-[9px] text-on-surface-variant">
+                        <span>
+                          /90: <span className="text-secondary">{fmt(p90.rate)}</span> (base {fmt(p90.prior)})
+                        </span>
+                        <span>{Math.round(p90.dataShare * 100)}% datos</span>
+                      </div>
+                      <div className="w-full bg-surface-container-highest h-1.5 rounded-full overflow-hidden mt-1">
+                        <div
+                          className="bg-secondary h-full rounded-full transition-all duration-500"
+                          style={{ width: `${Math.round(p90.dataShare * 100)}%` }}
+                        />
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-              <div className="w-full bg-surface-container-highest h-1.5 rounded-full overflow-hidden mt-1.5">
-                <div
-                  className="bg-secondary h-full rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, (currentShotsObs / Math.max(currentShotsPred, 1)) * 85)}%` }}
-                ></div>
-              </div>
-            </div>
-          </div>
-
-          {/* Key Passes */}
-          <div className="bg-surface-container-low rounded-xl p-space-sm flex flex-col justify-between shadow-md border border-surface-container-high/60">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-on-surface-variant font-medium">Key Passes</span>
-              <span
-                className={`font-mono text-[10px] px-1.5 py-0.2 rounded font-bold ${
-                  kpDelta >= 0 ? "bg-primary/10 text-primary" : "bg-tertiary/10 text-tertiary"
-                }`}
-              >
-                {kpDelta >= 0 ? `+${kpDelta}` : `${kpDelta}`} delta
-              </span>
-            </div>
-            <div className="my-2">
-              <div className="flex items-baseline justify-between font-mono text-lg font-bold">
-                <span className="text-on-surface">{currentKpObs}</span>
-                <span className="text-xs text-on-surface-variant/80">pred {currentKpPred}</span>
-              </div>
-              <div className="w-full bg-surface-container-highest h-1.5 rounded-full overflow-hidden mt-1.5">
-                <div
-                  className="bg-primary h-full rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(100, (currentKpObs / Math.max(currentKpPred, 1)) * 90)}%` }}
-                ></div>
-              </div>
-            </div>
-          </div>
-
-          {/* xG Expected */}
-          <div className="bg-surface-container-low rounded-xl p-space-sm flex flex-col justify-between shadow-md border border-surface-container-high/60">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-on-surface-variant font-medium">xG Generation</span>
-              <span
-                className={`font-mono text-[10px] px-1.5 py-0.2 rounded font-bold ${
-                  xgDelta >= 0 ? "bg-primary/10 text-primary" : "bg-tertiary/10 text-tertiary"
-                }`}
-              >
-                {xgDelta >= 0 ? `+${xgDelta}` : `${xgDelta}`} delta
-              </span>
-            </div>
-            <div className="my-2">
-              <div className="flex items-baseline justify-between font-mono text-lg font-bold">
-                <span className="text-on-surface">{currentXgObs}</span>
-                <span className="text-xs text-on-surface-variant/80">pred {currentXgPred}</span>
-              </div>
-              <div className="w-full bg-surface-container-highest h-1.5 rounded-full overflow-hidden mt-1.5">
-                <div
-                  className="bg-primary h-full rounded-full transition-all duration-500"
-                  style={{ width: "78%" }}
-                ></div>
-              </div>
-            </div>
-          </div>
-
-          {/* Aerial Duel % / xT */}
-          <div className="bg-surface-container-low rounded-xl p-space-sm flex flex-col justify-between shadow-md border border-surface-container-high/60">
-            <div className="flex items-center justify-between">
-              <span className="text-xs text-on-surface-variant font-medium">xT Threat p90</span>
-              <span className="bg-secondary/10 text-secondary font-mono text-[10px] px-1.5 py-0.2 rounded font-bold">
-                TOP 2%
-              </span>
-            </div>
-            <div className="my-2">
-              <div className="flex items-baseline justify-between font-mono text-lg font-bold">
-                <span className="text-secondary">{player.metrics.xtThreat}</span>
-                <span className="text-xs text-on-surface-variant/80">impact idx</span>
-              </div>
-              <div className="w-full bg-surface-container-highest h-1.5 rounded-full overflow-hidden mt-1.5">
-                <div className="bg-secondary h-full rounded-full" style={{ width: "94%" }}></div>
-              </div>
-            </div>
-          </div>
+            );
+          })}
         </div>
       </div>
 
-      {/* BRAIN TARGET CONVERGENCE RADAR & FIXTURE SELECTOR */}
+      {/* RADAR + CURVA DE APRENDIZAJE (datos reales, validación partido a partido) */}
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between px-space-xs">
           <span className="font-mono text-[10px] text-on-surface-variant uppercase tracking-wider font-semibold flex items-center gap-1">
             <span className="material-symbols-outlined text-[14px] text-primary">adjust</span>
-            <span>Trayectoria de Convergencia del Modelo</span>
+            <span>Trayectoria de convergencia</span>
           </span>
 
-          {/* Fixture Selector Switch */}
-          <div className="flex items-center gap-1 bg-surface-container rounded-lg p-0.5 border border-surface-container-highest">
-            <button
-              onClick={() => setSelectedRadarFixture("p1")}
-              className={`px-2 py-0.5 rounded text-[10px] font-mono transition-all ${
-                selectedRadarFixture === "p1"
-                  ? "bg-surface-container-highest text-tertiary font-bold shadow-sm"
-                  : "text-on-surface-variant hover:text-on-surface"
-              }`}
-            >
-              P1 (Base)
-            </button>
-            <button
-              onClick={() => setSelectedRadarFixture("p2")}
-              className={`px-2 py-0.5 rounded text-[10px] font-mono transition-all ${
-                selectedRadarFixture === "p2"
-                  ? "bg-primary text-on-primary font-bold shadow-sm"
-                  : "text-on-surface-variant hover:text-on-surface"
-              }`}
-            >
-              P2 (vs Athletic)
-            </button>
-            <button
-              onClick={() => setSelectedRadarFixture("p3")}
-              className={`px-2 py-0.5 rounded text-[10px] font-mono transition-all ${
-                selectedRadarFixture === "p3"
-                  ? "bg-secondary text-on-secondary font-bold shadow-sm"
-                  : "text-on-surface-variant hover:text-on-surface"
-              }`}
-            >
-              P3 (Bullseye Core)
-            </button>
-          </div>
+          {points.length > 0 && (
+            <div className="flex items-center gap-1 bg-surface-container rounded-lg p-0.5 border border-surface-container-highest font-mono text-[10px]">
+              <button
+                onClick={() => setRadarIndex(0)}
+                className={`px-2 py-0.5 rounded ${selIdx === 0 ? "bg-surface-container-highest text-tertiary font-bold" : "text-on-surface-variant"}`}
+              >
+                Primero
+              </button>
+              <button
+                onClick={() => setRadarIndex(Math.max(0, selIdx - 1))}
+                className="px-1.5 py-0.5 rounded text-on-surface-variant hover:text-on-surface"
+                aria-label="Partido anterior"
+              >
+                ‹
+              </button>
+              <span className="px-1 text-on-surface">
+                {selIdx + 1}/{points.length}
+              </span>
+              <button
+                onClick={() => setRadarIndex(Math.min(points.length - 1, selIdx + 1))}
+                className="px-1.5 py-0.5 rounded text-on-surface-variant hover:text-on-surface"
+                aria-label="Partido siguiente"
+              >
+                ›
+              </button>
+              <button
+                onClick={() => setRadarIndex(null)}
+                className={`px-2 py-0.5 rounded ${selIdx === points.length - 1 ? "bg-primary text-on-primary font-bold" : "text-on-surface-variant"}`}
+              >
+                Último
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Polar Bullseye Radar Component */}
-        <BrainTargetRadar
-          metrics={radarMetrics}
-          selectedMatchLabel={
-            selectedRadarFixture === "p1"
-              ? "Dispersión Inicial (P1 Base)"
-              : selectedRadarFixture === "p2"
-              ? "Calibración en Vivo (P2 vs Athletic)"
-              : "Convergencia Óptima (P3 Bullseye)"
-          }
-        />
+        {radarMetrics.length > 0 ? (
+          <BrainTargetRadar
+            metrics={radarMetrics}
+            selectedMatchLabel={
+              selectedPoint
+                ? `#${selIdx + 1} vs ${selectedPoint.opponent ?? "?"} (${selectedPoint.isAway ? "fuera" : "casa"})`
+                : ""
+            }
+          />
+        ) : (
+          <div className="bg-surface-container-low rounded-xl p-space-md border border-surface-container-high/60 font-mono text-[11px] text-on-surface-variant">
+            Registra el primer partido de este jugador para ver el radar de error.
+          </div>
+        )}
+
+        <LearningCurve points={points} selectedIndex={selIdx} onSelect={(i) => setRadarIndex(i)} />
+
+        {summary && summary.matches > 0 && (
+          <div className="grid grid-cols-3 gap-2 font-mono text-[10px]">
+            <div className="bg-surface-container-low rounded-lg p-2 border border-surface-container-high">
+              <span className="text-on-surface-variant uppercase text-[9px]">Error modelo</span>
+              <p className="text-primary font-bold text-sm">{fmt(summary.modelError)}</p>
+            </div>
+            <div className="bg-surface-container-low rounded-lg p-2 border border-surface-container-high">
+              <span className="text-on-surface-variant uppercase text-[9px]">Error ingenuo</span>
+              <p className="text-on-surface font-bold text-sm">{fmt(summary.naiveError)}</p>
+            </div>
+            <div className="bg-surface-container-low rounded-lg p-2 border border-surface-container-high">
+              <span className="text-on-surface-variant uppercase text-[9px]">Piso de ruido</span>
+              <p className="text-on-surface-variant font-bold text-sm">{fmt(summary.noiseFloor)}</p>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Match History & Prediction Calibration Log with Click-to-Detail, Edit & Delete */}
@@ -708,7 +692,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                     </span>
                   </div>
                   <p className="font-mono text-[10px] text-on-surface-variant">
-                    {log.matchDate} • {log.tacticalRole || "AM"} • {log.minutesPlayed}'
+                    {log.matchDate} • {log.tacticalRole || activePlayer?.position || ""} • {log.minutesPlayed}'
                   </p>
                 </div>
               </div>
@@ -716,14 +700,14 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
               <div className="flex items-center gap-3 shrink-0 font-mono text-xs">
                 <div className="flex flex-col items-end">
                   <span className="text-on-surface font-bold">
-                    {log.rawStats?.totalShots ?? log.rawStats?.shots ?? 0} shots
+                    {log.rawStats?.totalShots ?? log.rawStats?.shots ?? "—"} tiros
                   </span>
                   <span className="text-[10px] text-primary">
-                    xG {log.rawStats?.xG ?? 0}
+                    xG {log.rawStats?.xG ?? "—"}
                   </span>
                 </div>
                 <div className="px-2 py-0.5 rounded bg-surface-container-highest text-primary font-bold border border-primary/20">
-                  {log.rawStats?.rating ?? 8.0}
+                  {log.rawStats?.rating ?? "—"}
                 </div>
 
                 {/* Edit & Delete Quick Action Buttons */}
@@ -749,57 +733,92 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
         </div>
       </div>
 
-      {/* Interactive Simulation Sliders */}
+      {/* Pronóstico del próximo partido (distribución, no un número suelto) */}
       <div className="bg-surface-container-low rounded-xl p-space-md border border-surface-container-high/60">
         <div className="flex items-center justify-between mb-3">
           <span className="font-mono text-xs uppercase text-primary font-bold flex items-center gap-1.5">
-            <span className="material-symbols-outlined text-[16px]">tune</span>
-            <span>Predictive Sandbox Controls</span>
+            <span className="material-symbols-outlined text-[16px]">online_prediction</span>
+            <span>Próximo partido</span>
           </span>
-          <span className="font-mono text-[10px] text-on-surface-variant">Live Sensitivity</span>
+          <span className="font-mono text-[10px] text-on-surface-variant">intervalo 80%</span>
         </div>
 
-        <div className="flex flex-col gap-3">
-          <div>
-            <div className="flex items-center justify-between font-mono text-xs mb-1">
-              <span className="text-on-surface-variant">Fatigue & Workload Load</span>
-              <span className="text-secondary font-bold">{fatigueFactor}%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={fatigueFactor}
-              onChange={(e) => setFatigueFactor(Number(e.target.value))}
-              className="w-full accent-secondary h-1.5 bg-surface-container-highest rounded-lg cursor-pointer"
-            />
+        <div className="grid grid-cols-2 gap-2">
+          <select
+            value={nextOpponentTeamId}
+            onChange={(e) => {
+              setNextOpponentTeamId(e.target.value);
+              setNextOpponent(teamName(e.target.value));
+            }}
+            className="col-span-2 h-9 px-2.5 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+          >
+            <option value="">-- Rival (si está en la base se usa su fuerza defensiva) --</option>
+            {(registeredTeams as any[]).map((tm: any) => (
+              <option key={tm._id} value={tm._id}>
+                {tm.name} ({tm.league?.toUpperCase()}
+                {tm.defenseRating ? ` · def ${Number(tm.defenseRating).toFixed(2)}` : ""})
+              </option>
+            ))}
+          </select>
+          <div className="flex items-center gap-3 font-mono text-xs">
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" checked={!nextIsAway} onChange={() => setNextIsAway(false)} className="accent-primary" />
+              Local
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" checked={nextIsAway} onChange={() => setNextIsAway(true)} className="accent-primary" />
+              Visitante
+            </label>
           </div>
-
-          <div>
-            <div className="flex items-center justify-between font-mono text-xs mb-1">
-              <span className="text-on-surface-variant">Tactical Infiltration Depth</span>
-              <span className="text-primary font-bold">{tacticalDepth}%</span>
-            </div>
-            <input
-              type="range"
-              min="0"
-              max="100"
-              value={tacticalDepth}
-              onChange={(e) => setTacticalDepth(Number(e.target.value))}
-              className="w-full accent-primary h-1.5 bg-surface-container-highest rounded-lg cursor-pointer"
-            />
-          </div>
+          <input
+            type="number"
+            min="1"
+            max="120"
+            value={nextMinutes}
+            onChange={(e) => setNextMinutes(e.target.value)}
+            placeholder={`Minutos (≈${profile?.expectedMinutes ?? 80})`}
+            className="h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+          />
         </div>
+
+        {forecastMetrics?.distribution && (
+          <div className="mt-3 flex flex-col gap-1 font-mono text-[11px]">
+            <p className="text-[10px] text-on-surface-variant">
+              vs {forecastMetrics.opponent} ({forecastMetrics.isAway ? "fuera" : "casa"}) · {forecastMetrics.expectedMinutes}' ·
+              contexto ×{fmt(forecastMetrics.contextMultiplier)} · {forecastMetrics.matchesUsed} partidos usados
+            </p>
+            {STAT_ORDER.map((s) => {
+              const d = forecastMetrics.distribution[s.key];
+              if (!d) return null;
+              return (
+                <div key={s.key} className="flex items-center justify-between border-b border-surface-container-high/40 py-1">
+                  <span className="text-on-surface-variant">{s.name}</span>
+                  <span>
+                    <span className="text-primary font-bold">{fmt(d.mean)}</span>
+                    <span className="text-on-surface-variant"> [{fmt(d.low, 1)}–{fmt(d.high, 1)}]</span>
+                    {d.pAtLeast?.["1"] !== undefined && (
+                      <span className="text-secondary">
+                        {" "}
+                        P(≥1) {Math.round(d.pAtLeast["1"] * 100)}% · P(≥2) {Math.round(d.pAtLeast["2"] * 100)}%
+                      </span>
+                    )}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        )}
 
         <div className="mt-4 pt-3 border-t border-surface-container-high/40 flex items-center justify-between">
-          <p className="font-mono text-[11px] text-on-surface-variant">
-            Ajustes guardados localmente e indexados en cola reactiva.
+          <p className="font-mono text-[10px] text-on-surface-variant">
+            Media por 90 del perfil × minutos × contexto, con la incertidumbre del perfil.
           </p>
           <button
             onClick={runPredictiveSimulation}
+            disabled={isSimulating || !activePlayer}
             className="px-3 py-1.5 bg-primary text-on-primary rounded-lg font-mono text-xs font-bold shadow-md hover:opacity-90 active:scale-95 transition-all"
           >
-            Recalcular Forecast
+            {isSimulating ? "Calculando…" : "Pronosticar"}
           </button>
         </div>
       </div>
@@ -863,6 +882,31 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
               </div>
 
               <div className="grid grid-cols-3 gap-2">
+                {(
+                  [
+                    ["keyPasses", "Pases clave", "1"],
+                    ["groundDuelsWon", "Duelos", "1"],
+                  ] as const
+                ).map(([k, label, step]) => (
+                  <div key={k}>
+                    <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">{label}</label>
+                    <input
+                      type="number"
+                      step={step}
+                      value={editingLog.rawStats?.[k] ?? ""}
+                      onChange={(e) =>
+                        setEditingLog({
+                          ...editingLog,
+                          rawStats: {
+                            ...editingLog.rawStats,
+                            [k]: e.target.value === "" ? undefined : Number(e.target.value),
+                          },
+                        })
+                      }
+                      className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                    />
+                  </div>
+                ))}
                 <div>
                   <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
                     Tiros
@@ -903,7 +947,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                   <input
                     type="number"
                     step="0.1"
-                    value={editingLog.rawStats?.rating ?? 8.0}
+                    value={editingLog.rawStats?.rating ?? ""}
                     onChange={(e) =>
                       setEditingLog({
                         ...editingLog,
@@ -943,7 +987,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
             <div className="flex items-center justify-between pb-3 border-b border-surface-container-high">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary text-[22px]">add_circle</span>
-                <h3 className="font-bold text-base text-on-surface">Registrar Siguiente Partido</h3>
+                <h3 className="font-bold text-base text-on-surface">Registrar partido jugado</h3>
               </div>
               <button
                 onClick={() => setIsModalOpen(false)}
@@ -955,7 +999,8 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
 
             <form onSubmit={handleRegisterMatch} className="flex flex-col gap-3 mt-3">
               <p className="text-xs text-on-surface-variant">
-                Ingesta de resultado para calcular error (<code className="text-primary">delta = actual - predicted</code>) y recalibrar pesos mediante descenso por gradiente.
+                Se compara con la predicción que el modelo hacía <b>antes</b> de este partido y el perfil se
+                recalcula con todos los partidos. Deja vacío lo que no tengas: no se inventa nada.
               </p>
 
               {/* Competición y Fecha */}
@@ -973,6 +1018,8 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                     <option value="laliga">🇪🇸 LaLiga</option>
                     <option value="seriea">🇮🇹 Serie A</option>
                     <option value="premier">🇬🇧 Premier League</option>
+                    <option value="bundesliga">🇩🇪 Bundesliga</option>
+                    <option value="ligue1">🇫🇷 Ligue 1</option>
                     <option value="copa">🏆 Copa Nacional</option>
                   </select>
                 </div>
@@ -1039,33 +1086,6 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                 </div>
               </div>
 
-              {/* Preset Rápido Real Madrid vs Inter 08/09 */}
-              <div className="flex items-center gap-1.5 pt-0.5">
-                <span className="text-[10px] font-mono text-on-surface-variant">Fixture Rápido:</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    const inter = (registeredTeams as any[]).find((t: any) =>
-                      t.name.toLowerCase().includes("inter")
-                    );
-                    if (inter) {
-                      setSelectedOpponentTeamId(inter._id);
-                    }
-                    setMatchOpponent("Inter de Milán");
-                    setMatchCompetition("ucl");
-                    setMatchDate("2024-09-08");
-                    setMatchIsAway(false);
-                    setActualShots(4);
-                    setActualXg(0.55);
-                    setActualKeyPasses(3);
-                    setActualRating(8.7);
-                  }}
-                  className="px-2 py-0.5 rounded bg-cyan-950/60 text-cyan-400 border border-cyan-800/40 text-[10px] font-mono hover:bg-cyan-900/50 flex items-center gap-1"
-                >
-                  <span>⚡ 08/09 Real Madrid vs Inter (UCL)</span>
-                </button>
-              </div>
-
               <div className="flex items-center gap-3 pt-1">
                 <label className="flex items-center gap-2 text-xs font-mono cursor-pointer">
                   <input
@@ -1083,11 +1103,41 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                     onChange={() => setMatchIsAway(false)}
                     className="accent-primary"
                   />
-                  <span>Local (Home - Bernabéu)</span>
+                  <span>Local</span>
                 </label>
               </div>
 
               <div className="grid grid-cols-2 gap-2 pt-1">
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    Minutos jugados
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    min="1"
+                    max="130"
+                    value={matchMinutes}
+                    onChange={(e) => setMatchMinutes(Number(e.target.value))}
+                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    Duelos ganados
+                  </label>
+                  <input
+                    type="number"
+                    step="1"
+                    min="0"
+                    value={actualDuels}
+                    onChange={(e) => setActualDuels(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+                  />
+                </div>
+
                 <div>
                   <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
                     Disparos Totales
@@ -1097,9 +1147,9 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                     step="1"
                     min="0"
                     value={actualShots}
-                    onChange={(e) => setActualShots(Number(e.target.value))}
+                    onChange={(e) => setActualShots(e.target.value)}
                     className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
-                    required
+                    
                   />
                 </div>
 
@@ -1112,9 +1162,9 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                     step="0.01"
                     min="0"
                     value={actualXg}
-                    onChange={(e) => setActualXg(Number(e.target.value))}
+                    onChange={(e) => setActualXg(e.target.value)}
                     className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
-                    required
+                    
                   />
                 </div>
 
@@ -1127,9 +1177,9 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                     step="1"
                     min="0"
                     value={actualKeyPasses}
-                    onChange={(e) => setActualKeyPasses(Number(e.target.value))}
+                    onChange={(e) => setActualKeyPasses(e.target.value)}
                     className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
-                    required
+                    
                   />
                 </div>
 
@@ -1143,40 +1193,11 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                     min="1"
                     max="10"
                     value={actualRating}
-                    onChange={(e) => setActualRating(Number(e.target.value))}
+                    onChange={(e) => setActualRating(e.target.value)}
                     className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
-                    required
+                    
                   />
                 </div>
-              </div>
-
-              {/* Quick Presets */}
-              <div className="flex items-center gap-1.5 pt-1">
-                <span className="text-[10px] font-mono text-on-surface-variant">Presets:</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActualShots(4);
-                    setActualXg(0.65);
-                    setActualKeyPasses(4);
-                    setActualRating(8.8);
-                  }}
-                  className="px-2 py-0.5 rounded bg-surface-container text-[10px] font-mono text-primary hover:bg-surface-container-high"
-                >
-                  Masterclass (+Deltas)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setActualShots(1);
-                    setActualXg(0.12);
-                    setActualKeyPasses(1);
-                    setActualRating(7.1);
-                  }}
-                  className="px-2 py-0.5 rounded bg-surface-container text-[10px] font-mono text-tertiary hover:bg-surface-container-high"
-                >
-                  Partido Difícil (-Deltas)
-                </button>
               </div>
 
               <div className="mt-3 pt-3 border-t border-surface-container-high flex items-center justify-end gap-2">
@@ -1202,7 +1223,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                   ) : (
                     <>
                       <span className="material-symbols-outlined text-[14px]">bolt</span>
-                      <span>CALIBRAR MODELO (P1 → P2)</span>
+                      <span>REGISTRAR Y RECALIBRAR</span>
                     </>
                   )}
                 </button>

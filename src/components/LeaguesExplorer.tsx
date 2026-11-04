@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
-import { useQuery, useMutation } from "convex/react";
+import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { ClubData, INITIAL_CLUBS } from "@/data/mock-data";
 import { syncEngine, useSyncTelemetry } from "@/lib/offline-sync";
@@ -23,6 +23,21 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
   const createLeagueMutation = useMutation(api.teams.createLeague);
   const createTeamMutation = useMutation(api.teams.createTeam);
   const linkTeamMutation = useMutation(api.teams.linkTeamToCompetition);
+  const legacyStatus = useQuery(api.legacy.legacyStatus);
+  const importLegacy = useAction(api.legacy.importLegacyData);
+  const [importState, setImportState] = useState<string | null>(null);
+
+  const runLegacyImport = async () => {
+    setImportState("Importando histórico… (1–2 min)");
+    try {
+      const r = await importLegacy({});
+      setImportState(
+        `Listo: ${r.matches} partidos, ${r.players} jugadores, ${r.teamsCreated} equipos nuevos (${r.teamsLinked} enlazados a existentes). Tablas y fuerza de equipos recalculadas.`
+      );
+    } catch (err: any) {
+      setImportState(`Error al importar: ${err?.message ?? err}`);
+    }
+  };
 
   // Modal States
   const [isAddLeagueOpen, setIsAddLeagueOpen] = useState(false);
@@ -62,6 +77,7 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
       { code: "seriea", label: "Serie A", count: 20 },
       { code: "ucl", label: "Champions League (UCL)", count: 32, isTournament: true },
       { code: "bundesliga", label: "Bundesliga", count: 18 },
+      { code: "ligue1", label: "Ligue 1", count: 18 },
     ];
 
     if (!convexLeagues || convexLeagues.length === 0) return base;
@@ -94,6 +110,8 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
             ? "Premier League"
             : domestic === "bundesliga"
             ? "Bundesliga"
+            : domestic === "ligue1"
+            ? "Ligue 1"
             : domestic === "ucl"
             ? "Champions League"
             : t.league;
@@ -230,6 +248,27 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
 
   return (
     <div className="flex flex-col w-full gap-space-md">
+      {/* Histórico del FutbolLab viejo */}
+      {legacyStatus && legacyStatus.importedMatches < legacyStatus.availableMatches && (
+        <div className="p-2.5 rounded-xl border border-secondary/40 bg-secondary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
+          <span className="text-on-surface">
+            {importState ??
+              `Hay ${legacyStatus.availableMatches} partidos del FutbolLab anterior (Serie A, Premier, Bundesliga, Ligue 1) listos para importar.`}
+          </span>
+          {!importState?.startsWith("Importando") && (
+            <button
+              onClick={runLegacyImport}
+              className="shrink-0 px-2.5 py-1 rounded bg-secondary text-black font-bold text-[10px] hover:opacity-90 active:scale-95"
+            >
+              Importar histórico
+            </button>
+          )}
+        </div>
+      )}
+      {importState && legacyStatus && legacyStatus.importedMatches >= legacyStatus.availableMatches && (
+        <div className="p-2 rounded-xl border border-primary/30 bg-primary/10 font-mono text-[10px] text-primary">{importState}</div>
+      )}
+
       {/* Breadcrumb & Actions Bar */}
       <div className="flex items-center justify-between gap-space-xs pt-space-xs">
         <div className="flex items-center gap-1.5 min-w-0">

@@ -1,134 +1,74 @@
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { forecast, STATS, STAT_LABELS, summarizeWalkForward } from "./lib/engine";
+import { buildReport, loadPlayerModelInput, syncPlayerWeights } from "./lib/playerModel";
+
+const round = (x: number, d = 2) => +x.toFixed(d);
 
 /**
- * Computes Exponential Moving Average (EMA) and applies active contextual weights
- * to generate next-match predictive performance vectors.
+ * Predicción del PRÓXIMO partido del jugador.
+ * Ajusta el perfil bayesiano con todos sus partidos y devuelve, por stat,
+ * media + intervalo 80% + probabilidades. Nada de "confianza 99%":
+ * `confidence` = % de la predicción que sale de datos propios (vs. tasa base de su posición).
  */
 export const calculateAndPredict = mutation({
   args: {
     playerId: v.id("players"),
     opponent: v.string(),
     isAway: v.boolean(),
+    opponentTeamId: v.optional(v.id("teams")),
     tacticalRole: v.optional(v.string()),
     contextFeatures: v.optional(v.array(v.string())),
+    expectedMinutes: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    // 1. Fetch recent match history for player (up to 10 matches)
-    const logs = await ctx.db
-      .query("playerMatchLogs")
-      .withIndex("by_player", (q: any) => q.eq("playerId", args.playerId))
-      .collect();
+    const synced = await syncPlayerWeights(ctx.db, args.playerId);
+    if (!synced) throw new Error("Jugador no encontrado");
+    const { state, input } = synced;
+    const opponentDefense = await input.defenseOf(args.opponentTeamId);
+    const fc = forecast(
+      state,
+      { isAway: args.isAway, contextFeatures: args.contextFeatures, opponentDefense },
+      args.expectedMinutes
+    );
 
-    logs.sort((a: any, b: any) => (a.matchDate < b.matchDate ? 1 : -1));
-    const recentLogs = logs.slice(0, 8);
-
-    // 2. Exponential Moving Average (EMA) with smoothing factor alpha = 0.35
-    const alpha = 0.35;
-    let baselineShots = 2.2;
-    let baselineXg = 0.32;
-    let baselineKeyPasses = 2.5;
-    let baselineRating = 8.0;
-
-    if (recentLogs.length > 0) {
-      let weightedShots = 0;
-      let weightedXg = 0;
-      let weightedKeyPasses = 0;
-      let weightedRating = 0;
-      let totalWeight = 0;
-
-      recentLogs.forEach((log: any, idx: number) => {
-        const decay = Math.pow(1 - alpha, idx);
-        totalWeight += decay;
-
-        const s = log.rawStats?.totalShots ?? log.rawStats?.shots ?? 2.0;
-        const x = log.rawStats?.xG ?? 0.3;
-        const kp = log.rawStats?.keyPasses ?? 2.0;
-        const r = log.rawStats?.rating ?? 8.0;
-
-        weightedShots += s * decay;
-        weightedXg += x * decay;
-        weightedKeyPasses += kp * decay;
-        weightedRating += r * decay;
-      });
-
-      if (totalWeight > 0) {
-        baselineShots = weightedShots / totalWeight;
-        baselineXg = weightedXg / totalWeight;
-        baselineKeyPasses = weightedKeyPasses / totalWeight;
-        baselineRating = weightedRating / totalWeight;
-      }
-    }
-
-    // 3. Fetch active contextual weights
-    const weights = await ctx.db
-      .query("playerWeights")
-      .withIndex("by_player_and_feature", (q: any) => q.eq("playerId", args.playerId))
-      .collect();
-
-    const weightMap: Record<string, { value: number; confidence: number }> = {};
-    weights.forEach((w: any) => {
-      weightMap[w.featureName] = { value: w.weightValue, confidence: w.confidenceScore };
-    });
-
-    // 4. Context Multipliers
-    let multiplier = 1.0;
-    const appliedContexts: Array<{ feature: string; impact: number }> = [];
-
-    // Away match penalty or Home match boost
-    if (args.isAway) {
-      const awayWeight = weightMap["is_away"]?.value ?? -0.12;
-      multiplier *= 1 + awayWeight;
-      appliedContexts.push({ feature: "is_away", impact: awayWeight });
-    } else {
-      const homeWeight = weightMap["home_pitch_bias"]?.value ?? 0.084;
-      multiplier *= 1 + homeWeight;
-      appliedContexts.push({ feature: "home_pitch_bias", impact: homeWeight });
-    }
-
-    // Optional context features
-    if (args.contextFeatures) {
-      for (const feat of args.contextFeatures) {
-        if (weightMap[feat]) {
-          multiplier *= 1 + weightMap[feat].value;
-          appliedContexts.push({ feature: feat, impact: weightMap[feat].value });
-        }
-      }
-    }
-
-    // Final predicted metrics
-    const predictedShots = +(baselineShots * multiplier).toFixed(2);
-    const predictedXg = +(baselineXg * multiplier).toFixed(2);
-    const predictedKeyPasses = +(baselineKeyPasses * multiplier).toFixed(2);
-
-    // Dynamic predictive rating calculation (scale 1 to 10)
-    const baseForm = baselineRating + (multiplier - 1.0) * 1.5;
-    const predictiveForm = Math.min(9.95, Math.max(6.0, +baseForm.toFixed(2)));
-
-    // Confidence aggregation
-    const confidence = +(
-      95.0 +
-      Math.min(4.5, (recentLogs.length / 10) * 4.0)
-    ).toFixed(1);
+    const dist = Object.fromEntries(
+      STATS.map((s) => [
+        s,
+        {
+          mean: round(fc.stats[s].mean),
+          sd: round(fc.stats[s].sd),
+          low: round(fc.stats[s].low),
+          high: round(fc.stats[s].high),
+          pAtLeast: Object.fromEntries(Object.entries(fc.stats[s].pAtLeast).map(([k, p]) => [k, round(p, 3)])),
+        },
+      ])
+    );
 
     const predictedMetrics = {
-      totalShots: predictedShots,
-      shotsPredicted: +(predictedShots + 0.3).toFixed(2), // Contextual variance ceiling
-      xG: predictedXg,
-      keyPasses: predictedKeyPasses,
-      keyPassesPredicted: +(predictedKeyPasses + 0.3).toFixed(2),
-      predictiveForm,
-      confidence,
+      totalShots: round(fc.stats.totalShots.mean),
+      shotsPredicted: round(fc.stats.totalShots.mean),
+      xG: round(fc.stats.xG.mean),
+      keyPasses: round(fc.stats.keyPasses.mean),
+      keyPassesPredicted: round(fc.stats.keyPasses.mean),
+      groundDuelsWon: round(fc.stats.groundDuelsWon.mean),
+      distribution: dist,
+      expectedMinutes: Math.round(fc.minutes),
+      contextMultiplier: round(fc.multiplier, 3),
+      predictiveForm: round(Math.min(10, Math.max(1, fc.rating))),
+      confidence: round(fc.dataShare * 100, 1),
       opponent: args.opponent,
+      opponentDefense: opponentDefense ? round(opponentDefense, 3) : null,
       isAway: args.isAway,
-      tacticalRole: args.tacticalRole ?? "AM / Box-to-Box",
-      appliedContexts,
+      tacticalRole: args.tacticalRole ?? input.player.position,
+      appliedContexts: fc.contributions.map((c) => ({ feature: c.feature, impact: round(c.impact, 4) })),
+      matchesUsed: state.matches,
     };
 
-    // Save prediction record
     const predictionId = await ctx.db.insert("playerPredictions", {
       playerId: args.playerId,
       predictedMetrics,
+      kind: "forecast",
       appliedAt: Date.now(),
     });
 
@@ -137,8 +77,9 @@ export const calculateAndPredict = mutation({
 });
 
 /**
- * Ingests match result into playerMatchLogs, computes prediction error deltas,
- * recalibrates playerWeights via gradient step, and outputs the updated model state.
+ * Registra un partido jugado y recalibra.
+ * El error se mide contra la predicción que el modelo habría hecho ANTES del
+ * partido (solo con los partidos anteriores), así la curva de aprendizaje es honesta.
  */
 export const recordMatchAndCalibrate = mutation({
   args: {
@@ -151,9 +92,10 @@ export const recordMatchAndCalibrate = mutation({
     minutesPlayed: v.number(),
     rawStats: v.any(),
     tacticalRole: v.optional(v.string()),
+    contextFeatures: v.optional(v.array(v.string())),
   },
   handler: async (ctx, args) => {
-    // 1. Ingest into playerMatchLogs
+    if (!(args.minutesPlayed > 0)) throw new Error("minutesPlayed debe ser > 0");
     const matchLogId = await ctx.db.insert("playerMatchLogs", {
       playerId: args.playerId,
       matchDate: args.matchDate,
@@ -161,98 +103,102 @@ export const recordMatchAndCalibrate = mutation({
       opponentTeamId: args.opponentTeamId,
       competition: args.competition || "laliga",
       isAway: args.isAway,
-      tacticalRole: args.tacticalRole ?? "AM / Box-to-Box",
+      tacticalRole: args.tacticalRole,
       minutesPlayed: args.minutesPlayed,
+      contextFeatures: args.contextFeatures,
       rawStats: args.rawStats,
     });
 
-    // 2. Fetch the latest prediction for this player
-    const predictions = await ctx.db
-      .query("playerPredictions")
-      .withIndex("by_player", (q: any) => q.eq("playerId", args.playerId))
-      .collect();
+    const synced = await syncPlayerWeights(ctx.db, args.playerId);
+    if (!synced) throw new Error("Jugador no encontrado");
+    const { points } = buildReport(synced.input);
+    const point = points.find((p) => p.logId === matchLogId);
 
-    predictions.sort((a: any, b: any) => b.appliedAt - a.appliedAt);
-    const latestPred = predictions[0];
-
-    // 3. Extract actual values
-    const actualShots = +(args.rawStats?.totalShots ?? args.rawStats?.shots ?? 0);
-    const actualXg = +(args.rawStats?.xG ?? 0);
-    const actualKeyPasses = +(args.rawStats?.keyPasses ?? 0);
-
-    const actualMetrics = {
-      totalShots: actualShots,
-      xG: actualXg,
-      keyPasses: actualKeyPasses,
-      rating: +(args.rawStats?.rating ?? 8.0),
-    };
-
-    // 4. Calculate Deltas: actual - predicted
-    const predShots = latestPred?.predictedMetrics?.totalShots ?? 2.4;
-    const predXg = latestPred?.predictedMetrics?.xG ?? 0.35;
-    const predKeyPasses = latestPred?.predictedMetrics?.keyPasses ?? 2.8;
-
-    const deltas = {
-      totalShots: +(actualShots - predShots).toFixed(2),
-      xG: +(actualXg - predXg).toFixed(2),
-      keyPasses: +(actualKeyPasses - predKeyPasses).toFixed(2),
-    };
-
-    // 5. Gradient Descent / Feedback Calibration for Weights
-    // newWeight = currentWeight + (learningRate * sign(delta) * normalizedDelta)
-    const learningRate = 0.05;
-    const targetFeature = args.isAway ? "is_away" : "home_pitch_bias";
-
-    const existingWeights = await ctx.db
-      .query("playerWeights")
-      .withIndex("by_player_and_feature", (q: any) =>
-        q.eq("playerId", args.playerId).eq("featureName", targetFeature)
-      )
-      .first();
-
-    const normalizedDelta = deltas.totalShots / Math.max(predShots, 1.0);
-    const gradientStep =
-      learningRate * Math.sign(normalizedDelta) * Math.min(Math.abs(normalizedDelta), 1.0);
-
-    let updatedWeightValue = args.isAway ? -0.12 : 0.084;
-    let newConfidence = 0.85;
-
-    if (existingWeights) {
-      updatedWeightValue = +(existingWeights.weightValue + gradientStep).toFixed(4);
-      newConfidence = Math.min(0.99, +(existingWeights.confidenceScore + 0.02).toFixed(2));
-
-      await ctx.db.patch(existingWeights._id, {
-        weightValue: updatedWeightValue,
-        confidenceScore: newConfidence,
-        updatedAt: Date.now(),
-      });
-    } else {
-      await ctx.db.insert("playerWeights", {
-        playerId: args.playerId,
-        featureName: targetFeature,
-        weightValue: updatedWeightValue,
-        confidenceScore: newConfidence,
-        updatedAt: Date.now(),
-      });
+    const predictedBefore: Record<string, number> = {};
+    const actualMetrics: Record<string, number> = {};
+    const deltas: Record<string, number> = {};
+    for (const s of STATS) {
+      const st = point?.stats[s];
+      if (!st) continue;
+      predictedBefore[s] = round(st.predicted);
+      actualMetrics[s] = st.actual;
+      deltas[s] = round(st.actual - st.predicted);
     }
 
-    // 6. Update the prediction record with actuals and deltas
-    if (latestPred) {
-      await ctx.db.patch(latestPred._id, {
-        matchLogId,
-        actualMetrics,
-        deltas,
-      });
-    }
-
+    const venue = synced.state.beta.is_away;
     return {
       matchLogId,
+      predictedBefore,
       actualMetrics,
       deltas,
-      calibratedWeight: {
-        featureName: targetFeature,
-        newValue: updatedWeightValue,
-        confidence: newConfidence,
+      error: point
+        ? { model: round(point.modelError, 3), naive: round(point.naiveError, 3), noiseFloor: round(point.noiseFloor, 3) }
+        : null,
+      calibratedWeight: venue
+        ? { featureName: "is_away", newValue: round(Math.exp(venue.mean) - 1, 4), confidence: round(venue.dataShare, 3) }
+        : null,
+    };
+  },
+});
+
+/**
+ * Informe del modelo para la UI: validación partido a partido (alimenta el
+ * radar y la curva de aprendizaje), resumen de error y perfil actual.
+ */
+export const getModelReport = query({
+  args: { playerId: v.optional(v.id("players")) },
+  handler: async (ctx, args) => {
+    const playerId = args.playerId ?? (await ctx.db.query("players").first())?._id;
+    if (!playerId) return null;
+    const input = await loadPlayerModelInput(ctx.db, playerId);
+    if (!input) return null;
+    const { points, state } = buildReport(input);
+    return {
+      playerId,
+      points: points.map((p) => ({
+        ...p,
+        modelError: round(p.modelError, 4),
+        naiveError: round(p.naiveError, 4),
+        noiseFloor: round(p.noiseFloor, 4),
+        dataShare: round(p.dataShare, 3),
+        stats: Object.fromEntries(
+          Object.entries(p.stats).map(([k, s]) => [
+            k,
+            {
+              predicted: round(s!.predicted),
+              sd: round(s!.sd),
+              actual: s!.actual,
+              naive: round(s!.naive),
+              noiseFloor: round(s!.noiseFloor),
+            },
+          ])
+        ),
+      })),
+      summary: summarizeWalkForward(points),
+      profile: {
+        matches: state.matches,
+        expectedMinutes: Math.round(state.expectedMinutes),
+        rating: round(state.rating.mean),
+        per90: Object.fromEntries(
+          STATS.map((s) => [
+            s,
+            {
+              label: STAT_LABELS[s],
+              rate: round(state.rates[s].rate),
+              prior: round(state.rates[s].prior),
+              dataShare: round(state.rates[s].dataShare, 3),
+            },
+          ])
+        ),
+        effects: Object.entries(state.beta).map(([f, b]) => ({
+          feature: f,
+          label: b.prior.label,
+          impact: round(Math.exp(b.mean) - 1, 4),
+          low: round(Math.exp(b.mean - 1.2816 * b.sd) - 1, 4),
+          high: round(Math.exp(b.mean + 1.2816 * b.sd) - 1, 4),
+          dataShare: round(b.dataShare, 3),
+          matches: b.matches,
+        })),
       },
     };
   },

@@ -19,6 +19,30 @@ FutbolLab 2.0 es una plataforma de inteligencia táctica y analítica predictiva
 
 ---
 
+## 🧠 Motor de perfil del jugador (`convex/lib/engine.ts`)
+
+La lógica del criminalista: primero la **tasa base del tipo** (su posición), después la **evidencia del individuo**, y solo nos alejamos de la base cuando la evidencia alcanza.
+
+* **Firma por 90'**: tiros, xG, pases clave y duelos se modelan como Poisson por minuto jugado, con prior Gamma = media de la posición (vale 3 partidos completos). Un partido de 20' ya no cuenta como uno de 90'.
+* **Modus operandi**: efectos de contexto (visitante, defensa del rival, etiquetas propias) estimados con todos los partidos a la vez (Newton sobre la verosimilitud penalizada). Se recalculan desde cero en cada cambio, así que editar o borrar un partido corrige el perfil.
+* **Predicción = distribución**: Binomial Negativa → media, intervalo 80% y P(≥1), P(≥2). La "confianza" es el % del pronóstico que sale de datos propios.
+* **Curva de aprendizaje honesta**: cada partido se predice solo con los anteriores (walk-forward) y se compara con la realidad, contra un método ingenuo y contra el piso de ruido (el error que ningún modelo puede evitar).
+* **Nada inventado**: si falta una stat, no se rellena. El endpoint `/api/ingest-match` responde 422 si faltan datos reales.
+
+`npm test` ejecuta los tests del motor y de las funciones de Convex (`convex/model.test.ts`).
+
+## 📦 Histórico del FutbolLab anterior
+
+`data/legacy/` contiene 1.330 partidos (Serie A, Premier, Bundesliga, Ligue 1, ago-2025 → may-2026), 79 equipos y 1.014 jugadores con totales de temporada, generados con:
+
+```bash
+python3 scripts/legacy/build_legacy_data.py /ruta/futbollab_standalone data/legacy
+```
+
+En la app, el explorador de ligas muestra el botón **Importar histórico** (acción `legacy:importLegacyData`, se puede repetir sin duplicar). Al importar se recalculan tablas, forma y la fuerza ataque/defensa de cada equipo (`legacy:recomputeTeamStrength`), que el motor usa como contexto del rival.
+
+---
+
 ## 🛠️ Stack Tecnológico
 
 * **Frontend:** Next.js 14 (App Router), TypeScript, Tailwind CSS.

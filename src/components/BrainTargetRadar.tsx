@@ -9,6 +9,8 @@ export interface PredictionMetricPoint {
   actual: number;
   matchIndex: number;
   categoryAngle: number; // degrees: Tiros 45°, xG 135°, Pases 225°, Duelos 315°
+  /** Desviación estándar de la predicción. Si existe, el error se mide en σ. */
+  sd?: number;
 }
 
 export interface PlottedMetricPoint extends PredictionMetricPoint {
@@ -19,6 +21,7 @@ export interface PlottedMetricPoint extends PredictionMetricPoint {
   color: string;
   glow: string;
   deltaPct: number;
+  sigmas: number | null;
 }
 
 export interface BrainTargetRadarProps {
@@ -30,7 +33,7 @@ export interface BrainTargetRadarProps {
 
 export function BrainTargetRadar({
   metrics,
-  selectedMatchLabel = "Convergencia del Modelo (P1 → P2)",
+  selectedMatchLabel = "Partido seleccionado",
   width = 340,
   height = 340,
 }: BrainTargetRadarProps) {
@@ -42,8 +45,13 @@ export function BrainTargetRadar({
 
   // Calculate coordinates for each metric
   const plottedPoints = metrics.map((m) => {
-    // Relative error ratio: |actual - predicted| / max(actual, 1)
-    const errorRatio = Math.min(1.0, Math.abs(m.actual - m.predicted) / Math.max(m.actual, 1));
+    // Error estandarizado: |real − predicho| / σ, con el borde del radar en 2σ.
+    // (Sin σ: error relativo como antes.) Un punto dentro de 1σ es ruido normal.
+    const sigmas = m.sd && m.sd > 0 ? Math.abs(m.actual - m.predicted) / m.sd : null;
+    const errorRatio = Math.min(
+      1.0,
+      sigmas !== null ? sigmas / 2 : Math.abs(m.actual - m.predicted) / Math.max(m.actual, 1)
+    );
     const r = errorRatio * maxRadius;
 
     // Directional bias: clockwise (+10°) if over-predicted, counterclockwise (-10°) if under-predicted
@@ -61,9 +69,12 @@ export function BrainTargetRadar({
     // Color bracket according to error ratio
     let color = "#10B981"; // Emerald (< 25% error)
     let glow = "rgba(16, 185, 129, 0.5)";
-    if (errorRatio >= 0.5) {
-      color = "#EF4444"; // Red (> 50% error)
+    if (errorRatio >= 0.75) {
+      color = "#EF4444"; // > 1.5σ
       glow = "rgba(239, 68, 68, 0.5)";
+    } else if (errorRatio >= 0.5) {
+      color = "#F59E0B"; // 1σ – 1.5σ
+      glow = "rgba(245, 158, 11, 0.5)";
     } else if (errorRatio >= 0.25) {
       color = "#06B6D4"; // Cyan (25-50% error)
       glow = "rgba(6, 182, 212, 0.5)";
@@ -80,6 +91,7 @@ export function BrainTargetRadar({
       color,
       glow,
       deltaPct,
+      sigmas,
     };
   });
 
@@ -91,8 +103,8 @@ export function BrainTargetRadar({
 
   // Category labels positioned outside maxRadius
   const categoryLabels = [
-    { label: "Tiros / 90", angle: 45 },
-    { label: "xG Gen", angle: 135 },
+    { label: "Tiros", angle: 45 },
+    { label: "xG", angle: 135 },
     { label: "Pases Clave", angle: 225 },
     { label: "Duelos", angle: 315 },
   ];
@@ -115,7 +127,8 @@ export function BrainTargetRadar({
       </div>
 
       <p className="font-mono text-[10px] text-on-surface-variant w-full mb-2">
-        El centro (<code className="text-primary font-bold">r = 0</code>) representa error cero (proyección perfecta). Los puntos convergen al centro a medida que el modelo calibra.
+        Distancia al centro = error de la predicción pre-partido en desviaciones (σ). Dentro del
+        anillo de 1σ es ruido normal del fútbol; fuera de 1.5σ el perfil no esperaba eso.
       </p>
 
       {/* SVG Bullseye Polar Radar */}
@@ -348,7 +361,9 @@ export function BrainTargetRadar({
                   : `${activeTooltip.deltaPct.toFixed(1)}%`}
               </span>
               <span className="text-[9px] text-on-surface-variant">
-                Error: {(activeTooltip.errorRatio * 100).toFixed(0)}%
+                {activeTooltip.sigmas !== null
+                  ? `${activeTooltip.sigmas.toFixed(1)}σ`
+                  : `Error: ${(activeTooltip.errorRatio * 100).toFixed(0)}%`}
               </span>
             </div>
           </div>
@@ -359,19 +374,19 @@ export function BrainTargetRadar({
       <div className="grid grid-cols-4 gap-1.5 w-full pt-2 border-t border-surface-container-high/60 mt-1 font-mono text-[9px] text-center">
         <div className="flex items-center justify-center gap-1 bg-surface-container px-1 py-0.5 rounded border border-primary/30">
           <span className="w-2 h-2 rounded-full bg-primary" />
-          <span className="text-primary font-bold">±10% Core</span>
+          <span className="text-primary font-bold">≤0.5σ</span>
         </div>
         <div className="flex items-center justify-center gap-1 bg-surface-container px-1 py-0.5 rounded border border-secondary/30">
           <span className="w-2 h-2 rounded-full bg-secondary" />
-          <span className="text-secondary">±25% Ok</span>
+          <span className="text-secondary">≤1σ</span>
         </div>
         <div className="flex items-center justify-center gap-1 bg-surface-container px-1 py-0.5 rounded border border-amber-500/30">
           <span className="w-2 h-2 rounded-full bg-amber-400" />
-          <span className="text-amber-400">±50% Drift</span>
+          <span className="text-amber-400">≤1.5σ</span>
         </div>
         <div className="flex items-center justify-center gap-1 bg-surface-container px-1 py-0.5 rounded border border-rose-500/30">
           <span className="w-2 h-2 rounded-full bg-rose-500" />
-          <span className="text-rose-400">&gt;75% Bias</span>
+          <span className="text-rose-400">&gt;1.5σ</span>
         </div>
       </div>
     </div>
