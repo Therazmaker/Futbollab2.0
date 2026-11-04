@@ -20,12 +20,12 @@ export default function FutbolLabApp() {
   };
 
   return (
-    <div className="flex flex-col min-h-screen bg-background text-on-surface">
+    <div className="flex flex-col min-h-screen w-full bg-background text-on-surface overflow-x-hidden">
       {/* Top HUD Header */}
       <HeaderHUD currentTab={activeTab} />
 
       {/* Main Responsive Content Shell */}
-      <main className="flex-1 max-w-lg w-full mx-auto px-margin pt-28 pb-28 flex flex-col">
+      <main className="flex-1 max-w-lg w-full mx-auto px-4 pt-32 pb-36 flex flex-col">
         {/* Offline & Pending Banner Alert */}
         {(!isOnline || pendingCount > 0) && (
           <div

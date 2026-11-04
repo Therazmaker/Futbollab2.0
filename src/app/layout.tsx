@@ -35,7 +35,7 @@ export default function RootLayout({
           rel="stylesheet"
         />
       </head>
-      <body className="bg-background text-on-surface antialiased select-none font-sans min-h-screen flex flex-col">
+      <body className="bg-background text-on-surface antialiased font-sans min-h-screen flex flex-col">
         <ConvexClientProvider>{children}</ConvexClientProvider>
       </body>
     </html>

@@ -8,28 +8,33 @@
     --font-jetbrains-mono: 'JetBrains Mono', monospace;
   }
 
-  html,
+  html {
+    width: 100%;
+    overflow-x: hidden;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
   body {
-    width: 100vw;
+    width: 100%;
+    min-height: 100vh;
+    min-height: 100dvh;
     margin: 0;
     padding: 0;
     background-color: #0f131c;
     color: #dfe2ee;
     font-family: var(--font-inter);
     overflow-x: hidden;
-  }
-
-  body {
-    overscroll-behavior: none;
-    min-height: max(884px, 100dvh);
+    overflow-y: visible;
+    touch-action: pan-y;
   }
 
   .pb-safe {
-    padding-bottom: env(safe-area-inset-bottom, 12px);
+    padding-bottom: max(env(safe-area-inset-bottom, 16px), 16px);
   }
 
   .pt-safe {
-    padding-top: env(safe-area-inset-top, 12px);
+    padding-top: max(env(safe-area-inset-top, 12px), 12px);
   }
 
   /* Custom subtle scrollbar */
@@ -55,4 +60,5 @@
 .no-scrollbar {
   -ms-overflow-style: none;
   scrollbar-width: none;
+  touch-action: pan-x pan-y;
 }

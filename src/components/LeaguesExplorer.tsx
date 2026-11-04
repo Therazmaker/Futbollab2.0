@@ -105,7 +105,7 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
           </span>
           <span className="font-mono text-[10px] text-secondary">5 Active</span>
         </div>
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 -mx-margin px-margin no-scrollbar">
+        <div className="flex items-center gap-2 overflow-x-auto pb-1 w-full no-scrollbar">
           {leaguesList.map((lg) => {
             const isSelected = selectedLeague === lg.code;
             return (
