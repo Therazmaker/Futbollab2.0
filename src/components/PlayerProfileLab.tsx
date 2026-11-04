@@ -54,6 +54,11 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
 
   // Quick edit modal on the list
   const [editingLog, setEditingLog] = useState<any | null>(null);
+  // Edición de la ficha del jugador (posición, dorsal, edad, nombre)
+  const updatePlayerMutation = useMutation(api.players.updatePlayer);
+  const [editingPlayer, setEditingPlayer] = useState<{ name: string; position: string; number: string; age: string } | null>(null);
+  const [savingPlayer, setSavingPlayer] = useState(false);
+  const [playerError, setPlayerError] = useState<string | null>(null);
   const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // Partido seleccionado en el radar (índice en report.points; null = el último)
@@ -439,9 +444,23 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                   )}
                 </div>
                 <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
-                  <span className="bg-primary/10 text-primary font-mono text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider border border-primary/20">
+                  <button
+                    onClick={() => {
+                      if (!activePlayer) return;
+                      setPlayerError(null);
+                      setEditingPlayer({
+                        name: activePlayer.name,
+                        position: activePlayer.position || "MF",
+                        number: (activePlayer as any).number != null ? String((activePlayer as any).number) : "",
+                        age: (activePlayer as any).age != null ? String((activePlayer as any).age) : "",
+                      });
+                    }}
+                    title="Editar posición, dorsal, edad y nombre"
+                    className="bg-primary/10 text-primary font-mono text-[10px] px-2 py-0.5 rounded font-semibold uppercase tracking-wider border border-primary/20 flex items-center gap-1 hover:bg-primary/20"
+                  >
                     {activePlayer?.position || player.position}
-                  </span>
+                    <span className="material-symbols-outlined text-[12px]">edit</span>
+                  </button>
                   <span className="text-on-surface-variant text-xs font-sans">
                     {(activePlayer as any)?.age
                       ? `${(activePlayer as any).age} años`
@@ -978,6 +997,131 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
           </button>
         </div>
       </div>
+
+      {/* Modal: editar ficha del jugador */}
+      {editingPlayer && activePlayer && (
+        <div className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain flex justify-center bg-black/80 backdrop-blur-sm p-4">
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setPlayerError(null);
+              setSavingPlayer(true);
+              try {
+                await updatePlayerMutation({
+                  playerId: activePlayer._id,
+                  name: editingPlayer.name,
+                  position: editingPlayer.position,
+                  number: editingPlayer.number === "" ? null : Number(editingPlayer.number),
+                  age: editingPlayer.age === "" ? null : Number(editingPlayer.age),
+                });
+                setEditingPlayer(null);
+              } catch (err: any) {
+                setPlayerError(err?.message ?? String(err));
+              } finally {
+                setSavingPlayer(false);
+              }
+            }}
+            className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl my-auto flex flex-col gap-3"
+          >
+            <div className="flex items-center justify-between pb-3 border-b border-surface-container-high">
+              <h3 className="font-bold text-base text-on-surface">Ficha del jugador</h3>
+              <button
+                type="button"
+                onClick={() => setEditingPlayer(null)}
+                className="w-8 h-8 rounded-lg bg-surface-container text-on-surface-variant hover:text-on-surface"
+              >
+                ✕
+              </button>
+            </div>
+            <input
+              value={editingPlayer.name}
+              onChange={(e) => setEditingPlayer({ ...editingPlayer, name: e.target.value })}
+              className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+              placeholder="Nombre"
+              required
+            />
+            <div>
+              <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">Posición</label>
+              <div className="grid grid-cols-5 gap-1">
+                {(
+                  [
+                    ["GK", "Portero"],
+                    ["DF", "Defensa"],
+                    ["MF", "Medio"],
+                    ["AM", "Mediapunta"],
+                    ["FW", "Delantero"],
+                  ] as const
+                ).map(([code, label]) => {
+                  const selected = editingPlayer.position.toUpperCase().startsWith(code);
+                  return (
+                    <button
+                      key={code}
+                      type="button"
+                      onClick={() => setEditingPlayer({ ...editingPlayer, position: code })}
+                      className={`py-1.5 rounded-lg font-mono text-[10px] border ${
+                        selected
+                          ? "bg-primary text-on-primary font-bold border-primary"
+                          : "bg-surface-container text-on-surface-variant border-surface-container-high"
+                      }`}
+                    >
+                      <span className="block font-bold">{code}</span>
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <p className="font-mono text-[9px] text-on-surface-variant mt-1">
+                Tasa base por 90&apos; (antes de sus propios partidos):{" "}
+                {
+                  {
+                    GK: "0 tiros · 0.00 xG · 0.1 pases clave",
+                    DF: "0.6 tiros · 0.05 xG · 0.6 pases clave",
+                    MF: "1.2 tiros · 0.10 xG · 1.2 pases clave",
+                    AM: "2.2 tiros · 0.25 xG · 1.9 pases clave",
+                    FW: "2.6 tiros · 0.38 xG · 1.1 pases clave",
+                  }[editingPlayer.position.toUpperCase().slice(0, 2)] ?? "según el texto de la posición"
+                }
+                . Al cambiarla, el perfil se recalcula.
+              </p>
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <input
+                type="number"
+                min="1"
+                value={editingPlayer.number}
+                onChange={(e) => setEditingPlayer({ ...editingPlayer, number: e.target.value })}
+                placeholder="Dorsal"
+                className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+              />
+              <input
+                type="number"
+                min="14"
+                value={editingPlayer.age}
+                onChange={(e) => setEditingPlayer({ ...editingPlayer, age: e.target.value })}
+                placeholder="Edad"
+                className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+              />
+            </div>
+            {playerError && <p className="font-mono text-[11px] text-error">{playerError}</p>}
+            <div className="pt-3 border-t border-surface-container-high flex justify-end gap-2 sticky bottom-0 bg-surface-container-low">
+              <button
+                type="button"
+                onClick={() => setEditingPlayer(null)}
+                className="px-3 py-1.5 rounded-lg bg-surface-container text-on-surface-variant font-mono text-xs"
+              >
+                Cancelar
+              </button>
+              <button
+                type="submit"
+                disabled={savingPlayer}
+                className="px-4 py-1.5 rounded-lg bg-primary text-on-primary font-mono text-xs font-bold"
+              >
+                {savingPlayer ? "Guardando…" : "Guardar"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
 
       {/* Quick Edit Modal */}
       {editingLog && (

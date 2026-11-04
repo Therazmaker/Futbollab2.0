@@ -297,3 +297,33 @@ export const createPlayer = mutation({
     return playerId;
   },
 });
+
+/**
+ * Edita la ficha del jugador. Cambiar la posición cambia su tasa base
+ * (prior), así que el perfil y los efectos se recalculan al momento.
+ */
+export const updatePlayer = mutation({
+  args: {
+    playerId: v.id("players"),
+    name: v.optional(v.string()),
+    position: v.optional(v.string()),
+    number: v.optional(v.union(v.number(), v.null())),
+    age: v.optional(v.union(v.number(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const player = await ctx.db.get(args.playerId);
+    if (!player) throw new Error("Jugador no encontrado");
+    const patch: Record<string, unknown> = {};
+    if (args.name !== undefined) {
+      const name = args.name.trim();
+      if (!name) throw new Error("El nombre es obligatorio");
+      patch.name = name;
+    }
+    if (args.position !== undefined) patch.position = args.position;
+    if (args.number !== undefined) patch.number = args.number ?? undefined;
+    if (args.age !== undefined) patch.age = args.age ?? undefined;
+    await ctx.db.patch(args.playerId, patch);
+    await syncPlayerWeights(ctx.db, args.playerId);
+    return { success: true };
+  },
+});
