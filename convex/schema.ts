@@ -2,72 +2,45 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
-  leagues: defineTable({
-    code: v.string(),
+  teams: defineTable({
     name: v.string(),
-    country: v.string(),
-    teamsCount: v.number(),
-    icon: v.string(),
-  }).index("by_code", ["code"]),
-
-  clubs: defineTable({
-    name: v.string(),
-    shortName: v.string(),
-    leagueCode: v.string(),
-    rank: v.number(),
-    points: v.number(),
-    goalDifference: v.number(),
-    winRate: v.number(),
-    meanXg: v.number(),
-    ppda: v.number(),
-    tempo: v.string(),
-    form: v.array(v.string()), // ['W', 'W', 'W', 'D', 'W']
-    formation: v.string(),
-    badgeUrl: v.string(),
-    activeStatus: v.string(),
-    lastUpdated: v.number(),
-  })
-    .index("by_league", ["leagueCode"])
-    .index("by_rank", ["rank"]),
+    league: v.string(),
+    crestUrl: v.optional(v.string()),
+  }),
 
   players: defineTable({
+    teamId: v.id("teams"),
     name: v.string(),
-    clubName: v.string(),
-    number: number(),
-    nationality: v.string(),
     position: v.string(),
-    role: v.string(),
-    age: v.number(),
-    height: v.number(),
-    photoUrl: v.string(),
-    predictiveForm: v.number(),
-    pitchBiasDelta: v.number(),
-    confidence: v.number(),
-    metrics: v.object({
-      shotsObserved: v.number(),
-      shotsPredicted: v.number(),
-      keyPassesObserved: v.number(),
-      keyPassesPredicted: v.number(),
-      aerialDuelWinPct: v.number(),
-      xtThreat: v.number(),
-    }),
-  }).index("by_club", ["clubName"]),
+    photoUrl: v.optional(v.string()),
+  }).index("by_team", ["teamId"]),
 
-  tacticalSimulations: defineTable({
-    teamName: v.string(),
-    opponentName: v.string(),
-    matchVenue: v.string(),
-    matchTime: v.string(),
-    winProbability: v.number(),
-    drawProbability: v.number(),
-    lossProbability: v.number(),
-    formation: v.string(),
-    highPressIntensity: v.number(),
-    tempoMultiplier: v.number(),
+  playerMatchLogs: defineTable({
+    playerId: v.id("players"),
+    matchDate: v.string(),
+    opponent: v.string(),
+    isAway: v.boolean(),
+    tacticalRole: v.optional(v.string()),
+    minutesPlayed: v.number(),
+    rawStats: v.any(), // Flexible container for Sofascore/FotMob OCR ingested metrics (50+ fields)
+  })
+    .index("by_player", ["playerId"])
+    .index("by_player_and_date", ["playerId", "matchDate"]),
+
+  playerWeights: defineTable({
+    playerId: v.id("players"),
+    featureName: v.string(), // e.g. 'is_away', 'opponent_low_block', 'missing_key_partner'
+    weightValue: v.number(), // default 0.0
+    confidenceScore: v.number(), // default 0.1
     updatedAt: v.number(),
-  }).index("by_team", ["teamName"]),
-});
+  }).index("by_player_and_feature", ["playerId", "featureName"]),
 
-function number() {
-  return v.number();
-}
+  playerPredictions: defineTable({
+    playerId: v.id("players"),
+    matchLogId: v.optional(v.id("playerMatchLogs")),
+    predictedMetrics: v.any(), // e.g. { totalShots: 2.8, xG: 0.35, keyPasses: 1.5 }
+    actualMetrics: v.optional(v.any()),
+    deltas: v.optional(v.any()),
+    appliedAt: v.number(),
+  }).index("by_player", ["playerId"]),
+});
