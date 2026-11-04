@@ -357,3 +357,39 @@ describe("Convex: partidos de equipo ↔ partidos de jugador", () => {
     expect(newMatch!.date).toBe("2026-06-29");
   }, 180_000);
 });
+
+describe("calibración del xG", () => {
+  test("con xG por tiro realista, el error medio del xG ronda 0.8σ", () => {
+    const r = rng(99);
+    // xG de un tiro: lejano / medio / ocasión clara / penalti
+    const shotXg = () => {
+      const u = r();
+      if (u < 0.7) return -Math.log(1 - r()) * 0.04;
+      if (u < 0.9) return 0.1 + r() * 0.1;
+      if (u < 0.98) return 0.3 + r() * 0.2;
+      return 0.76;
+    };
+    const zs: number[] = [];
+    for (let p = 0; p < 60; p++) {
+      const logs: ModelLog[] = [];
+      for (let k = 0; k < 20; k++) {
+        const shots = poisson(2.4, r);
+        let xg = 0;
+        for (let j = 0; j < shots; j++) xg += shotXg();
+        logs.push({
+          matchDate: `2025-${String(1 + Math.floor(k / 4)).padStart(2, "0")}-${String(1 + (k % 4) * 7).padStart(2, "0")}`,
+          isAway: false,
+          minutesPlayed: 90,
+          rawStats: { totalShots: shots, xG: +xg.toFixed(2) },
+        });
+      }
+      for (const pt of walkForward(logs, { position: "AM" }).slice(5)) {
+        const st = pt.stats.xG!;
+        zs.push(Math.abs(st.actual - st.predicted) / st.sd);
+      }
+    }
+    const meanZ = zs.reduce((a, b) => a + b, 0) / zs.length;
+    expect(meanZ).toBeGreaterThan(0.6);
+    expect(meanZ).toBeLessThan(1.0);
+  });
+});

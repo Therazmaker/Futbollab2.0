@@ -301,11 +301,18 @@ function negBinForecast(A: number, B: number, exposure: number): StatForecast {
   };
 }
 
-/** xG: media Gamma-Poisson, varianza cuasi-Poisson (cada tiro aporta ~0.1–0.15 xG). */
+/**
+ * Dispersión del xG de un partido: es una suma de tiros con xG muy desigual
+ * (muchos ~0.03–0.08, algunas ocasiones claras ~0.4, penaltis ~0.76), así que
+ * Var(xG) ≈ media × E[x²]/E[x] ≈ media × 0.32 (Poisson compuesto).
+ */
+export const XG_DISPERSION = 0.32;
+
+/** xG: media Gamma-Poisson, varianza de Poisson compuesto. */
 function continuousForecast(A: number, B: number, exposure: number): StatForecast {
   const mean = (A / B) * exposure;
-  const rateVar = (A / (B * B)) * exposure * exposure * 0.12;
-  const sd = Math.sqrt(mean * 0.12 + rateVar);
+  const rateVar = (A / (B * B)) * exposure * exposure * XG_DISPERSION;
+  const sd = Math.sqrt(mean * XG_DISPERSION + rateVar);
   return {
     mean,
     sd,
