@@ -61,6 +61,78 @@ export const getPlayerProfile = query({
 });
 
 /**
+ * Retrieves single match log details with player context.
+ */
+export const getMatchLogDetails = query({
+  args: {
+    matchLogId: v.id("playerMatchLogs"),
+  },
+  handler: async (ctx, args) => {
+    const matchLog = await ctx.db.get(args.matchLogId);
+    if (!matchLog) return null;
+
+    const player = await ctx.db.get(matchLog.playerId);
+    const team = player ? await ctx.db.get(player.teamId) : null;
+
+    return {
+      matchLog,
+      player,
+      team,
+    };
+  },
+});
+
+/**
+ * Updates match log details and recalibrates raw stats.
+ */
+export const updateMatchLog = mutation({
+  args: {
+    matchLogId: v.id("playerMatchLogs"),
+    opponent: v.optional(v.string()),
+    matchDate: v.optional(v.string()),
+    isAway: v.optional(v.boolean()),
+    minutesPlayed: v.optional(v.number()),
+    tacticalRole: v.optional(v.string()),
+    rawStats: v.optional(v.any()),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.matchLogId);
+    if (!existing) {
+      throw new Error("Match log not found");
+    }
+
+    const patch: any = {};
+    if (args.opponent !== undefined) patch.opponent = args.opponent;
+    if (args.matchDate !== undefined) patch.matchDate = args.matchDate;
+    if (args.isAway !== undefined) patch.isAway = args.isAway;
+    if (args.minutesPlayed !== undefined) patch.minutesPlayed = args.minutesPlayed;
+    if (args.tacticalRole !== undefined) patch.tacticalRole = args.tacticalRole;
+    if (args.rawStats !== undefined) patch.rawStats = args.rawStats;
+
+    await ctx.db.patch(args.matchLogId, patch);
+    return { success: true, matchLogId: args.matchLogId };
+  },
+});
+
+/**
+ * Deletes a match log record.
+ */
+export const deleteMatchLog = mutation({
+  args: {
+    matchLogId: v.id("playerMatchLogs"),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db.get(args.matchLogId);
+    if (!existing) {
+      throw new Error("Match log not found");
+    }
+
+    await ctx.db.delete(args.matchLogId);
+    return { success: true, deletedId: args.matchLogId };
+  },
+});
+
+/**
  * Populates initial sample data for Jude Bellingham if database is empty.
  */
 export const seedBellinghamDemo = mutation({
@@ -159,7 +231,7 @@ export const seedBellinghamDemo = mutation({
     await ctx.db.insert("playerWeights", {
       playerId,
       featureName: "is_away",
-      weightValue: -0.12, // -12% on attacking volume when away
+      weightValue: -0.12,
       confidenceScore: 0.85,
       updatedAt: Date.now(),
     });
@@ -167,7 +239,7 @@ export const seedBellinghamDemo = mutation({
     await ctx.db.insert("playerWeights", {
       playerId,
       featureName: "opponent_low_block",
-      weightValue: -0.08, // -8% against deep defensive block
+      weightValue: -0.08,
       confidenceScore: 0.72,
       updatedAt: Date.now(),
     });
@@ -175,7 +247,7 @@ export const seedBellinghamDemo = mutation({
     await ctx.db.insert("playerWeights", {
       playerId,
       featureName: "missing_key_partner",
-      weightValue: 0.06, // +6% individual shot share when primary partner rests
+      weightValue: 0.06,
       confidenceScore: 0.65,
       updatedAt: Date.now(),
     });
@@ -183,15 +255,15 @@ export const seedBellinghamDemo = mutation({
     await ctx.db.insert("playerWeights", {
       playerId,
       featureName: "home_pitch_bias",
-      weightValue: 0.084, // +8.4% home advantage
+      weightValue: 0.084,
       confidenceScore: 0.9,
       updatedAt: Date.now(),
     });
 
-    // 5. Initial Prediction for next fixture (vs Athletic Club Away)
+    // 5. Initial Prediction for next fixture
     await ctx.db.insert("playerPredictions", {
       playerId,
-      matchLogId: log1, // Reference to baseline calibration
+      matchLogId: log1,
       predictedMetrics: {
         totalShots: 2.1,
         shotsPredicted: 2.4,

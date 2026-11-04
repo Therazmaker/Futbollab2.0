@@ -6,6 +6,7 @@ import { api } from "../../convex/_generated/api";
 import { INITIAL_PLAYER, PlayerData } from "@/data/mock-data";
 import { syncEngine } from "@/lib/offline-sync";
 import { BrainTargetRadar, PredictionMetricPoint } from "./BrainTargetRadar";
+import { MatchDetailView } from "./MatchDetailView";
 
 interface PlayerProfileLabProps {
   onBackToExplorer: () => void;
@@ -18,12 +19,21 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
   const seedDemo = useMutation(api.players.seedBellinghamDemo);
   const calibrateMutation = useMutation(api.predictions.recordMatchAndCalibrate);
   const predictMutation = useMutation(api.predictions.calculateAndPredict);
+  const deleteMatchMutation = useMutation(api.players.deleteMatchLog);
+  const updateMatchMutation = useMutation(api.players.updateMatchLog);
 
   // Local state fallbacks & Interactive Sandbox
   const [player, setPlayer] = useState<PlayerData>(INITIAL_PLAYER);
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [fatigueFactor, setFatigueFactor] = useState<number>(15);
   const [tacticalDepth, setTacticalDepth] = useState<number>(75);
+
+  // Selected Match for Full Detail View Screen
+  const [selectedMatchLog, setSelectedMatchLog] = useState<any | null>(null);
+
+  // Quick edit modal on the list
+  const [editingLog, setEditingLog] = useState<any | null>(null);
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   // Radar fixture switch state
   const [selectedRadarFixture, setSelectedRadarFixture] = useState<"p1" | "p2" | "p3">("p2");
@@ -76,7 +86,6 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
   // Radar Metrics calculation based on selected fixture / Convex state
   const radarMetrics: PredictionMetricPoint[] = useMemo(() => {
     if (selectedRadarFixture === "p1") {
-      // Early training state (high variance / wide error dispersion)
       return [
         { id: "shots_p1", name: "Tiros", predicted: 3.4, actual: 2.0, matchIndex: 1, categoryAngle: 45 },
         { id: "xg_p1", name: "xG Gen", predicted: 0.52, actual: 0.25, matchIndex: 1, categoryAngle: 135 },
@@ -86,7 +95,6 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
     }
 
     if (selectedRadarFixture === "p3") {
-      // Optimal converged forecast (tight bullseye cluster)
       return [
         { id: "shots_p3", name: "Tiros", predicted: 2.3, actual: 2.2, matchIndex: 3, categoryAngle: 45 },
         { id: "xg_p3", name: "xG Gen", predicted: 0.34, actual: 0.33, matchIndex: 3, categoryAngle: 135 },
@@ -95,7 +103,6 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
       ];
     }
 
-    // Default: P2 (Current calibrated state using Convex values or latest log)
     return [
       {
         id: "shots_p2",
@@ -158,7 +165,6 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
       }
     }
 
-    // Also queue via local-first engine
     await syncEngine.enqueue("SIMULATE_MATCH", `player_${player.id}`, {
       fatigueFactor,
       tacticalDepth,
@@ -168,7 +174,6 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
     setIsSimulating(false);
   };
 
-  // Submit actual match result and trigger gradient calibration P1 -> P2
   const handleRegisterMatch = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsSubmittingMatch(true);
@@ -208,6 +213,54 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
       setIsSubmittingMatch(false);
     }
   };
+
+  const handleDeleteMatch = async (matchLogId: any, opponentName: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm(`¿Eliminar partido vs ${opponentName}?`)) return;
+
+    try {
+      await deleteMatchMutation({ matchLogId });
+    } catch (err) {
+      console.error("Error deleting match:", err);
+    }
+  };
+
+  const handleQuickEditSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingLog) return;
+    setIsSavingEdit(true);
+    try {
+      await updateMatchMutation({
+        matchLogId: editingLog._id,
+        opponent: editingLog.opponent,
+        matchDate: editingLog.matchDate,
+        isAway: editingLog.isAway,
+        minutesPlayed: editingLog.minutesPlayed,
+        tacticalRole: editingLog.tacticalRole,
+        rawStats: editingLog.rawStats,
+      });
+      setEditingLog(null);
+    } catch (err) {
+      console.error("Error updating match:", err);
+    } finally {
+      setIsSavingEdit(false);
+    }
+  };
+
+  // If a specific match is selected, render the dedicated Match Detail Screen!
+  if (selectedMatchLog) {
+    return (
+      <MatchDetailView
+        matchLog={selectedMatchLog}
+        playerName={activePlayer?.name || player.name}
+        playerNumber={player.number}
+        onBack={() => setSelectedMatchLog(null)}
+        onMatchUpdated={() => {
+          setSelectedMatchLog(null);
+        }}
+      />
+    );
+  }
 
   return (
     <div className="flex flex-col w-full gap-space-md">
@@ -595,7 +648,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
         />
       </div>
 
-      {/* Match History & Prediction Calibration Log */}
+      {/* Match History & Prediction Calibration Log with Click-to-Detail, Edit & Delete */}
       <div className="bg-surface-container-low rounded-xl p-space-md border border-surface-container-high/60">
         <div className="flex items-center justify-between mb-3">
           <span className="font-mono text-xs uppercase text-primary font-bold flex items-center gap-1.5">
@@ -607,12 +660,20 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
           </span>
         </div>
 
+        <p className="font-mono text-[10px] text-on-surface-variant mb-2">
+          Haz clic en cualquier partido para abrir su pantalla de telemetría completa, o usa los botones para editar o borrar.
+        </p>
+
         <div className="flex flex-col divide-y divide-surface-container-high/40">
           {activeMatchLogs.map((log: any) => (
-            <div key={log._id} className="py-2.5 flex items-center justify-between">
-              <div className="flex items-center gap-2 min-w-0">
+            <div
+              key={log._id}
+              onClick={() => setSelectedMatchLog(log)}
+              className="py-2.5 px-2 -mx-2 rounded-lg hover:bg-surface-container/70 transition-all cursor-pointer flex items-center justify-between group"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
                 <span
-                  className={`w-5 h-5 rounded flex items-center justify-center font-mono text-[9px] font-bold shrink-0 ${
+                  className={`w-6 h-6 rounded flex items-center justify-center font-mono text-[9px] font-bold shrink-0 ${
                     log.isAway
                       ? "bg-secondary/20 text-secondary border border-secondary/30"
                       : "bg-primary/20 text-primary border border-primary/30"
@@ -621,7 +682,14 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                   {log.isAway ? "A" : "H"}
                 </span>
                 <div className="truncate">
-                  <p className="font-semibold text-xs text-on-surface truncate">vs {log.opponent}</p>
+                  <div className="flex items-center gap-1.5">
+                    <p className="font-semibold text-xs text-on-surface truncate group-hover:text-primary transition-colors">
+                      vs {log.opponent}
+                    </p>
+                    <span className="material-symbols-outlined text-[13px] text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">
+                      arrow_forward
+                    </span>
+                  </div>
                   <p className="font-mono text-[10px] text-on-surface-variant">
                     {log.matchDate} • {log.tacticalRole || "AM"} • {log.minutesPlayed}'
                   </p>
@@ -637,8 +705,26 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                     xG {log.rawStats?.xG ?? 0}
                   </span>
                 </div>
-                <div className="px-1.5 py-0.5 rounded bg-surface-container-highest text-primary font-bold">
+                <div className="px-2 py-0.5 rounded bg-surface-container-highest text-primary font-bold border border-primary/20">
                   {log.rawStats?.rating ?? 8.0}
+                </div>
+
+                {/* Edit & Delete Quick Action Buttons */}
+                <div className="flex items-center gap-1 ml-1" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => setEditingLog(log)}
+                    title="Editar datos de este partido"
+                    className="w-7 h-7 rounded bg-surface-container hover:bg-surface-bright flex items-center justify-center text-on-surface-variant hover:text-secondary transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">edit</span>
+                  </button>
+                  <button
+                    onClick={(e) => handleDeleteMatch(log._id, log.opponent, e)}
+                    title="Eliminar este partido"
+                    className="w-7 h-7 rounded bg-surface-container hover:bg-rose-950/60 flex items-center justify-center text-on-surface-variant hover:text-rose-400 transition-colors"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">delete</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -700,6 +786,138 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
           </button>
         </div>
       </div>
+
+      {/* Quick Edit Modal */}
+      {editingLog && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-low border border-secondary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl relative">
+            <div className="flex items-center justify-between pb-3 border-b border-surface-container-high">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-secondary text-[20px]">edit</span>
+                <h3 className="font-bold text-base text-on-surface">Editar Partido</h3>
+              </div>
+              <button
+                onClick={() => setEditingLog(null)}
+                className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-on-surface"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleQuickEditSubmit} className="flex flex-col gap-3 mt-3">
+              <div>
+                <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                  Rival
+                </label>
+                <input
+                  type="text"
+                  value={editingLog.opponent}
+                  onChange={(e) => setEditingLog({ ...editingLog, opponent: e.target.value })}
+                  className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    Fecha
+                  </label>
+                  <input
+                    type="date"
+                    value={editingLog.matchDate}
+                    onChange={(e) => setEditingLog({ ...editingLog, matchDate: e.target.value })}
+                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    Minutos
+                  </label>
+                  <input
+                    type="number"
+                    value={editingLog.minutesPlayed}
+                    onChange={(e) => setEditingLog({ ...editingLog, minutesPlayed: Number(e.target.value) })}
+                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
+                    Tiros
+                  </label>
+                  <input
+                    type="number"
+                    value={editingLog.rawStats?.totalShots ?? 0}
+                    onChange={(e) =>
+                      setEditingLog({
+                        ...editingLog,
+                        rawStats: { ...editingLog.rawStats, totalShots: Number(e.target.value) },
+                      })
+                    }
+                    className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
+                    xG
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={editingLog.rawStats?.xG ?? 0}
+                    onChange={(e) =>
+                      setEditingLog({
+                        ...editingLog,
+                        rawStats: { ...editingLog.rawStats, xG: Number(e.target.value) },
+                      })
+                    }
+                    className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
+                    Rating
+                  </label>
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={editingLog.rawStats?.rating ?? 8.0}
+                    onChange={(e) =>
+                      setEditingLog({
+                        ...editingLog,
+                        rawStats: { ...editingLog.rawStats, rating: Number(e.target.value) },
+                      })
+                    }
+                    className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 pt-3 border-t border-surface-container-high flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEditingLog(null)}
+                  className="px-3 py-1.5 rounded-lg bg-surface-container text-on-surface-variant font-mono text-xs"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingEdit}
+                  className="px-4 py-1.5 rounded-lg bg-secondary text-black font-mono text-xs font-bold shadow-lg"
+                >
+                  {isSavingEdit ? "Guardando..." : "Actualizar Partido"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Modal: Registrar Siguiente Partido (Test del Loop P1 -> P2) */}
       {isModalOpen && (
