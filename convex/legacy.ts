@@ -12,7 +12,7 @@ import legacyPlayers from "../data/legacy/players.json";
 
 /**
  * Importa el histórico del FutbolLab viejo (data/legacy/*.json, generado con
- * scripts/legacy/build_legacy_data.py): 4 ligas, 79 equipos, 1.330 partidos
+ * scripts/legacy/build_legacy_data.py): 4 ligas, 76 equipos, 1.324 partidos
  * y 1.014 jugadores con sus totales de temporada.
  *
  * Es idempotente: cada fila lleva `legacyId`, así que repetirlo no duplica nada.
@@ -52,8 +52,61 @@ async function teamByLegacyId(db: Db, legacyId: string) {
     .first();
 }
 
+/**
+ * El histórico tenía equipos duplicados ("Napoli" y "Nápoles", dos "Aston Villa"...).
+ * Si una importación anterior los creó por separado, se fusionan: partidos,
+ * jugadores y referencias pasan al equipo bueno y el duplicado se borra.
+ */
+async function mergeDuplicates(db: Db, keepLegacyId: string, dupLegacyIds: string[]) {
+  if (!dupLegacyIds.length) return 0;
+  const dups = [];
+  for (const id of dupLegacyIds) {
+    const d = await teamByLegacyId(db, id);
+    if (d) dups.push(d);
+  }
+  if (!dups.length) return 0;
+  let keep = await teamByLegacyId(db, keepLegacyId);
+  if (!keep) {
+    // El bueno no existe todavía: el primer duplicado pasa a ser el bueno
+    await db.patch(dups[0]._id, { legacyId: keepLegacyId });
+    keep = (await db.get(dups[0]._id))!;
+    dups.shift();
+  }
+  for (const d of dups) {
+    const leagueMatches = await db
+      .query("matches")
+      .withIndex("by_league_and_date", (q) => q.eq("league", d.league))
+      .collect();
+    for (const m of leagueMatches) {
+      if (m.homeTeamId === d._id) await db.patch(m._id, { homeTeamId: keep._id });
+      if (m.awayTeamId === d._id) await db.patch(m._id, { awayTeamId: keep._id });
+    }
+    const players = await db
+      .query("players")
+      .withIndex("by_team", (q) => q.eq("teamId", d._id))
+      .collect();
+    for (const p of players) await db.patch(p._id, { teamId: keep._id });
+    const logs = await db
+      .query("playerMatchLogs")
+      .filter((q) => q.eq(q.field("opponentTeamId"), d._id))
+      .collect();
+    for (const l of logs) await db.patch(l._id, { opponentTeamId: keep._id });
+    await db.delete(d._id);
+  }
+  return dups.length;
+}
+
 export const importTeamsChunk = internalMutation({
-  args: { teams: v.array(v.object({ legacyId: v.string(), name: v.string(), league: v.string() })) },
+  args: {
+    teams: v.array(
+      v.object({
+        legacyId: v.string(),
+        name: v.string(),
+        league: v.string(),
+        mergedLegacyIds: v.optional(v.array(v.string())),
+      })
+    ),
+  },
   handler: async (ctx, { teams }) => {
     for (const code of Array.from(new Set(teams.map((t) => t.league)))) {
       const exists = await ctx.db
@@ -68,7 +121,9 @@ export const importTeamsChunk = internalMutation({
     const all = await ctx.db.query("teams").collect();
     let created = 0;
     let linked = 0;
+    let merged = 0;
     for (const t of teams) {
+      merged += await mergeDuplicates(ctx.db, t.legacyId, t.mergedLegacyIds ?? []);
       if (await teamByLegacyId(ctx.db, t.legacyId)) continue;
       // ¿Ya existe con otro nombre parecido (p.ej. "Inter" vs "Inter de Milán")?
       const key = canonical(t.name);
@@ -91,7 +146,7 @@ export const importTeamsChunk = internalMutation({
         created++;
       }
     }
-    return { created, linked };
+    return { created, linked, merged };
   },
 });
 
@@ -195,7 +250,19 @@ async function recomputeLeague(db: Db, league: string) {
     .withIndex("by_league_and_date", (q) => q.eq("league", league))
     .collect();
   if (!rows.length) return 0;
-  const results = rows.map((r) => ({
+  // Un mismo partido no puede contar dos veces (pasaba con los equipos duplicados)
+  const seen = new Set<string>();
+  const unique = [];
+  for (const r of rows) {
+    const key = `${r.homeTeamId}|${r.awayTeamId}|${r.date}`;
+    if (seen.has(key)) {
+      await db.delete(r._id);
+      continue;
+    }
+    seen.add(key);
+    unique.push(r);
+  }
+  const results = unique.map((r) => ({
     home: r.homeTeamId as string,
     away: r.awayTeamId as string,
     homeGoals: r.homeGoals,
@@ -217,7 +284,7 @@ async function recomputeLeague(db: Db, league: string) {
       defenseRating: rating ? +rating.defense.toFixed(3) : undefined,
     });
   }
-  return rows.length;
+  return unique.length;
 }
 
 /** Recalcula tablas y fuerza de equipos (llámalo tras añadir resultados). */
@@ -243,7 +310,23 @@ export const legacyStatus = query({
       .query("matches")
       .withIndex("by_legacyId", (q) => q.gt("legacyId", ""))
       .take(legacyMatches.length + 1);
-    return { importedMatches: imported.length, availableMatches: legacyMatches.length };
+    // ¿Quedan equipos duplicados de una importación anterior?
+    let duplicateTeams = 0;
+    for (const t of legacyTeams as Array<{ mergedLegacyIds?: string[] }>) {
+      for (const id of t.mergedLegacyIds ?? []) {
+        const dup = await ctx.db
+          .query("teams")
+          .withIndex("by_legacyId", (q) => q.eq("legacyId", id))
+          .first();
+        if (dup) duplicateTeams++;
+      }
+    }
+    return {
+      importedMatches: imported.length,
+      availableMatches: legacyMatches.length,
+      duplicateTeams,
+      needsImport: imported.length < legacyMatches.length || duplicateTeams > 0,
+    };
   },
 });
 
@@ -257,11 +340,12 @@ function chunks<T>(rows: T[], size: number): T[][] {
 export const importLegacyData = action({
   args: {},
   handler: async (ctx) => {
-    const report = { teamsCreated: 0, teamsLinked: 0, matches: 0, players: 0, leagues: legacyLeagues.length };
+    const report = { teamsCreated: 0, teamsLinked: 0, teamsMerged: 0, matches: 0, players: 0, leagues: legacyLeagues.length };
     for (const part of chunks(legacyTeams, 100)) {
       const r = await ctx.runMutation(internal.legacy.importTeamsChunk, { teams: part });
       report.teamsCreated += r.created;
       report.teamsLinked += r.linked;
+      report.teamsMerged += r.merged;
     }
     for (const part of chunks(legacyMatches, 200)) {
       const r = await ctx.runMutation(internal.legacy.importMatchesChunk, { matches: part });

@@ -32,7 +32,7 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
     try {
       const r = await importLegacy({});
       setImportState(
-        `Listo: ${r.matches} partidos, ${r.players} jugadores, ${r.teamsCreated} equipos nuevos (${r.teamsLinked} enlazados a existentes). Tablas y fuerza de equipos recalculadas.`
+        `Listo: ${r.matches} partidos, ${r.players} jugadores, ${r.teamsCreated} equipos nuevos (${r.teamsLinked} enlazados, ${r.teamsMerged} duplicados fusionados). Tablas y fuerza de equipos recalculadas.`
       );
     } catch (err: any) {
       setImportState(`Error al importar: ${err?.message ?? err}`);
@@ -249,11 +249,13 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
   return (
     <div className="flex flex-col w-full gap-space-md">
       {/* Histórico del FutbolLab viejo */}
-      {legacyStatus && legacyStatus.importedMatches < legacyStatus.availableMatches && (
+      {legacyStatus && legacyStatus.needsImport && (
         <div className="p-2.5 rounded-xl border border-secondary/40 bg-secondary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
           <span className="text-on-surface">
             {importState ??
-              `Hay ${legacyStatus.availableMatches} partidos del FutbolLab anterior (Serie A, Premier, Bundesliga, Ligue 1) listos para importar.`}
+              (legacyStatus.duplicateTeams > 0
+                ? `Hay ${legacyStatus.duplicateTeams} equipos duplicados de la importación anterior (p. ej. dos Aston Villa). Pulsa para fusionarlos y recalcular las tablas.`
+                : `Hay ${legacyStatus.availableMatches} partidos del FutbolLab anterior (Serie A, Premier, Bundesliga, Ligue 1) listos para importar.`)}
           </span>
           {!importState?.startsWith("Importando") && (
             <button
@@ -265,7 +267,7 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
           )}
         </div>
       )}
-      {importState && legacyStatus && legacyStatus.importedMatches >= legacyStatus.availableMatches && (
+      {importState && legacyStatus && !legacyStatus.needsImport && (
         <div className="p-2 rounded-xl border border-primary/30 bg-primary/10 font-mono text-[10px] text-primary">{importState}</div>
       )}
 

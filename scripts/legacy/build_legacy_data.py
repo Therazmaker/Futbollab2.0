@@ -26,6 +26,15 @@ LEAGUE_CODES = {
     "LaLiga": ("laliga", "España"),
 }
 POSITIONS = {"GK": "GK", "DF": "DF", "MF": "MF", "FW": "FW"}
+# El FutbolLab viejo tenía algunos equipos duplicados con otro nombre
+TEAM_ALIASES = {"napoli": "napoles", "hamburger sv": "hamburgo"}
+
+
+def canonical_name(name):
+    import unicodedata
+    n = unicodedata.normalize("NFD", name)
+    n = "".join(c for c in n if unicodedata.category(c) != "Mn").lower().strip()
+    return TEAM_ALIASES.get(n, n)
 
 
 def load_dir(path):
@@ -86,21 +95,48 @@ def main(src, dst):
                 team_names.setdefault(tid, m[f"{side}Name"])
     matches.sort(key=lambda r: (r["date"], r["legacyId"]))
 
-    teams = []
+    # Equipos: se fusionan duplicados (mismo nombre canónico y liga). Se queda
+    # el id con más partidos; los demás pasan a `mergedLegacyIds`.
+    played = {}
+    for m in matches:
+        for k in ("homeLegacyId", "awayLegacyId"):
+            played[m[k]] = played.get(m[k], 0) + 1
+    groups = {}
     for tid, code in sorted(team_league.items()):
         name = (teams_raw.get(tid) or {}).get("name") or team_names.get(tid)
         if not name:
             continue
-        teams.append({"legacyId": tid, "name": name, "league": code})
-    team_ids = {t["legacyId"] for t in teams}
-    matches = [m for m in matches if m["homeLegacyId"] in team_ids and m["awayLegacyId"] in team_ids]
+        groups.setdefault((code, canonical_name(name)), []).append((played.get(tid, 0), tid, name))
+    teams, remap = [], {}
+    for (code, _), members in sorted(groups.items()):
+        members.sort(reverse=True)
+        _, keep, name = members[0]
+        for _, tid, _ in members:
+            remap[tid] = keep
+        row = {"legacyId": keep, "name": name, "league": code}
+        if len(members) > 1:
+            row["mergedLegacyIds"] = [tid for _, tid, _ in members[1:]]
+        teams.append(row)
+    deduped, seen2 = [], set()
+    for m in matches:
+        if m["homeLegacyId"] not in remap or m["awayLegacyId"] not in remap:
+            continue
+        m["homeLegacyId"], m["awayLegacyId"] = remap[m["homeLegacyId"]], remap[m["awayLegacyId"]]
+        key = (m["homeLegacyId"], m["awayLegacyId"], m["date"])
+        if key in seen2:
+            skipped["duplicado"] += 1
+            continue
+        seen2.add(key)
+        deduped.append(m)
+    matches = deduped
+    team_ids = set(remap)
 
     players = []
     for p in load_dir(os.path.join(db, "players")):
         if p.get("teamId") not in team_ids or not p.get("name"):
             continue
         pos = POSITIONS.get(str(p.get("pos") or p.get("position") or "").upper())
-        row = {"legacyId": p["id"], "teamLegacyId": p["teamId"], "name": p["name"], "position": pos or "MF"}
+        row = {"legacyId": p["id"], "teamLegacyId": remap[p["teamId"]], "name": p["name"], "position": pos or "MF"}
         season = {k: to_int(p.get(k)) for k in ("appearances", "minutes", "goals", "assists", "yellowCards", "redCards")}
         season = {k: v for k, v in season.items() if v is not None}
         if season.get("minutes"):

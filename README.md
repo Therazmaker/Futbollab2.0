@@ -33,7 +33,7 @@ La lógica del criminalista: primero la **tasa base del tipo** (su posición), d
 
 ## 📦 Histórico del FutbolLab anterior
 
-`data/legacy/` contiene 1.330 partidos (Serie A, Premier, Bundesliga, Ligue 1, ago-2025 → may-2026), 79 equipos y 1.014 jugadores con totales de temporada, generados con:
+`data/legacy/` contiene 1.324 partidos (Serie A, Premier, Bundesliga, Ligue 1, ago-2025 → may-2026), 76 equipos y 1.014 jugadores con totales de temporada, generados con:
 
 ```bash
 python3 scripts/legacy/build_legacy_data.py /ruta/futbollab_standalone data/legacy
