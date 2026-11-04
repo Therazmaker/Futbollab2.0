@@ -545,8 +545,8 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-      <div className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl">
+    <div className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain flex justify-center bg-black/80 backdrop-blur-sm p-4">
+      <div className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl my-auto">
         <div className="flex items-center justify-between pb-3 mb-3 border-b border-surface-container-high">
           <h3 className="font-bold text-base text-on-surface">{title}</h3>
           <button onClick={onClose} className="w-8 h-8 rounded-lg bg-surface-container text-on-surface-variant hover:text-on-surface">
@@ -561,7 +561,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 
 function ModalActions({ busy, label, onCancel }: { busy: boolean; label: string; onCancel: () => void }) {
   return (
-    <div className="mt-2 pt-3 border-t border-surface-container-high flex justify-end gap-2">
+    <div className="mt-2 pt-3 pb-1 border-t border-surface-container-high flex justify-end gap-2 sticky bottom-0 bg-surface-container-low z-10">
       <button type="button" onClick={onCancel} className="px-3 py-1.5 rounded-lg bg-surface-container text-on-surface-variant font-mono text-xs">
         Cancelar
       </button>
