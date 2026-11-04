@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" name="viewport"/><meta content="mobile_tab" name="shell-type"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config = { darkMode: "class", theme: { extend: { colors: { "outline": "#86948a", "inverse-surface": "#dfe2ee", "error": "#ffb4ab", "surface-bright": "#353942", "tertiary-container": "#ff7886", "surface-dim": "#0f131c", "surface-container-high": "#262a33", "on-tertiary-fixed-variant": "#92002a", "on-background": "#dfe2ee", "on-error": "#690005", "primary-fixed-dim": "#4edea3", "secondary-container": "#03b5d3", "outline-variant": "#3c4a42", "on-tertiary": "#67001b", "primary": "#4edea3", "on-secondary-fixed": "#001f26", "surface-tint": "#4edea3", "primary-container": "#10b981", "surface-container-lowest": "#0a0e16", "on-tertiary-fixed": "#40000d", "tertiary-fixed": "#ffdadb", "error-container": "#93000a", "on-primary": "#003824", "on-primary-fixed": "#002113", "surface": "#0f131c", "on-error-container": "#ffdad6", "inverse-on-surface": "#2c3039", "background": "#0f131c", "secondary-fixed-dim": "#4cd7f6", "secondary": "#4cd7f6", "inverse-primary": "#006c49", "on-secondary-container": "#00424e", "surface-variant": "#31353e", "on-surface-variant": "#bbcabf", "surface-container": "#1c2028", "on-primary-fixed-variant": "#005236", "on-primary-container": "#00422b", "primary-fixed": "#6ffbbe", "on-surface": "#dfe2ee", "tertiary": "#ffb2b7", "surface-container-low": "#181c24", "on-secondary-fixed-variant": "#004e5c", "surface-container-highest": "#31353e", "secondary-fixed": "#acedff", "on-tertiary-container": "#780021", "tertiary-fixed-dim": "#ffb2b7", "on-secondary": "#003640" }, borderRadius: { "DEFAULT": "0.125rem", "lg": "0.25rem", "xl": "0.5rem", "full": "0.75rem" }, spacing: { "space-xs": "0.25rem", "gutter": "0.75rem", "space-xl": "1.5rem", "margin": "1rem", "space-lg": "1rem", "gutter-desktop": "1rem", "margin-desktop": "1.5rem", "space-sm": "0.5rem", "space-md": "0.75rem" }, fontFamily: { "mono-metric-xl": ["JetBrains Mono"], "mono-metric-md": ["JetBrains Mono"], "body-sm": ["Inter"], "body-md": ["Inter"], "display-lg": ["Inter"], "headline-lg": ["Inter"], "mono-code-xs": ["JetBrains Mono"], "mono-label-sm": ["JetBrains Mono"], "headline-sm": ["Inter"], "display-lg-mobile": ["Inter"], "headline-xl": ["Inter"], "mono-metric-lg": ["JetBrains Mono"] }, fontSize: { "mono-metric-xl": ["28px", { lineHeight: "32px", letterSpacing: "-0.04em", fontWeight: "700" }], "mono-metric-md": ["13px", { lineHeight: "16px", letterSpacing: "-0.02em", fontWeight: "500" }], "body-sm": ["12px", { lineHeight: "16px", letterSpacing: "0em", fontWeight: "400" }], "body-md": ["14px", { lineHeight: "20px", letterSpacing: "-0.005em", fontWeight: "400" }], "display-lg": ["40px", { lineHeight: "48px", letterSpacing: "-0.03em", fontWeight: "700" }], "headline-lg": ["20px", { lineHeight: "26px", letterSpacing: "-0.015em", fontWeight: "600" }], "mono-code-xs": ["10px", { lineHeight: "12px", letterSpacing: "0.02em", fontWeight: "400" }], "mono-label-sm": ["11px", { lineHeight: "14px", letterSpacing: "0.04em", fontWeight: "500" }], "headline-sm": ["16px", { lineHeight: "22px", letterSpacing: "-0.01em", fontWeight: "600" }], "display-lg-mobile": ["30px", { lineHeight: "36px", letterSpacing: "-0.02em", fontWeight: "700" }], "headline-xl": ["28px", { lineHeight: "34px", letterSpacing: "-0.02em", fontWeight: "600" }], "mono-metric-lg": ["18px", { lineHeight: "22px", letterSpacing: "-0.03em", fontWeight: "600" }] } } } };</script><style>@layer base{html,body{width:100vw;margin:0;padding:0;}body{overscroll-behavior:none;}.pb-safe{padding-bottom:env(safe-area-inset-bottom,0px);}.pt-safe{padding-top:env(safe-area-inset-top,0px);}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><style>
+    body {
+      min-height: max(884px, 100dvh);
+    }
+  </style>
+  </head><body class="bg-background font-body-md text-body-md text-on-surface flex flex-col min-h-screen"><header class="fixed top-0 inset-x-0 z-50 bg-surface/85 backdrop-blur-xl pt-safe"><div class="h-28 flex flex-col justify-between px-margin py-space-xs"><div class="flex items-center justify-between gap-space-sm"><div class="flex items-center gap-space-sm"><button aria-label="Toggle Module Navigation" class="w-11 h-11 flex items-center justify-center rounded-lg bg-surface-container-high/60 text-on-surface hover:text-primary transition-colors"><span class="material-symbols-outlined text-[20px]">menu_open</span></button><div class="flex items-center gap-space-xs"><img alt="FutbolLab Radar Logo" class="h-8 w-auto object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuB0A5-GaExMX0cNCouFyrxKzk5ScShdPQ6A26VEwd6Ni2YtaAp4jUVnSupHxD6m65qdlGGjKrgaIGmta2dx_ncybtv7O-dUDosyF9Qp3VWq3De15Y-MWZUsYgvgtcVVc098gP9C1lLBAwRl4poSTs8cdUlqfZsD4Vpuv-gwbS3DwSdylHf3Kho3fm-KkfaPF3ABN-vb-FsUo-__tFXY5jJMYlnSVa50NF6wixwlI71E"/><div class="flex flex-col"><span class="font-headline-sm text-headline-sm text-on-surface tracking-tight leading-none">FutbolLab</span><span class="font-mono-code-xs text-mono-code-xs text-secondary leading-none uppercase tracking-widest">TACTICAL HUD</span></div></div></div><div class="flex items-center gap-space-xs"><div class="hidden xs:flex items-center gap-space-xs px-space-xs py-0.5 rounded bg-surface-container/70"><span class="w-2 h-2 rounded-full bg-primary animate-pulse"></span><span class="font-mono-code-xs text-mono-code-xs text-primary">ACTIVE</span></div><button aria-label="Global Search" class="w-11 h-11 flex items-center justify-center rounded-lg bg-surface-container-high/60 text-on-surface-variant hover:text-primary transition-colors"><span class="material-symbols-outlined text-[20px]">search</span></button><img alt="Profile" class="w-8 h-8 rounded-full object-cover" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCCZxX_RKG9Kw3V_AeffYvAEQZ2O-5SNDJjJEqhkjWP8GPcs1IU8folt_fcjW990glWUrRs9flIwRjiTzynkHsXm5RqkDcE4EQLrOGrNucBcf3IJ9qRXStGoFVJJTa7B5T4xcQhC33v621mQumluyW0ASW341nwt8t57tCU32NG0YQ4gnG3Mlm00Wgo5wvOl3cNDCVAI_Xc8UyMmliSxBJkglldb8klQJ1tOUvVjNnO"/></div></div><div class="flex items-center justify-between gap-space-sm"><div class="flex items-center gap-space-xs"><div class="flex items-center gap-space-xs px-space-sm py-1 rounded bg-surface-container-highest/60 text-on-surface-variant"><span class="font-mono-label-sm text-mono-label-sm text-primary">SUPABASE</span><span class="w-1.5 h-1.5 rounded-full bg-primary animate-ping"></span><span class="font-mono-code-xs text-mono-code-xs text-on-surface">ONLINE</span></div><div class="flex items-center gap-space-xs px-space-sm py-1 rounded bg-surface-container-low text-secondary"><span class="material-symbols-outlined text-[14px]">calendar_month</span><span class="font-mono-label-sm text-mono-label-sm">2024/25</span></div></div><div class="flex items-center gap-space-xs"><button class="h-7 px-space-sm rounded bg-surface-container-high flex items-center gap-1 text-on-surface-variant hover:text-on-surface transition-colors"><span class="material-symbols-outlined text-[14px]">tune</span><span class="font-mono-code-xs text-mono-code-xs uppercase">Filter</span></button><div class="flex items-center px-space-sm py-1 rounded bg-surface-container-lowest text-primary font-mono-code-xs text-mono-code-xs tracking-wider uppercase">Teams Tactics</div></div></div></div></header><main class="flex flex-col relative w-full px-margin pt-28 pb-28 bg-surface"><div class="flex flex-col w-full gap-space-md">
+<!-- Tactical Breadcrumbs & Engine Status -->
+<div class="flex items-center justify-between px-space-xs text-on-surface-variant font-mono-label-sm text-mono-label-sm">
+<div class="flex items-center gap-1.5 truncate">
+<span class="text-on-surface-variant hover:text-primary transition-colors cursor-pointer">LaLiga</span>
+<span class="material-symbols-outlined text-[12px] text-outline">chevron_right</span>
+<span class="text-on-surface">Real Madrid CF</span>
+<span class="material-symbols-outlined text-[12px] text-outline">chevron_right</span>
+<span class="text-secondary font-semibold">Tactical Hub</span>
+</div>
+<div class="flex items-center gap-1 bg-surface-container-high px-space-xs py-0.5 rounded text-primary">
+<span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+<span class="font-mono-code-xs text-mono-code-xs font-semibold">96.4% CERTAINTY</span>
+</div>
+</div>
+<!-- Club Header Bento Card -->
+<div class="relative overflow-hidden rounded-xl bg-surface-container-low p-space-md shadow-md">
+<!-- Ambient Pitch Watermark Background -->
+<div class="absolute -right-8 -top-8 w-44 h-44 rounded-full bg-gradient-to-br from-primary/10 via-secondary/5 to-transparent blur-2xl pointer-events-none"></div>
+<div class="flex items-start justify-between relative z-10 gap-space-sm">
+<div class="flex items-center gap-space-sm">
+<div class="relative w-14 h-14 rounded-xl bg-surface-container-highest flex items-center justify-center p-2 shadow-inner">
+<img class="w-full h-full object-contain" data-alt="Official club heraldic badge crest of Real Madrid CF in royal gold and regal white highlights rendered against dark sleek carbon texture." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDIfxcvoBCPvtYy-GIQmSp-Dow-fMvM-g40ZpzX4LW3EprnYvecexSz2jZ1hVGp28kmIVJkIHlBM8OvL0j4qY9Cs-0CFUC6tQwDHoNE2IO7l6B71Slde3MdVfdsLdy4XJkQk7XfmRYoDdnLXb5m2gNvNOS5nxVqDMcu-xA0AzEU2_zM5a_jlavqxMZ5EsSn1iQHslWNjVLOP1Zm1OjeO5XGNT9eCQNvBNY1Qln8xFrU"/>
+<span class="absolute -bottom-1 -right-1 w-4 h-4 bg-primary text-on-primary rounded-full flex items-center justify-center font-mono-code-xs text-mono-code-xs font-bold">1</span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-1.5">
+<h1 class="font-headline-lg text-headline-lg text-on-surface leading-tight tracking-tight">Real Madrid CF</h1>
+<span class="material-symbols-outlined text-[16px] text-primary" style="font-variation-settings: 'FILL' 1;">verified</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant flex items-center gap-1.5 mt-0.5">
+<span class="font-mono-metric-md text-mono-metric-md text-primary font-semibold">1st in LaLiga</span>
+<span class="text-outline-variant">•</span>
+<span>68 Pts</span>
+<span class="text-outline-variant">•</span>
+<span class="text-secondary font-mono-code-xs text-mono-code-xs">GD +34</span>
+</p>
+</div>
+</div>
+<div class="flex flex-col items-end gap-1">
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant uppercase tracking-wider">Form Rating</span>
+<div class="flex items-center gap-1 bg-surface-container px-2 py-1 rounded">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<span class="font-mono-metric-md text-mono-metric-md text-primary">W-W-W-D-W</span>
+</div>
+</div>
+</div>
+<!-- Micro Stats Horizon Bar -->
+<div class="grid grid-cols-3 gap-2 mt-space-md pt-space-xs">
+<div class="bg-surface-container/70 rounded-lg p-space-xs flex flex-col">
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant uppercase">Mean xG/90</span>
+<span class="font-mono-metric-lg text-mono-metric-lg text-primary mt-0.5">2.41</span>
+<span class="font-mono-code-xs text-mono-code-xs text-primary mt-0.5 flex items-center gap-0.5">
+<span class="material-symbols-outlined text-[10px]">arrow_upward</span>+0.32 vs avg
+        </span>
+</div>
+<div class="bg-surface-container/70 rounded-lg p-space-xs flex flex-col">
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant uppercase">PPDA Metric</span>
+<span class="font-mono-metric-lg text-mono-metric-lg text-secondary mt-0.5">8.6</span>
+<span class="font-mono-code-xs text-mono-code-xs text-secondary mt-0.5">High Pressing</span>
+</div>
+<div class="bg-surface-container/70 rounded-lg p-space-xs flex flex-col">
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant uppercase">Build-up Tempo</span>
+<span class="font-mono-metric-lg text-mono-metric-lg text-on-surface mt-0.5">18.4 m/s</span>
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant mt-0.5">Direct Vertical</span>
+</div>
+</div>
+</div>
+<!-- Upcoming Fixture Tactical Simulation Card -->
+<div class="rounded-xl bg-surface-container-low p-space-md relative overflow-hidden shadow-sm">
+<div class="flex items-center justify-between pb-space-xs">
+<div class="flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[16px] text-secondary">sports_soccer</span>
+<span class="font-mono-label-sm text-mono-label-sm text-secondary uppercase font-semibold">Next Tactical Matchup</span>
+</div>
+<span class="font-mono-code-xs text-mono-code-xs px-2 py-0.5 rounded bg-tertiary-container/20 text-tertiary font-medium">
+        AWAY (-12% Impact factor)
+      </span>
+</div>
+<!-- Match Header Preview -->
+<div class="flex items-center justify-between py-space-xs gap-2">
+<div class="flex items-center gap-2 min-w-0">
+<div class="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center p-1 shrink-0">
+<img class="w-full h-full object-contain" data-alt="Official crest of Athletic Club Bilbao with red-and-white stripes and traditional heraldic shield on sleek dark background." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAKJYvbPUeSnZf54oZrzLQMUQ6QZxo1JxZUX-oO7C1xUN28V7PVBNxt3nlcAOvnE5Rw8A0LTkY0ODrvOoTpP8hZA3_V38oE9Z43AMvv7fSRxAzSf0ka2hjBqfqLRQcfkB3J0czmS-_oD2qk1joeD7lX38uEdLw901OLid8UbL2_slu__TgMo_JstpqJoxWi7xp_6yVo5CHUC0zN0MaRp0WwuS9CjedFv0ixAJvDFnrU"/>
+</div>
+<div class="truncate">
+<div class="font-headline-sm text-headline-sm text-on-surface truncate">vs Athletic Club</div>
+<div class="font-body-sm text-body-sm text-on-surface-variant flex items-center gap-1">
+<span class="material-symbols-outlined text-[13px]">stadium</span>
+<span>San Mamés • Sun 21:00</span>
+</div>
+</div>
+</div>
+<div class="flex flex-col items-end shrink-0">
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant">Model xG Ratio</span>
+<span class="font-mono-metric-md text-mono-metric-md text-primary font-bold">2.14 vs 0.88</span>
+</div>
+</div>
+<!-- Probabilistic Win Ratio Indicator Bar -->
+<div class="mt-space-sm space-y-1.5">
+<div class="flex items-center justify-between font-mono-code-xs text-mono-code-xs">
+<span class="text-primary font-semibold">68.4% WIN</span>
+<span class="text-on-surface-variant">21.2% DRAW</span>
+<span class="text-tertiary font-semibold">10.4% LOSS</span>
+</div>
+<div class="w-full h-2 rounded bg-surface-container-highest overflow-hidden flex">
+<div class="h-full bg-primary transition-all duration-700" style="width: 68.4%;"></div>
+<div class="h-full bg-outline transition-all duration-700" style="width: 21.2%;"></div>
+<div class="h-full bg-tertiary transition-all duration-700" style="width: 10.4%;"></div>
+</div>
+</div>
+</div>
+<!-- Collective Output & Timeline Analytics Module -->
+<div class="rounded-xl bg-surface-container-low p-space-md space-y-space-md shadow-sm">
+<div class="flex items-center justify-between">
+<div class="flex flex-col">
+<span class="font-headline-sm text-headline-sm text-on-surface">Collective Dynamics</span>
+<span class="font-body-sm text-body-sm text-on-surface-variant">Cumulative 90-min flow across 15' intervals</span>
+</div>
+<span class="font-mono-code-xs text-mono-code-xs text-secondary bg-surface-container px-2 py-1 rounded">
+        AGGREGATE TACTICS
+      </span>
+</div>
+<!-- Metric Switcher Pills -->
+<div class="flex items-center gap-1.5 overflow-x-auto pb-1" id="chart-tabs">
+<button class="px-2.5 py-1.5 rounded text-mono-label-sm font-mono-label-sm bg-primary/15 text-primary whitespace-nowrap active:scale-95 transition-all shadow-sm">
+        xT Threat 2.84/90
+      </button>
+<button class="px-2.5 py-1.5 rounded text-mono-label-sm font-mono-label-sm bg-surface-container text-on-surface-variant hover:text-on-surface whitespace-nowrap transition-colors">
+        Shot Gen Rate
+      </button>
+<button class="px-2.5 py-1.5 rounded text-mono-label-sm font-mono-label-sm bg-surface-container text-on-surface-variant hover:text-on-surface whitespace-nowrap transition-colors">
+        Defensive Regains
+      </button>
+</div>
+<!-- Custom SVG Area & Dual-Line Chart -->
+<div class="relative w-full bg-surface-container rounded-lg p-space-sm pt-space-md">
+<!-- Interactive Highlight Badge -->
+<div class="flex items-center justify-between mb-2 px-1">
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-1.5">
+<span class="w-2.5 h-1 bg-primary rounded-full"></span>
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface">Real Madrid xT</span>
+</div>
+<div class="flex items-center gap-1.5">
+<span class="w-2.5 h-0.5 bg-tertiary-container rounded-full"></span>
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant">Opponent Press</span>
+</div>
+</div>
+<span class="font-mono-code-xs text-mono-code-xs text-primary font-semibold bg-surface-container-high px-1.5 py-0.5 rounded">
+          PEAK: 60'-75'
+        </span>
+</div>
+<!-- Area Chart SVG -->
+<div class="relative w-full h-36">
+<svg class="w-full h-full overflow-visible" preserveaspectratio="none" viewbox="0 0 320 120">
+<defs>
+<lineargradient id="rm-gradient" x1="0" x2="0" y1="0" y2="1">
+<stop offset="0%" stop-color="#4edea3" stop-opacity="0.35"></stop>
+<stop offset="85%" stop-color="#4cd7f6" stop-opacity="0.05"></stop>
+<stop offset="100%" stop-color="#0f131c" stop-opacity="0.0"></stop>
+</lineargradient>
+<lineargradient id="glow-line" x1="0" x2="1" y1="0" y2="0">
+<stop offset="0%" stop-color="#4edea3"></stop>
+<stop offset="70%" stop-color="#4cd7f6"></stop>
+<stop offset="100%" stop-color="#4edea3"></stop>
+</lineargradient>
+</defs>
+<!-- Horizontal reference tracks -->
+<line stroke="#31353e" stroke-dasharray="2,3" stroke-width="0.75" x1="0" x2="320" y1="20" y2="20"></line>
+<line stroke="#31353e" stroke-dasharray="2,3" stroke-width="0.75" x1="0" x2="320" y1="60" y2="60"></line>
+<line stroke="#31353e" stroke-width="0.75" x1="0" x2="320" y1="100" y2="100"></line>
+<!-- Overload Highlight Band (60' to 75') -->
+<rect fill="#4edea3" fill-opacity="0.08" height="95" rx="2" width="53" x="213" y="10"></rect>
+<!-- RM Area fill -->
+<path d="M 0,95 L 0,82 Q 35,76 53,70 T 106,62 T 160,54 T 213,24 T 266,35 T 320,18 L 320,105 L 0,105 Z" fill="url(#rm-gradient)"></path>
+<!-- Opponent Press Line (Dashed Amber/Rose) -->
+<path d="M 0,65 Q 40,55 53,52 T 106,58 T 160,68 T 213,85 T 266,82 T 320,89" fill="none" stroke="#ff7886" stroke-dasharray="3,3" stroke-linecap="round" stroke-width="1.75"></path>
+<!-- Real Madrid Lead xT Line -->
+<path d="M 0,82 Q 35,76 53,70 T 106,62 T 160,54 T 213,24 T 266,35 T 320,18" fill="none" stroke="url(#glow-line)" stroke-linecap="round" stroke-width="2.5"></path>
+<!-- Key Anchors -->
+<circle cx="213" cy="24" fill="#4edea3" r="3.5"></circle>
+<circle class="animate-ping" cx="213" cy="24" fill="#4edea3" fill-opacity="0.3" r="7"></circle>
+</svg>
+<!-- Peak Tactical Window Floating Tag -->
+<div class="absolute top-1 right-12 bg-surface-container-highest/95 backdrop-blur px-2 py-1 rounded shadow-md pointer-events-none text-left">
+<div class="font-mono-code-xs text-mono-code-xs text-primary font-bold">60'-75' Overload (+42%)</div>
+<div class="font-mono-code-xs text-mono-code-xs text-on-surface-variant">Box Entries: 8 | Opponent Fatigue</div>
+</div>
+</div>
+<!-- X-Axis Labels -->
+<div class="flex items-center justify-between pt-1 font-mono-code-xs text-mono-code-xs text-on-surface-variant">
+<span>0'</span>
+<span>15'</span>
+<span>30'</span>
+<span>45'</span>
+<span class="text-primary font-bold">60'</span>
+<span class="text-primary font-bold">75'</span>
+<span>90'</span>
+</div>
+</div>
+</div>
+<!-- Squad Roster Tactical Laboratory Segment -->
+<div class="rounded-xl bg-surface-container-low p-space-md space-y-space-md shadow-sm">
+<div class="flex items-center justify-between">
+<div class="flex flex-col">
+<h2 class="font-headline-sm text-headline-sm text-on-surface">Squad Intelligence Matrix</h2>
+<span class="font-body-sm text-body-sm text-on-surface-variant">Predictive Anchor Indices &amp; Match Load</span>
+</div>
+<button class="flex items-center gap-1 font-mono-code-xs text-mono-code-xs text-secondary bg-surface-container px-2 py-1 rounded hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined text-[13px]">swap_vert</span> SORT
+      </button>
+</div>
+<!-- Segment Role Tabs -->
+<div class="flex items-center gap-1 overflow-x-auto pb-1" id="role-filter-strip">
+<button class="px-2.5 py-1 rounded text-mono-code-xs font-mono-code-xs bg-primary text-on-primary font-semibold whitespace-nowrap">
+        All (24)
+      </button>
+<button class="px-2.5 py-1 rounded text-mono-code-xs font-mono-code-xs bg-surface-container text-on-surface-variant hover:text-on-surface whitespace-nowrap">
+        Goalkeepers (3)
+      </button>
+<button class="px-2.5 py-1 rounded text-mono-code-xs font-mono-code-xs bg-surface-container text-on-surface-variant hover:text-on-surface whitespace-nowrap">
+        Defenders (8)
+      </button>
+<button class="px-2.5 py-1 rounded text-mono-code-xs font-mono-code-xs bg-surface-container text-on-surface-variant hover:text-on-surface whitespace-nowrap">
+        Midfielders (7)
+      </button>
+<button class="px-2.5 py-1 rounded text-mono-code-xs font-mono-code-xs bg-surface-container text-on-surface-variant hover:text-on-surface whitespace-nowrap">
+        Forwards (6)
+      </button>
+</div>
+<!-- Player High Density Stack -->
+<div class="flex flex-col gap-2">
+<!-- Card 1: Bellingham -->
+<div class="flex flex-col p-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high transition-all">
+<div class="flex items-center justify-between gap-2">
+<div class="flex items-center gap-2.5 min-w-0">
+<span class="font-mono-metric-md text-mono-metric-md text-secondary font-bold w-5 shrink-0">#5</span>
+<div class="w-9 h-9 rounded-full bg-surface-container-highest shrink-0 overflow-hidden relative">
+<img class="w-full h-full object-cover" data-alt="Dynamic portrait headshot of elite midfielder Jude Bellingham in white training shirt under bright tactical stadium floodlights." src="https://lh3.googleusercontent.com/aida-public/AB6AXuC8Wv9XAs2pvhEpgSHh8nMBavTf3HfoK4yLDY-bVTbTAIo5NfDc6-qRSrvWArNwkgDIXNrzjgEcHHoKyalajyIPrH6QUzvVjk1BP21iQ7ajkIF43idKhnKKSckReR-hqqqUjjtj6EMQqzkg4GE4NMDnm4_h9NWdaLUoR6A5aHqeXiBZn5lVV_Jpr7SHdmKIgNE8uSXor68LLkbK2Iz13K12C41OlvpOp8REsJB4-SbC"/>
+</div>
+<div class="flex flex-col min-w-0">
+<div class="flex items-center gap-1 truncate">
+<span class="font-headline-sm text-headline-sm text-on-surface truncate">Jude Bellingham</span>
+<span class="material-symbols-outlined text-[13px] text-primary" style="font-variation-settings: 'FILL' 1;">star</span>
+</div>
+<span class="font-body-sm text-body-sm text-on-surface-variant truncate">AM / Box-to-Box • 2,140 mins</span>
+</div>
+</div>
+<div class="flex flex-col items-end shrink-0">
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant">ANCHOR</span>
+<div class="flex items-center gap-1 bg-primary/10 px-2 py-0.5 rounded text-primary">
+<span class="font-mono-metric-md text-mono-metric-md font-bold">9.42</span>
+<span class="font-mono-code-xs text-mono-code-xs">/10</span>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-between mt-2 pt-2 bg-surface-container-lowest/50 px-2 py-1 rounded">
+<div class="flex items-center gap-2 font-mono-code-xs text-mono-code-xs">
+<span class="text-primary font-medium flex items-center">
+<span class="material-symbols-outlined text-[12px]">trending_up</span>+0.34 form
+            </span>
+<span class="text-on-surface-variant">•</span>
+<span class="text-on-surface-variant">xG + xA: <strong class="text-on-surface">0.92/90</strong></span>
+</div>
+<button class="flex items-center gap-1 text-mono-code-xs font-mono-code-xs text-primary font-semibold hover:underline">
+            View Lab <span class="material-symbols-outlined text-[12px]">arrow_forward</span>
+</button>
+</div>
+</div>
+<!-- Card 2: Vinicius Jr -->
+<div class="flex flex-col p-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high transition-all">
+<div class="flex items-center justify-between gap-2">
+<div class="flex items-center gap-2.5 min-w-0">
+<span class="font-mono-metric-md text-mono-metric-md text-secondary font-bold w-5 shrink-0">#7</span>
+<div class="w-9 h-9 rounded-full bg-surface-container-highest shrink-0 overflow-hidden relative">
+<img class="w-full h-full object-cover" data-alt="Dynamic portrait headshot of explosive winger Vinicius Jr focused expression in dark sports laboratory ambient lighting." src="https://lh3.googleusercontent.com/aida-public/AB6AXuD__g-1DnxX_qsSlnvZBZKfa_bL-rz6JNUc8pI4-J98m4ov1SalCAH10uXt_qdln53xR-byqry4A8GHmB7R3e7cHZh8BIL1-sCWK9eBkv3WoxVRs_NO9MJSrv-4_izwcnIrZKAstHI3AlIeieJXGP-rz_20w2z8DczWYpbDz9OPUpZ7ncKquTkuoOBz72h-GI-WVentqZom7cEzbpC4OEW-VL6sTiEmufAxxqyeHD8A"/>
+</div>
+<div class="flex flex-col min-w-0">
+<div class="flex items-center gap-1 truncate">
+<span class="font-headline-sm text-headline-sm text-on-surface truncate">Vinicius Jr</span>
+</div>
+<span class="font-body-sm text-body-sm text-on-surface-variant truncate">LW / Inside Forward • 1,980 mins</span>
+</div>
+</div>
+<div class="flex flex-col items-end shrink-0">
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant">ANCHOR</span>
+<div class="flex items-center gap-1 bg-primary/10 px-2 py-0.5 rounded text-primary">
+<span class="font-mono-metric-md text-mono-metric-md font-bold">9.18</span>
+<span class="font-mono-code-xs text-mono-code-xs">/10</span>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-between mt-2 pt-2 bg-surface-container-lowest/50 px-2 py-1 rounded">
+<div class="flex items-center gap-2 font-mono-code-xs text-mono-code-xs">
+<span class="text-primary font-medium flex items-center">
+<span class="material-symbols-outlined text-[12px]">trending_up</span>+0.28 form
+            </span>
+<span class="text-outline-variant">•</span>
+<span class="text-on-surface-variant">Take-on Rate: <strong class="text-on-surface">64.2%</strong></span>
+</div>
+<button class="flex items-center gap-1 text-mono-code-xs font-mono-code-xs text-primary font-semibold hover:underline">
+            View Lab <span class="material-symbols-outlined text-[12px]">arrow_forward</span>
+</button>
+</div>
+</div>
+<!-- Card 3: Toni Kroos -->
+<div class="flex flex-col p-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high transition-all">
+<div class="flex items-center justify-between gap-2">
+<div class="flex items-center gap-2.5 min-w-0">
+<span class="font-mono-metric-md text-mono-metric-md text-secondary font-bold w-5 shrink-0">#8</span>
+<div class="w-9 h-9 rounded-full bg-surface-container-highest shrink-0 overflow-hidden relative">
+<img class="w-full h-full object-cover" data-alt="Confident headshot portrait of veteran midfielder Toni Kroos wearing charcoal grey training bib with calm composed expression." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBYs4QxKw1HLsjFg-Ymg298mo2r701zOEjwtNHRK-xu3zTKX1X58FfEVjvAg_W3lBmINgjTwv62cg5hgCh_mnL_E8f6xyUfRNXCmG3g2jrPJysWgGHmWTszpQ34zrfAcOPYRNBuHNPwq4k7HO_km49qZ9Xj-4gWrH49otatbsNeQqNSQfGIyp5tvXoSTk-8xNKzdGxYdpfp78sgsBb8o6d2_aJvQJrzCHQXZU63pe1w"/>
+</div>
+<div class="flex flex-col min-w-0">
+<div class="truncate">
+<span class="font-headline-sm text-headline-sm text-on-surface truncate">Toni Kroos</span>
+</div>
+<span class="font-body-sm text-body-sm text-on-surface-variant truncate">CM / Deep Playmaker • 2,050 mins</span>
+</div>
+</div>
+<div class="flex flex-col items-end shrink-0">
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant">ANCHOR</span>
+<div class="flex items-center gap-1 bg-surface-container-highest px-2 py-0.5 rounded text-on-surface">
+<span class="font-mono-metric-md text-mono-metric-md font-bold">8.95</span>
+<span class="font-mono-code-xs text-mono-code-xs">/10</span>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-between mt-2 pt-2 bg-surface-container-lowest/50 px-2 py-1 rounded">
+<div class="flex items-center gap-2 font-mono-code-xs text-mono-code-xs">
+<span class="text-secondary font-medium">Pass Accuracy: <strong>94.6%</strong></span>
+<span class="text-outline-variant">•</span>
+<span class="text-on-surface-variant">Prog Passes: <strong class="text-on-surface">11.8/90</strong></span>
+</div>
+<button class="flex items-center gap-1 text-mono-code-xs font-mono-code-xs text-on-surface-variant hover:text-primary transition-colors">
+            Profile <span class="material-symbols-outlined text-[12px]">chevron_right</span>
+</button>
+</div>
+</div>
+<!-- Card 4: Valverde -->
+<div class="flex flex-col p-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high transition-all">
+<div class="flex items-center justify-between gap-2">
+<div class="flex items-center gap-2.5 min-w-0">
+<span class="font-mono-metric-md text-mono-metric-md text-secondary font-bold w-5 shrink-0">#15</span>
+<div class="w-9 h-9 rounded-full bg-surface-container-highest shrink-0 overflow-hidden relative">
+<img class="w-full h-full object-cover" data-alt="Athletic high energy headshot of midfielder Federico Valverde looking intensely into camera with stadium glow behind." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAJ2uJBA2Ef98Wg1X0lLBeFgkxerMfy5jw41wawIyGvIaxwYyjlwMJ-PooIlqMg4-ypq7dHisxs03MvRpIY3X5sL1wSEMWOTdwskBhcMb4Uf66x27DvBWzh6jEWRFxGTk9Hlmm87RX6lcnK_0y_5bT5u2TRYHwp6QPQrI4JjPEIWLTWUF4Fk8jmvDQsRudw0ctP_AIaW9swvNG8wzL2g8c8mqnUoglsUICbPB579Nbj"/>
+</div>
+<div class="flex flex-col min-w-0">
+<div class="truncate">
+<span class="font-headline-sm text-headline-sm text-on-surface truncate">Federico Valverde</span>
+</div>
+<span class="font-body-sm text-body-sm text-on-surface-variant truncate">CM / Engine • 2,320 mins</span>
+</div>
+</div>
+<div class="flex flex-col items-end shrink-0">
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant">ANCHOR</span>
+<div class="flex items-center gap-1 bg-surface-container-highest px-2 py-0.5 rounded text-on-surface">
+<span class="font-mono-metric-md text-mono-metric-md font-bold">8.88</span>
+<span class="font-mono-code-xs text-mono-code-xs">/10</span>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-between mt-2 pt-2 bg-surface-container-lowest/50 px-2 py-1 rounded">
+<div class="flex items-center gap-2 font-mono-code-xs text-mono-code-xs">
+<span class="text-primary font-medium">Press Intensity: <strong>91%</strong></span>
+<span class="text-outline-variant">•</span>
+<span class="text-on-surface-variant">Sprint Distance: <strong class="text-on-surface">11.4 km</strong></span>
+</div>
+<button class="flex items-center gap-1 text-mono-code-xs font-mono-code-xs text-on-surface-variant hover:text-primary transition-colors">
+            Profile <span class="material-symbols-outlined text-[12px]">chevron_right</span>
+</button>
+</div>
+</div>
+<!-- Card 5: Antonio Rudiger -->
+<div class="flex flex-col p-space-sm rounded-lg bg-surface-container hover:bg-surface-container-high transition-all">
+<div class="flex items-center justify-between gap-2">
+<div class="flex items-center gap-2.5 min-w-0">
+<span class="font-mono-metric-md text-mono-metric-md text-secondary font-bold w-5 shrink-0">#22</span>
+<div class="w-9 h-9 rounded-full bg-surface-container-highest shrink-0 overflow-hidden relative">
+<img class="w-full h-full object-cover" data-alt="Rugged imposing headshot of central defender Antonio Rudiger in athletic attire under stark technical lighting." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDOYJFSJvIPd-ZEVwgjDbgmgNGdurEvoJI7iH0Ikgq2MOVknjsGqgidQTnDojpeRH8gOVlWqzB66um2z1Wn7NX5bNpdsQi_b3mLS58vLpKkztTH228Glc-U21GqMKKTn_FlPQ1A080SISDl4k1WOmv-qZWLnwJX1xUmub8cwo6U0lBhQgfwdm0SqZ9NDr4pnK7f1pIOML5moH1gRelFBHhSisYeeWHgBv_zeCTk732v"/>
+</div>
+<div class="flex flex-col min-w-0">
+<div class="truncate">
+<span class="font-headline-sm text-headline-sm text-on-surface truncate">Antonio Rüdiger</span>
+</div>
+<span class="font-body-sm text-body-sm text-on-surface-variant truncate">CB / Stopper • 2,210 mins</span>
+</div>
+</div>
+<div class="flex flex-col items-end shrink-0">
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface-variant">ANCHOR</span>
+<div class="flex items-center gap-1 bg-surface-container-highest px-2 py-0.5 rounded text-on-surface">
+<span class="font-mono-metric-md text-mono-metric-md font-bold">8.74</span>
+<span class="font-mono-code-xs text-mono-code-xs">/10</span>
+</div>
+</div>
+</div>
+<div class="flex items-center justify-between mt-2 pt-2 bg-surface-container-lowest/50 px-2 py-1 rounded">
+<div class="flex items-center gap-2 font-mono-code-xs text-mono-code-xs">
+<span class="text-secondary font-medium">Aerial Duels: <strong>78% Won</strong></span>
+<span class="text-outline-variant">•</span>
+<span class="text-on-surface-variant">Recovery: <strong class="text-on-surface">7.2/90</strong></span>
+</div>
+<button class="flex items-center gap-1 text-mono-code-xs font-mono-code-xs text-on-surface-variant hover:text-primary transition-colors">
+            Profile <span class="material-symbols-outlined text-[12px]">chevron_right</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Quick Tactical Ingest Action Bar -->
+<div class="flex items-center justify-between p-space-sm rounded-xl bg-surface-container-low shadow-sm">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-[18px] text-primary">analytics</span>
+<span class="font-mono-code-xs text-mono-code-xs text-on-surface">Model Weights: 2024.3-STABLE</span>
+</div>
+<button class="px-space-sm py-1 rounded bg-surface-container text-secondary font-mono-code-xs text-mono-code-xs flex items-center gap-1 hover:bg-surface-container-high transition-colors">
+<span class="material-symbols-outlined text-[12px]">refresh</span>
+      Recompute Sim
+    </button>
+</div>
+</div>
+<script>
+  // Simple micro-interactions for segment tabs
+  document.querySelectorAll('#role-filter-strip button').forEach(button => {
+    button.addEventListener('click', () => {
+      document.querySelectorAll('#role-filter-strip button').forEach(b => {
+        b.className = 'px-2.5 py-1 rounded text-mono-code-xs font-mono-code-xs bg-surface-container text-on-surface-variant hover:text-on-surface whitespace-nowrap transition-colors';
+      });
+      button.className = 'px-2.5 py-1 rounded text-mono-code-xs font-mono-code-xs bg-primary text-on-primary font-semibold whitespace-nowrap';
+    });
+  });
+
+  document.querySelectorAll('#chart-tabs button').forEach(button => {
+    button.addEventListener('click', () => {
+      document.querySelectorAll('#chart-tabs button').forEach(b => {
+        b.className = 'px-2.5 py-1.5 rounded text-mono-label-sm font-mono-label-sm bg-surface-container text-on-surface-variant hover:text-on-surface whitespace-nowrap transition-colors';
+      });
+      button.className = 'px-2.5 py-1.5 rounded text-mono-label-sm font-mono-label-sm bg-primary/15 text-primary whitespace-nowrap active:scale-95 transition-all shadow-sm';
+    });
+  });
+</script></main><nav class="fixed bottom-0 inset-x-0 z-50 pb-safe bg-surface-dim/90 backdrop-blur-xl shadow-[0_1px_8px_rgba(0,0,0,0.04)]" data-active-classes="text-primary font-semibold"><div class="flex items-center justify-between h-20 px-space-sm relative"><a class="flex flex-col items-center justify-center gap-1 flex-1 h-16 text-on-surface-variant transition-colors" data-path="leagues-hub" href="#"><span class="material-symbols-outlined text-[20px]">trophy</span><span class="font-mono-label-sm text-mono-label-sm">Leagues</span></a><a aria-current="page" class="flex flex-col items-center justify-center gap-1 flex-1 h-16 transition-colors text-primary font-semibold" data-path="teams-tactics" href="#"><span class="material-symbols-outlined text-[20px]">shield</span><span class="font-mono-label-sm text-mono-label-sm">Teams</span></a><div class="flex items-center justify-center px-1"><a class="flex flex-col items-center justify-center w-14 h-14 -mt-5 rounded-xl bg-primary-container text-on-primary-container shadow-[0_0_16px_-2px_rgba(16,185,129,0.35)] transition-transform active:scale-95" data-path="ocr-match-ingest" href="#"><span class="material-symbols-outlined text-[22px]">document_scanner</span><span class="font-mono-code-xs text-mono-code-xs font-bold leading-none mt-0.5">OCR</span></a></div><a class="flex flex-col items-center justify-center gap-1 flex-1 h-16 text-on-surface-variant transition-colors" data-path="players-radar" href="#"><span class="material-symbols-outlined text-[20px]">person_search</span><span class="font-mono-label-sm text-mono-label-sm">Players</span></a><a class="flex flex-col items-center justify-center gap-1 flex-1 h-16 text-on-surface-variant transition-colors" data-path="model-lab" href="#"><span class="material-symbols-outlined text-[20px]">tune</span><span class="font-mono-label-sm text-mono-label-sm">Model Lab</span></a></div></nav></body></html>
