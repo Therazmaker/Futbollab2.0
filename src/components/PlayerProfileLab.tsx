@@ -1,10 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo } from "react";
 import { useQuery, useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { INITIAL_PLAYER, PlayerData } from "@/data/mock-data";
 import { syncEngine } from "@/lib/offline-sync";
+import { BrainTargetRadar, PredictionMetricPoint } from "./BrainTargetRadar";
 
 interface PlayerProfileLabProps {
   onBackToExplorer: () => void;
@@ -23,6 +24,9 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
   const [fatigueFactor, setFatigueFactor] = useState<number>(15);
   const [tacticalDepth, setTacticalDepth] = useState<number>(75);
+
+  // Radar fixture switch state
+  const [selectedRadarFixture, setSelectedRadarFixture] = useState<"p1" | "p2" | "p3">("p2");
 
   // Ingest / Calibrate Modal state
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
@@ -68,6 +72,73 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
   const currentKpObs =
     latestPrediction?.actualMetrics?.keyPasses ?? player.metrics.keyPassesObserved;
   const kpDelta = latestPrediction?.deltas?.keyPasses ?? -0.3;
+
+  // Radar Metrics calculation based on selected fixture / Convex state
+  const radarMetrics: PredictionMetricPoint[] = useMemo(() => {
+    if (selectedRadarFixture === "p1") {
+      // Early training state (high variance / wide error dispersion)
+      return [
+        { id: "shots_p1", name: "Tiros", predicted: 3.4, actual: 2.0, matchIndex: 1, categoryAngle: 45 },
+        { id: "xg_p1", name: "xG Gen", predicted: 0.52, actual: 0.25, matchIndex: 1, categoryAngle: 135 },
+        { id: "kp_p1", name: "Pases Clave", predicted: 3.8, actual: 2.2, matchIndex: 1, categoryAngle: 225 },
+        { id: "duels_p1", name: "Duelos %", predicted: 76, actual: 52, matchIndex: 1, categoryAngle: 315 },
+      ];
+    }
+
+    if (selectedRadarFixture === "p3") {
+      // Optimal converged forecast (tight bullseye cluster)
+      return [
+        { id: "shots_p3", name: "Tiros", predicted: 2.3, actual: 2.2, matchIndex: 3, categoryAngle: 45 },
+        { id: "xg_p3", name: "xG Gen", predicted: 0.34, actual: 0.33, matchIndex: 3, categoryAngle: 135 },
+        { id: "kp_p3", name: "Pases Clave", predicted: 2.9, actual: 2.9, matchIndex: 3, categoryAngle: 225 },
+        { id: "duels_p3", name: "Duelos %", predicted: 67, actual: 65, matchIndex: 3, categoryAngle: 315 },
+      ];
+    }
+
+    // Default: P2 (Current calibrated state using Convex values or latest log)
+    return [
+      {
+        id: "shots_p2",
+        name: "Tiros",
+        predicted: currentShotsPred,
+        actual: currentShotsObs,
+        matchIndex: 2,
+        categoryAngle: 45,
+      },
+      {
+        id: "xg_p2",
+        name: "xG Gen",
+        predicted: currentXgPred,
+        actual: currentXgObs,
+        matchIndex: 2,
+        categoryAngle: 135,
+      },
+      {
+        id: "kp_p2",
+        name: "Pases Clave",
+        predicted: currentKpPred,
+        actual: currentKpObs,
+        matchIndex: 2,
+        categoryAngle: 225,
+      },
+      {
+        id: "duels_p2",
+        name: "Duelos %",
+        predicted: 68.4,
+        actual: 64.0,
+        matchIndex: 2,
+        categoryAngle: 315,
+      },
+    ];
+  }, [
+    selectedRadarFixture,
+    currentShotsPred,
+    currentShotsObs,
+    currentXgPred,
+    currentXgObs,
+    currentKpPred,
+    currentKpObs,
+  ]);
 
   const runPredictiveSimulation = async () => {
     setIsSimulating(true);
@@ -128,6 +199,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
         setLastCalibrationNotice(
           `¡Calibración exitosa! Delta disparos: ${data.calibration?.deltas?.totalShots ?? 0}. Peso recalculado: ${data.calibration?.calibratedWeight?.featureName} (${data.calibration?.calibratedWeight?.newValue})`
         );
+        setSelectedRadarFixture("p2");
         setIsModalOpen(false);
       }
     } catch (err) {
@@ -465,6 +537,62 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
             </div>
           </div>
         </div>
+      </div>
+
+      {/* BRAIN TARGET CONVERGENCE RADAR & FIXTURE SELECTOR */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center justify-between px-space-xs">
+          <span className="font-mono text-[10px] text-on-surface-variant uppercase tracking-wider font-semibold flex items-center gap-1">
+            <span className="material-symbols-outlined text-[14px] text-primary">adjust</span>
+            <span>Trayectoria de Convergencia del Modelo</span>
+          </span>
+
+          {/* Fixture Selector Switch */}
+          <div className="flex items-center gap-1 bg-surface-container rounded-lg p-0.5 border border-surface-container-highest">
+            <button
+              onClick={() => setSelectedRadarFixture("p1")}
+              className={`px-2 py-0.5 rounded text-[10px] font-mono transition-all ${
+                selectedRadarFixture === "p1"
+                  ? "bg-surface-container-highest text-tertiary font-bold shadow-sm"
+                  : "text-on-surface-variant hover:text-on-surface"
+              }`}
+            >
+              P1 (Base)
+            </button>
+            <button
+              onClick={() => setSelectedRadarFixture("p2")}
+              className={`px-2 py-0.5 rounded text-[10px] font-mono transition-all ${
+                selectedRadarFixture === "p2"
+                  ? "bg-primary text-on-primary font-bold shadow-sm"
+                  : "text-on-surface-variant hover:text-on-surface"
+              }`}
+            >
+              P2 (vs Athletic)
+            </button>
+            <button
+              onClick={() => setSelectedRadarFixture("p3")}
+              className={`px-2 py-0.5 rounded text-[10px] font-mono transition-all ${
+                selectedRadarFixture === "p3"
+                  ? "bg-secondary text-on-secondary font-bold shadow-sm"
+                  : "text-on-surface-variant hover:text-on-surface"
+              }`}
+            >
+              P3 (Bullseye Core)
+            </button>
+          </div>
+        </div>
+
+        {/* Polar Bullseye Radar Component */}
+        <BrainTargetRadar
+          metrics={radarMetrics}
+          selectedMatchLabel={
+            selectedRadarFixture === "p1"
+              ? "Dispersión Inicial (P1 Base)"
+              : selectedRadarFixture === "p2"
+              ? "Calibración en Vivo (P2 vs Athletic)"
+              : "Convergencia Óptima (P3 Bullseye)"
+          }
+        />
       </div>
 
       {/* Match History & Prediction Calibration Log */}
