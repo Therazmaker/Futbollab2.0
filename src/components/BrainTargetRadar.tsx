@@ -11,6 +11,12 @@ export interface PredictionMetricPoint {
   categoryAngle: number; // degrees: Tiros 45°, xG 135°, Pases 225°, Duelos 315°
   /** Desviación estándar de la predicción. Si existe, el error se mide en σ. */
   sd?: number;
+  /** Vista acumulada: error medio |z| ya calculado (manda sobre predicted/actual/sd). */
+  meanAbsSigma?: number;
+  /** Vista acumulada: sesgo medio en σ (>0 = el real supera a lo predicho). */
+  bias?: number;
+  /** Vista acumulada: partidos usados para esta stat. */
+  count?: number;
 }
 
 export interface PlottedMetricPoint extends PredictionMetricPoint {
@@ -27,6 +33,8 @@ export interface PlottedMetricPoint extends PredictionMetricPoint {
 export interface BrainTargetRadarProps {
   metrics: PredictionMetricPoint[];
   selectedMatchLabel?: string;
+  /** Texto explicativo bajo el título (cambia según la vista). */
+  description?: string;
   width?: number;
   height?: number;
 }
@@ -34,6 +42,7 @@ export interface BrainTargetRadarProps {
 export function BrainTargetRadar({
   metrics,
   selectedMatchLabel = "Partido seleccionado",
+  description,
   width = 340,
   height = 340,
 }: BrainTargetRadarProps) {
@@ -47,7 +56,12 @@ export function BrainTargetRadar({
   const plottedPoints = metrics.map((m) => {
     // Error estandarizado: |real − predicho| / σ, con el borde del radar en 2σ.
     // (Sin σ: error relativo como antes.) Un punto dentro de 1σ es ruido normal.
-    const sigmas = m.sd && m.sd > 0 ? Math.abs(m.actual - m.predicted) / m.sd : null;
+    const sigmas =
+      m.meanAbsSigma !== undefined
+        ? m.meanAbsSigma
+        : m.sd && m.sd > 0
+        ? Math.abs(m.actual - m.predicted) / m.sd
+        : null;
     const errorRatio = Math.min(
       1.0,
       sigmas !== null ? sigmas / 2 : Math.abs(m.actual - m.predicted) / Math.max(m.actual, 1)
@@ -56,9 +70,11 @@ export function BrainTargetRadar({
 
     // Directional bias: clockwise (+10°) if over-predicted, counterclockwise (-10°) if under-predicted
     let adjustedAngle = m.categoryAngle;
-    if (m.predicted > m.actual) {
+    const overPredicted = m.bias !== undefined ? m.bias < -0.15 : m.predicted > m.actual;
+    const underPredicted = m.bias !== undefined ? m.bias > 0.15 : m.predicted < m.actual;
+    if (overPredicted) {
       adjustedAngle += 10;
-    } else if (m.predicted < m.actual) {
+    } else if (underPredicted) {
       adjustedAngle -= 10;
     }
 
@@ -127,8 +143,8 @@ export function BrainTargetRadar({
       </div>
 
       <p className="font-mono text-[10px] text-on-surface-variant w-full mb-2">
-        Distancia al centro = error de la predicción pre-partido en desviaciones (σ). Dentro del
-        anillo de 1σ es ruido normal del fútbol; fuera de 1.5σ el perfil no esperaba eso.
+        {description ??
+          "Distancia al centro = error de la predicción pre-partido en desviaciones (σ). Dentro del anillo de 1σ es ruido normal del fútbol; fuera de 1.5σ el perfil no esperaba eso."}
       </p>
 
       {/* SVG Bullseye Polar Radar */}
@@ -341,6 +357,7 @@ export function BrainTargetRadar({
                 <span>{activeTooltip.name}</span>
               </p>
               <p className="text-[10px] text-on-surface-variant">
+                {activeTooltip.count !== undefined ? `${activeTooltip.count} partidos · prom. ` : ""}
                 Predicho: <span className="text-secondary font-bold">{activeTooltip.predicted}</span> | Real:{" "}
                 <span className="text-primary font-bold">{activeTooltip.actual}</span>
               </p>
