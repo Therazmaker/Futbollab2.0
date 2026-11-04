@@ -8,6 +8,10 @@ export default defineSchema({
     country: v.string(), // "Europa", "Italia", "España"
     isTournament: v.boolean(), // true for UCL/copas, false for domestic
     crestUrl: v.optional(v.string()),
+    // Calculado con los resultados (ver lib/leagueTable.ts)
+    homeAdvantage: v.optional(v.number()),
+    goalsPerTeam: v.optional(v.number()),
+    matchesPlayed: v.optional(v.number()),
   }).index("by_code", ["code"]),
 
   teams: defineTable({
@@ -29,6 +33,9 @@ export default defineSchema({
     // Calculado a partir de los partidos reales (tabla `matches`)
     legacyId: v.optional(v.string()),
     played: v.optional(v.number()),
+    wins: v.optional(v.number()),
+    draws: v.optional(v.number()),
+    losses: v.optional(v.number()),
     goalsFor: v.optional(v.number()),
     goalsAgainst: v.optional(v.number()),
     attackRating: v.optional(v.number()), // 1 = media de la liga
@@ -48,6 +55,8 @@ export default defineSchema({
     awayGoals: v.number(),
   })
     .index("by_league_and_date", ["league", "date"])
+    .index("by_home_and_date", ["homeTeamId", "date"])
+    .index("by_away_and_date", ["awayTeamId", "date"])
     .index("by_legacyId", ["legacyId"]),
 
   players: defineTable({

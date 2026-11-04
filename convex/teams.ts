@@ -1,5 +1,7 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import type { Id } from "./_generated/dataModel";
+import { recomputeLeague } from "./lib/leagueTable";
 
 /**
  * Returns all registered leagues and continental tournaments.
@@ -97,22 +99,14 @@ export const createTeam = mutation({
       args.competitions.forEach((c) => comps.add(c.toLowerCase()));
     }
 
+    // Solo se guarda lo que el usuario dio: tabla, forma y fuerza salen de los resultados
     return await ctx.db.insert("teams", {
       name: args.name,
       shortName: args.shortName || args.name.slice(0, 3).toUpperCase(),
       league: args.league.toLowerCase(),
       competitions: Array.from(comps),
       crestUrl: args.crestUrl,
-      rank: args.rank ?? 1,
-      points: args.points ?? 0,
-      goalDifference: args.goalDifference ?? 0,
-      formation: args.formation ?? "4-3-3",
-      meanXg: args.meanXg ?? 2.1,
-      ppda: args.ppda ?? 8.5,
-      tempo: args.tempo ?? "18.0 m/s",
-      form: args.form ?? ["W", "W", "D", "W", "W"],
-      density: args.density ?? 92.0,
-      predAccuracy: args.predAccuracy ?? 94.0,
+      formation: args.formation,
     });
   },
 });
@@ -261,5 +255,224 @@ export const seedInitialCompetitionsAndTeams = mutation({
     }
 
     return { seeded: true };
+  },
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Perfil de equipo, resultados y simulador (datos reales de la tabla `matches`)
+// ─────────────────────────────────────────────────────────────────────────────
+
+const POSITION_ORDER: Record<string, number> = { GK: 0, DF: 1, MF: 2, AM: 3, FW: 4 };
+function positionRank(pos = "") {
+  const p = pos.toUpperCase();
+  for (const k of Object.keys(POSITION_ORDER)) if (p.startsWith(k)) return POSITION_ORDER[k];
+  if (/PORTER|GOALK/.test(p)) return 0;
+  if (/DEF|BACK|LATERAL|CENTRAL/.test(p)) return 1;
+  if (/STRIK|DELANT|FORW|WING|EXTREM/.test(p)) return 4;
+  return 2;
+}
+
+export const getTeamProfile = query({
+  args: { teamId: v.id("teams") },
+  handler: async (ctx, { teamId }) => {
+    const team = await ctx.db.get(teamId);
+    if (!team) return null;
+    const league = await ctx.db
+      .query("leagues")
+      .withIndex("by_code", (q) => q.eq("code", team.league))
+      .first();
+
+    const home = await ctx.db
+      .query("matches")
+      .withIndex("by_home_and_date", (q) => q.eq("homeTeamId", teamId))
+      .collect();
+    const away = await ctx.db
+      .query("matches")
+      .withIndex("by_away_and_date", (q) => q.eq("awayTeamId", teamId))
+      .collect();
+    const names = new Map<string, string>();
+    const nameOf = async (id: Id<"teams">) => {
+      if (!names.has(id)) names.set(id, (await ctx.db.get(id))?.name ?? "?");
+      return names.get(id)!;
+    };
+    const all = [...home, ...away].sort((a, b) => (a.date < b.date ? 1 : -1));
+    type ResultRow = {
+      _id: Id<"matches">;
+      date: string;
+      isHome: boolean;
+      opponentId: Id<"teams">;
+      opponent: string;
+      goalsFor: number;
+      goalsAgainst: number;
+      result: "W" | "D" | "L";
+    };
+    const results: ResultRow[] = [];
+    for (const m of all) {
+      const isHome = m.homeTeamId === teamId;
+      const gf = isHome ? m.homeGoals : m.awayGoals;
+      const ga = isHome ? m.awayGoals : m.homeGoals;
+      results.push({
+        _id: m._id,
+        date: m.date,
+        isHome,
+        opponentId: isHome ? m.awayTeamId : m.homeTeamId,
+        opponent: await nameOf(isHome ? m.awayTeamId : m.homeTeamId),
+        goalsFor: gf,
+        goalsAgainst: ga,
+        result: (gf > ga ? "W" : gf === ga ? "D" : "L") as ResultRow["result"],
+      });
+    }
+    const split = (rows: ResultRow[]) => ({
+      played: rows.length,
+      wins: rows.filter((r) => r.result === "W").length,
+      draws: rows.filter((r) => r.result === "D").length,
+      losses: rows.filter((r) => r.result === "L").length,
+      goalsFor: rows.reduce((a, r) => a + r.goalsFor, 0),
+      goalsAgainst: rows.reduce((a, r) => a + r.goalsAgainst, 0),
+    });
+
+    const players = await ctx.db
+      .query("players")
+      .withIndex("by_team", (q) => q.eq("teamId", teamId))
+      .collect();
+    const squad = [];
+    for (const p of players) {
+      const logs = await ctx.db
+        .query("playerMatchLogs")
+        .withIndex("by_player", (q) => q.eq("playerId", p._id))
+        .collect();
+      squad.push({
+        _id: p._id,
+        name: p.name,
+        position: p.position,
+        number: p.number ?? null,
+        age: p.age ?? null,
+        seasonStats: p.seasonStats ?? null,
+        loggedMatches: logs.length,
+        lastMatchDate: logs.reduce((acc, l) => (l.matchDate > acc ? l.matchDate : acc), ""),
+      });
+    }
+    squad.sort(
+      (a, b) =>
+        positionRank(a.position) - positionRank(b.position) ||
+        (b.seasonStats?.minutes ?? 0) - (a.seasonStats?.minutes ?? 0) ||
+        a.name.localeCompare(b.name)
+    );
+
+    const leagueTeams = await ctx.db
+      .query("teams")
+      .withIndex("by_league", (q) => q.eq("league", team.league))
+      .collect();
+    const table = leagueTeams
+      .filter((t) => t.rank)
+      .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99))
+      .map((t) => ({
+        _id: t._id,
+        name: t.name,
+        rank: t.rank!,
+        points: t.points ?? 0,
+        played: t.played ?? 0,
+        goalDifference: t.goalDifference ?? 0,
+      }));
+
+    return {
+      team,
+      league: league ?? null,
+      record: { total: split(results), home: split(results.filter((r) => r.isHome)), away: split(results.filter((r) => !r.isHome)) },
+      results,
+      squad,
+      table,
+    };
+  },
+});
+
+function pois(k: number, l: number) {
+  let f = 1;
+  for (let i = 2; i <= k; i++) f *= i;
+  return (Math.exp(-l) * Math.pow(l, k)) / f;
+}
+
+/**
+ * Simulación de un partido con el modelo Poisson (Dixon-Coles) de la liga:
+ * goles esperados = media de la liga × ventaja local × ataque × defensa rival.
+ */
+export const predictMatch = query({
+  args: { homeTeamId: v.id("teams"), awayTeamId: v.id("teams") },
+  handler: async (ctx, { homeTeamId, awayTeamId }) => {
+    const home = await ctx.db.get(homeTeamId);
+    const away = await ctx.db.get(awayTeamId);
+    if (!home || !away || !home.attackRating || !away.attackRating || !home.defenseRating || !away.defenseRating) {
+      return null;
+    }
+    const league = await ctx.db
+      .query("leagues")
+      .withIndex("by_code", (q) => q.eq("code", home.league))
+      .first();
+    const avg = league?.goalsPerTeam ?? 1.4;
+    const homeAdv = league?.homeAdvantage ?? 1.15;
+    const lh = avg * homeAdv * home.attackRating * away.defenseRating;
+    const la = avg * away.attackRating * home.defenseRating;
+    const rho = -0.1;
+    let pH = 0, pD = 0, pA = 0, over25 = 0, btts = 0, total = 0;
+    const scores: Array<{ home: number; away: number; p: number }> = [];
+    for (let i = 0; i <= 10; i++) {
+      for (let j = 0; j <= 10; j++) {
+        let p = pois(i, lh) * pois(j, la);
+        if (i === 0 && j === 0) p *= 1 - lh * la * rho;
+        else if (i === 0 && j === 1) p *= 1 + lh * rho;
+        else if (i === 1 && j === 0) p *= 1 + la * rho;
+        else if (i === 1 && j === 1) p *= 1 - rho;
+        total += p;
+        if (i > j) pH += p;
+        else if (i === j) pD += p;
+        else pA += p;
+        if (i + j > 2) over25 += p;
+        if (i > 0 && j > 0) btts += p;
+        scores.push({ home: i, away: j, p });
+      }
+    }
+    scores.sort((a, b) => b.p - a.p);
+    const r = (x: number) => +(x / total).toFixed(3);
+    return {
+      home: home.name,
+      away: away.name,
+      expectedGoals: { home: +lh.toFixed(2), away: +la.toFixed(2) },
+      probabilities: { home: r(pH), draw: r(pD), away: r(pA) },
+      over25: r(over25),
+      btts: r(btts),
+      topScores: scores.slice(0, 5).map((s) => ({ ...s, p: r(s.p) })),
+      sameLeague: home.league === away.league,
+    };
+  },
+});
+
+/** Registra un resultado de equipo y recalcula la tabla y la fuerza de la liga. */
+export const addMatchResult = mutation({
+  args: {
+    homeTeamId: v.id("teams"),
+    awayTeamId: v.id("teams"),
+    homeGoals: v.number(),
+    awayGoals: v.number(),
+    date: v.string(),
+  },
+  handler: async (ctx, args) => {
+    if (args.homeTeamId === args.awayTeamId) throw new Error("Local y visitante deben ser distintos");
+    if (args.homeGoals < 0 || args.awayGoals < 0) throw new Error("Goles no válidos");
+    const home = await ctx.db.get(args.homeTeamId);
+    if (!home) throw new Error("Equipo local no encontrado");
+    const id = await ctx.db.insert("matches", { ...args, league: home.league });
+    await recomputeLeague(ctx.db, home.league);
+    return id;
+  },
+});
+
+export const deleteMatchResult = mutation({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, { matchId }) => {
+    const m = await ctx.db.get(matchId);
+    if (!m) return null;
+    await ctx.db.delete(matchId);
+    await recomputeLeague(ctx.db, m.league);
+    return matchId;
   },
 });

@@ -268,9 +268,29 @@ export const listPlayers = query({
         name: p.name,
         position: p.position,
         teamName: team?.name ?? "",
+        teamId: p.teamId,
         hasMatches: firstLog !== null,
       });
     }
     return out;
+  },
+});
+
+/** Alta de un jugador en la plantilla de un equipo. */
+export const createPlayer = mutation({
+  args: {
+    teamId: v.id("teams"),
+    name: v.string(),
+    position: v.string(),
+    number: v.optional(v.number()),
+    age: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const name = args.name.trim();
+    if (!name) throw new Error("El nombre es obligatorio");
+    if (!(await ctx.db.get(args.teamId))) throw new Error("Equipo no encontrado");
+    const playerId = await ctx.db.insert("players", { ...args, name });
+    await syncPlayerWeights(ctx.db, playerId);
+    return playerId;
   },
 });
