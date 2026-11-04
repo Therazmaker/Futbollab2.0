@@ -887,8 +887,8 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
 
       {/* Quick Edit Modal */}
       {editingLog && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-surface-container-low border border-secondary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl relative">
+        <div className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain flex justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-low border border-secondary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl my-auto relative">
             <div className="flex items-center justify-between pb-3 border-b border-surface-container-high">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-secondary text-[20px]">edit</span>
@@ -1021,7 +1021,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                 </div>
               </div>
 
-              <div className="mt-3 pt-3 border-t border-surface-container-high flex items-center justify-end gap-2">
+              <div className="mt-3 pt-3 pb-1 border-t border-surface-container-high flex items-center justify-end gap-2 sticky bottom-0 bg-surface-container-low z-10">
                 <button
                   type="button"
                   onClick={() => setEditingLog(null)}
@@ -1044,8 +1044,8 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
 
       {/* Modal: Registrar Siguiente Partido (Test del Loop P1 -> P2) */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl relative">
+        <div className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain flex justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl my-auto relative">
             <div className="flex items-center justify-between pb-3 border-b border-surface-container-high">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary text-[22px]">add_circle</span>
@@ -1305,7 +1305,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                 </div>
               </div>
 
-              <div className="mt-3 pt-3 border-t border-surface-container-high flex items-center justify-end gap-2">
+              <div className="mt-3 pt-3 pb-1 border-t border-surface-container-high flex items-center justify-end gap-2 sticky bottom-0 bg-surface-container-low z-10">
                 <button
                   type="button"
                   onClick={() => setIsModalOpen(false)}
