@@ -1,55 +1,181 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { parseMatchStats } from "@/lib/parse-match-stats";
 
 interface MatchDetailViewProps {
   matchLog: any;
   playerName: string;
   playerNumber: number;
+  /** Predicción pre-partido de este partido (del informe del modelo), si existe */
+  prediction?: { stats: Record<string, { predicted: number; sd: number; actual: number }> } | null;
   onBack: () => void;
   onMatchUpdated?: () => void;
 }
 
-export function MatchDetailView({
-  matchLog,
-  playerName,
-  playerNumber,
-  onBack,
-  onMatchUpdated,
-}: MatchDetailViewProps) {
+/** Etiquetas en español y grupos. Lo que no esté aquí sale en "Otras". */
+const GROUPS: Array<{ title: string; icon: string; keys: Array<[string, string, string?]> }> = [
+  {
+    title: "General",
+    icon: "info",
+    keys: [
+      ["rating", "Nota"],
+      ["goals", "Goles"],
+      ["xG", "Goles esperados (xG)"],
+      ["assists", "Asistencias"],
+      ["xA", "Asistencias esperadas (xA)"],
+    ],
+  },
+  {
+    title: "Tiro",
+    icon: "sports_soccer",
+    keys: [
+      ["totalShots", "Tiros"],
+      ["shotsOnTarget", "Tiros a puerta"],
+      ["xGOT", "xG a puerta (xGOT)"],
+      ["shotsOffTarget", "Tiros fuera"],
+      ["shotsBlocked", "Tiros bloqueados"],
+      ["bigChancesMissed", "Ocasiones claras falladas"],
+      ["hitWoodwork", "Al palo"],
+      ["offsides", "Fueras de juego"],
+    ],
+  },
+  {
+    title: "Pases",
+    icon: "conversion_path",
+    keys: [
+      ["keyPasses", "Pases clave"],
+      ["bigChancesCreated", "Ocasiones claras creadas"],
+      ["accuratePasses", "Pases acertados", "totalPasses"],
+      ["accuratePassesPct", "Precisión de pase", "%"],
+      ["oppHalfPassesAccurate", "Pases en campo rival", "oppHalfPasses"],
+      ["ownHalfPassesAccurate", "Pases en campo propio", "ownHalfPasses"],
+      ["longBallsAccurate", "Balones largos", "longBalls"],
+      ["crossesAccurate", "Centros acertados", "crosses"],
+    ],
+  },
+  {
+    title: "Regate y posesión",
+    icon: "directions_run",
+    keys: [
+      ["touches", "Toques"],
+      ["unsuccessfulTouches", "Malos controles"],
+      ["dribblesCompleted", "Regates completados", "dribbles"],
+      ["wasFouled", "Faltas recibidas"],
+      ["possessionLost", "Pérdidas"],
+      ["carries", "Conducciones"],
+      ["progressiveCarries", "Conducciones progresivas"],
+      ["carryDistanceM", "Distancia en conducción", "m"],
+      ["progressiveCarryM", "Conducción progresiva", "m"],
+      ["totalProgressionM", "Progresión total", "m"],
+      ["longestProgressiveCarryM", "Conducción progresiva más larga", "m"],
+    ],
+  },
+  {
+    title: "Defensa",
+    icon: "shield",
+    keys: [
+      ["defensiveContributions", "Contribuciones defensivas"],
+      ["tacklesWon", "Entradas ganadas", "tackles"],
+      ["interceptions", "Intercepciones"],
+      ["clearances", "Despejes"],
+      ["blockedShots", "Tiros bloqueados (def.)"],
+      ["recoveries", "Recuperaciones"],
+      ["groundDuelsWon", "Duelos en el suelo ganados", "groundDuels"],
+      ["aerialDuelsWon", "Duelos aéreos ganados", "aerialDuels"],
+      ["duelsWon", "Duelos ganados", "duels"],
+      ["fouls", "Faltas cometidas"],
+      ["dribbledPast", "Le regatearon"],
+      ["yellowCards", "Amarillas"],
+      ["redCards", "Rojas"],
+    ],
+  },
+  {
+    title: "Físico",
+    icon: "speed",
+    keys: [
+      ["distanceKm", "Distancia recorrida", "km"],
+      ["topSpeedKmh", "Velocidad máxima", "km/h"],
+      ["sprints", "Sprints"],
+      ["walkJogKm", "Andando + trotando", "km"],
+      ["runningKm", "Corriendo", "km"],
+      ["highSpeedKm", "Alta velocidad", "km"],
+      ["sprintingKm", "Esprintando", "km"],
+    ],
+  },
+  { title: "Portero", icon: "sports_handball", keys: [["saves", "Paradas"], ["goalsPrevented", "Goles evitados"]] },
+];
+
+/** Claves que solo se muestran junto a otra ("27/30"). */
+const SECONDARY = new Set(
+  GROUPS.flatMap((g) => g.keys.map((k) => k[2])).filter((k): k is string => !!k && !["%", "m", "km", "km/h"].includes(k))
+);
+const PCT_PAIRS: Record<string, string> = {
+  walkJogKm: "walkJogPct",
+  runningKm: "runningPct",
+  highSpeedKm: "highSpeedPct",
+  sprintingKm: "sprintingPct",
+  oppHalfPassesAccurate: "oppHalfPassesPct",
+  ownHalfPassesAccurate: "ownHalfPassesPct",
+  longBallsAccurate: "longBallsPct",
+};
+const KNOWN = new Set([...GROUPS.flatMap((g) => g.keys.map((k) => k[0])), ...Array.from(SECONDARY), ...Object.values(PCT_PAIRS)]);
+
+const MODEL_FIELDS: Array<[string, string, string]> = [
+  ["totalShots", "Tiros", "1"],
+  ["xG", "xG", "0.01"],
+  ["keyPasses", "Pases clave", "1"],
+  ["groundDuelsWon", "Duelos ganados", "1"],
+  ["rating", "Nota", "0.1"],
+];
+
+const input =
+  "w-full h-9 px-2.5 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary";
+
+export function MatchDetailView({ matchLog, playerName, playerNumber, prediction, onBack, onMatchUpdated }: MatchDetailViewProps) {
   const updateMutation = useMutation(api.players.updateMatchLog);
   const deleteMutation = useMutation(api.players.deleteMatchLog);
 
+  const stats: Record<string, number> = matchLog.rawStats || {};
   const [isEditing, setIsEditing] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  // Edit form state
-  const [opponent, setOpponent] = useState(matchLog.opponent || "");
-  const [matchDate, setMatchDate] = useState(matchLog.matchDate || "");
+  const [opponent, setOpponent] = useState<string>(matchLog.opponent || "");
+  const [matchDate, setMatchDate] = useState<string>(matchLog.matchDate || "");
   const [isAway, setIsAway] = useState<boolean>(matchLog.isAway ?? false);
-  const [minutesPlayed, setMinutesPlayed] = useState<number>(matchLog.minutesPlayed || 90);
-  const [tacticalRole, setTacticalRole] = useState(matchLog.tacticalRole || "Shadow Striker");
+  const [minutesPlayed, setMinutesPlayed] = useState<string>(String(matchLog.minutesPlayed ?? ""));
+  const [fields, setFields] = useState<Record<string, string>>(() =>
+    Object.fromEntries(MODEL_FIELDS.map(([k]) => [k, stats[k] === undefined ? "" : String(stats[k])]))
+  );
+  const [pasteText, setPasteText] = useState("");
+  const pasted = useMemo(() => (pasteText.trim() ? parseMatchStats(pasteText) : null), [pasteText]);
 
-  // Raw stats
-  const [totalShots, setTotalShots] = useState(matchLog.rawStats?.totalShots ?? 3);
-  const [shotsOnTarget, setShotsOnTarget] = useState(matchLog.rawStats?.shotsOnTarget ?? 2);
-  const [xg, setXg] = useState(matchLog.rawStats?.xG ?? 0.48);
-  const [keyPasses, setKeyPasses] = useState(matchLog.rawStats?.keyPasses ?? 3);
-  const [accuratePassesPct, setAccuratePassesPct] = useState(matchLog.rawStats?.accuratePassesPct ?? 88);
-  const [touches, setTouches] = useState(matchLog.rawStats?.touches ?? 76);
-  const [dribblesCompleted, setDribblesCompleted] = useState(matchLog.rawStats?.dribblesCompleted ?? 3);
-  const [groundDuelsWon, setGroundDuelsWon] = useState(matchLog.rawStats?.groundDuelsWon ?? 7);
-  const [aerialDuelsWon, setAerialDuelsWon] = useState(matchLog.rawStats?.aerialDuelsWon ?? 2);
-  const [recoveries, setRecoveries] = useState(matchLog.rawStats?.recoveries ?? 5);
-  const [rating, setRating] = useState(matchLog.rawStats?.rating ?? 8.6);
-
-  const stats = matchLog.rawStats || {};
+  const fmt = (v: number) => String(+Number(v).toFixed(2));
+  const others = Object.entries(stats).filter(([k]) => !KNOWN.has(k));
 
   const handleSaveEdit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
+    const mins = Number(minutesPlayed);
+    if (!(mins > 0)) return setError("Los minutos jugados deben ser mayores que 0.");
+    // Base: lo guardado + lo pegado; los campos del formulario mandan.
+    const next: Record<string, number> = { ...stats, ...(pasted?.stats ?? {}) };
+    for (const [k] of MODEL_FIELDS) {
+      const raw = fields[k]?.trim() ?? "";
+      if (raw === "") delete next[k]; // vacío = no se sabe (no se inventa)
+      else if (Number.isFinite(Number(raw))) next[k] = Number(raw);
+    }
+    if (pasted) {
+      for (const [k] of MODEL_FIELDS) {
+        if (pasted.stats[k] !== undefined && fields[k] === (stats[k] === undefined ? "" : String(stats[k]))) {
+          next[k] = pasted.stats[k];
+        }
+      }
+    }
     setIsSaving(true);
     try {
       await updateMutation({
@@ -57,36 +183,20 @@ export function MatchDetailView({
         opponent,
         matchDate,
         isAway,
-        minutesPlayed,
-        tacticalRole,
-        rawStats: {
-          ...stats,
-          totalShots,
-          shotsOnTarget,
-          xG: xg,
-          keyPasses,
-          accuratePassesPct,
-          touches,
-          dribblesCompleted,
-          groundDuelsWon,
-          aerialDuelsWon,
-          recoveries,
-          rating,
-        },
+        minutesPlayed: pasted?.minutesPlayed ?? mins,
+        rawStats: next,
       });
       setIsEditing(false);
-      if (onMatchUpdated) onMatchUpdated();
-    } catch (err) {
-      console.error("Error saving match:", err);
+      onMatchUpdated?.();
+    } catch (err: any) {
+      setError(err?.message ?? String(err));
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!window.confirm(`¿Estás seguro de que deseas eliminar el registro de partido vs ${matchLog.opponent}?`)) {
-      return;
-    }
+    if (!window.confirm(`¿Eliminar el partido vs ${matchLog.opponent}?`)) return;
     setIsDeleting(true);
     try {
       await deleteMutation({ matchLogId: matchLog._id });
@@ -98,383 +208,174 @@ export function MatchDetailView({
   };
 
   return (
-    <div className="flex flex-col w-full gap-space-md animate-fadeIn">
-      {/* Top Breadcrumbs & Back */}
-      <div className="flex items-center justify-between px-space-xs text-on-surface-variant font-mono text-[11px]">
-        <div className="flex items-center gap-1.5 overflow-hidden">
-          <button
-            onClick={onBack}
-            className="flex items-center text-secondary hover:text-primary transition-colors text-[16px]"
-          >
+    <div className="flex flex-col w-full gap-space-md">
+      {/* Migas */}
+      <div className="flex items-center justify-between px-space-xs font-mono text-[11px] text-on-surface-variant">
+        <div className="flex items-center gap-1.5 min-w-0">
+          <button onClick={onBack} className="flex items-center text-secondary hover:text-primary" aria-label="Volver">
             <span className="material-symbols-outlined text-[16px]">arrow_back</span>
           </button>
-          <span className="text-on-surface-variant/70 cursor-pointer" onClick={onBack}>
-            {playerName} #{playerNumber}
-          </span>
-          <span className="text-outline-variant">/</span>
-          <span className="text-on-surface-variant/70">Partidos</span>
-          <span className="text-outline-variant">/</span>
+          <button onClick={onBack} className="hover:text-primary truncate">
+            {playerName}
+            {playerNumber ? ` #${playerNumber}` : ""}
+          </button>
+          <span className="material-symbols-outlined text-[12px]">chevron_right</span>
           <span className="text-primary font-semibold truncate">vs {matchLog.opponent}</span>
         </div>
-
-        <div className="flex items-center gap-1.5">
+        <div className="flex gap-1.5 shrink-0">
           <button
-            onClick={() => setIsEditing(true)}
-            className="flex items-center gap-1 px-2.5 py-1 rounded bg-surface-container-high hover:bg-surface-bright text-secondary font-mono text-[11px] border border-secondary/30 transition-all active:scale-95"
+            onClick={() => setIsEditing(!isEditing)}
+            className="px-2 py-1 rounded bg-surface-container-high text-secondary text-[10px] border border-secondary/30"
           >
-            <span className="material-symbols-outlined text-[13px]">edit</span>
-            <span>Editar</span>
+            {isEditing ? "Cancelar" : "Editar"}
           </button>
           <button
             onClick={handleDelete}
             disabled={isDeleting}
-            className="flex items-center gap-1 px-2.5 py-1 rounded bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 font-mono text-[11px] border border-rose-600/40 transition-all active:scale-95"
+            className="px-2 py-1 rounded bg-surface-container-high text-error text-[10px] border border-error/30"
           >
-            <span className="material-symbols-outlined text-[13px]">delete</span>
-            <span>{isDeleting ? "Borrando..." : "Borrar"}</span>
+            {isDeleting ? "…" : "Borrar"}
           </button>
         </div>
       </div>
 
-      {/* Match Header Bento Card */}
-      <div className="bg-surface-container-low rounded-xl p-space-md border border-surface-container-high/60 relative overflow-hidden shadow-xl">
-        <div className="absolute -right-8 -top-8 w-44 h-44 rounded-full bg-gradient-to-br from-primary/10 via-secondary/5 to-transparent blur-2xl pointer-events-none" />
-
-        <div className="flex items-start justify-between relative z-10 gap-space-sm">
-          <div className="flex items-center gap-space-sm">
-            <div
-              className={`w-12 h-12 rounded-xl flex items-center justify-center font-mono text-base font-bold shadow-md border ${
-                matchLog.isAway
-                  ? "bg-secondary/20 text-secondary border-secondary/40"
-                  : "bg-primary/20 text-primary border-primary/40"
-              }`}
-            >
-              {matchLog.isAway ? "AWAY" : "HOME"}
-            </div>
-            <div className="flex flex-col">
-              <div className="flex items-center gap-2">
-                <h2 className="text-lg font-bold text-on-surface tracking-tight">
-                  vs {matchLog.opponent}
-                </h2>
-                <span className="bg-surface-container-highest text-secondary font-mono text-[10px] px-1.5 py-0.2 rounded font-semibold">
-                  {matchLog.isAway ? "Visitante" : "Local"}
-                </span>
-              </div>
-              <p className="font-mono text-xs text-on-surface-variant flex items-center gap-2 mt-0.5">
-                <span>{matchLog.matchDate}</span>
-                <span>•</span>
-                <span className="text-primary">{matchLog.tacticalRole || "Shadow Striker"}</span>
-                <span>•</span>
-                <span>{matchLog.minutesPlayed}' mins</span>
-              </p>
-            </div>
-          </div>
-
-          <div className="flex flex-col items-end gap-0.5">
-            <span className="font-mono text-[9px] text-on-surface-variant uppercase">Sofascore Rating</span>
-            <div className="flex items-center gap-1 bg-surface-container px-2 py-1 rounded border border-primary/30">
-              <span className="material-symbols-outlined text-primary text-[14px]">star</span>
-              <span className="font-mono text-sm font-bold text-primary">
-                {stats.rating ?? 8.6}
-              </span>
-            </div>
-          </div>
+      {/* Cabecera */}
+      <div className="bg-surface-container-low rounded-xl p-space-md border border-surface-container-high/60 shadow-md flex items-center justify-between">
+        <div>
+          <h2 className="text-lg font-bold text-on-surface">vs {matchLog.opponent}</h2>
+          <p className="font-mono text-xs text-on-surface-variant">
+            {matchLog.matchDate} · {matchLog.isAway ? "Fuera" : "Casa"} · {matchLog.minutesPlayed}&apos;
+            {matchLog.competition ? ` · ${String(matchLog.competition).toUpperCase()}` : ""}
+          </p>
         </div>
-
-        {/* Top 3 Impact Highlights */}
-        <div className="grid grid-cols-3 gap-2 mt-4 pt-3 border-t border-surface-container-high/40 font-mono">
-          <div className="bg-surface-container/70 rounded-lg p-2 flex flex-col">
-            <span className="text-[9px] text-on-surface-variant uppercase">Disparos / xG</span>
-            <span className="text-xs font-bold text-primary mt-0.5">
-              {stats.totalShots ?? 3} ({stats.shotsOnTarget ?? 2} al arco)
-            </span>
-            <span className="text-[9px] text-secondary">xG {stats.xG ?? 0.48}</span>
+        {stats.rating !== undefined && (
+          <div className="px-3 py-1.5 rounded-lg bg-primary/15 text-primary font-mono text-xl font-bold border border-primary/30">
+            {fmt(stats.rating)}
           </div>
-
-          <div className="bg-surface-container/70 rounded-lg p-2 flex flex-col">
-            <span className="text-[9px] text-on-surface-variant uppercase">Pases Clave</span>
-            <span className="text-xs font-bold text-primary mt-0.5">
-              {stats.keyPasses ?? 3} asist. pot.
-            </span>
-            <span className="text-[9px] text-on-surface-variant">
-              {stats.accuratePassesPct ?? 88}% precisión
-            </span>
-          </div>
-
-          <div className="bg-surface-container/70 rounded-lg p-2 flex flex-col">
-            <span className="text-[9px] text-on-surface-variant uppercase">Duelos Ganados</span>
-            <span className="text-xs font-bold text-secondary mt-0.5">
-              {(stats.groundDuelsWon ?? 7) + (stats.aerialDuelsWon ?? 2)} totales
-            </span>
-            <span className="text-[9px] text-primary">
-              {stats.dribblesCompleted ?? 3} regates
-            </span>
-          </div>
-        </div>
+        )}
       </div>
 
-      {/* Detailed Category Bento Telemetry */}
-      <div className="grid grid-cols-1 xs:grid-cols-3 gap-3">
-        {/* Category 1: Attacking Telemetry */}
-        <div className="bg-surface-container-low rounded-xl p-3 border border-surface-container-high/60 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-2 border-b border-surface-container-high">
-            <span className="font-mono text-[10px] text-primary font-bold uppercase flex items-center gap-1">
-              <span className="material-symbols-outlined text-[13px]">sports_soccer</span>
-              <span>Ataque & Definición</span>
-            </span>
-          </div>
-          <div className="flex flex-col gap-1.5 mt-2 font-mono text-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">Tiros Totales</span>
-              <span className="font-bold text-on-surface">{stats.totalShots ?? 3}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">A Puerta</span>
-              <span className="font-bold text-primary">{stats.shotsOnTarget ?? 2}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">xG Esperado</span>
-              <span className="font-bold text-secondary">{stats.xG ?? 0.48}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">Toques en Área</span>
-              <span className="font-bold text-on-surface">{stats.boxTouches ?? 6}</span>
-            </div>
+      {/* Predicción previa vs real */}
+      {prediction && Object.keys(prediction.stats).length > 0 && (
+        <div className="bg-surface-container-low rounded-xl p-space-md border border-surface-container-high/60">
+          <p className="font-mono text-[10px] uppercase text-primary font-bold mb-2">Lo que el modelo esperaba antes del partido</p>
+          <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+            {Object.entries(prediction.stats).map(([k, s]) => {
+              const z = s.sd > 0 ? Math.abs(s.actual - s.predicted) / s.sd : 0;
+              return (
+                <div key={k} className="bg-surface-container rounded-lg p-2 flex justify-between">
+                  <span className="text-on-surface-variant">{MODEL_FIELDS.find((f) => f[0] === k)?.[1] ?? k}</span>
+                  <span>
+                    <b className="text-on-surface">{fmt(s.actual)}</b>
+                    <span className="text-on-surface-variant"> / {fmt(s.predicted)}</span>
+                    <span className={z <= 1 ? "text-primary" : "text-tertiary"}> {z.toFixed(1)}σ</span>
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
+      )}
 
-        {/* Category 2: Creation & Distribution */}
-        <div className="bg-surface-container-low rounded-xl p-3 border border-surface-container-high/60 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-2 border-b border-surface-container-high">
-            <span className="font-mono text-[10px] text-secondary font-bold uppercase flex items-center gap-1">
-              <span className="material-symbols-outlined text-[13px]">alt_route</span>
-              <span>Creación & Pases</span>
-            </span>
-          </div>
-          <div className="flex flex-col gap-1.5 mt-2 font-mono text-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">Pases Clave</span>
-              <span className="font-bold text-primary">{stats.keyPasses ?? 3}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">Precisión %</span>
-              <span className="font-bold text-on-surface">{stats.accuratePassesPct ?? 88}%</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">Pases Últ. Tercio</span>
-              <span className="font-bold text-secondary">{stats.finalThirdPasses ?? 12}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">Toques Totales</span>
-              <span className="font-bold text-on-surface">{stats.touches ?? 76}</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Category 3: Physical & Duels */}
-        <div className="bg-surface-container-low rounded-xl p-3 border border-surface-container-high/60 flex flex-col justify-between">
-          <div className="flex items-center justify-between pb-2 border-b border-surface-container-high">
-            <span className="font-mono text-[10px] text-primary font-bold uppercase flex items-center gap-1">
-              <span className="material-symbols-outlined text-[13px]">fitness_center</span>
-              <span>Físico & Duelos</span>
-            </span>
-          </div>
-          <div className="flex flex-col gap-1.5 mt-2 font-mono text-xs">
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">Duelos en Suelo</span>
-              <span className="font-bold text-primary">{stats.groundDuelsWon ?? 7} ganados</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">Duelos Aéreos</span>
-              <span className="font-bold text-on-surface">{stats.aerialDuelsWon ?? 2} ganados</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">Regates con Éxito</span>
-              <span className="font-bold text-secondary">{stats.dribblesCompleted ?? 3}</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-on-surface-variant">Recuperaciones</span>
-              <span className="font-bold text-primary">{stats.recoveries ?? 5}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Future Expansion Slot ("Despues tendremos mas cosas ahi") */}
-      <div className="rounded-xl bg-surface-container-low p-4 border border-dashed border-primary/30 flex flex-col items-center justify-center text-center">
-        <div className="w-10 h-10 rounded-full bg-primary/10 flex items-center justify-center text-primary mb-2">
-          <span className="material-symbols-outlined text-[20px]">layers</span>
-        </div>
-        <p className="font-mono text-xs font-bold text-on-surface">
-          Módulo de Expansión del Partido (Próximamente)
-        </p>
-        <p className="font-mono text-[10px] text-on-surface-variant max-w-sm mt-1">
-          Aquí integraremos el <span className="text-primary">Shot Map 2D</span>, mapa de calor posicional GPS, clips de vídeo vinculados con IA y desglose táctico contra este rival.
-        </p>
-      </div>
-
-      {/* Edit Match Modal */}
+      {/* Edición */}
       {isEditing && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl relative max-h-[90vh] overflow-y-auto">
-            <div className="flex items-center justify-between pb-3 border-b border-surface-container-high">
-              <div className="flex items-center gap-2">
-                <span className="material-symbols-outlined text-primary text-[20px]">edit</span>
-                <h3 className="font-bold text-base text-on-surface">Editar Partido</h3>
-              </div>
-              <button
-                onClick={() => setIsEditing(false)}
-                className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-on-surface"
-              >
-                ✕
-              </button>
+        <form onSubmit={handleSaveEdit} className="bg-surface-container-low rounded-xl p-space-md border border-secondary/40 flex flex-col gap-2">
+          <input value={opponent} onChange={(e) => setOpponent(e.target.value)} className={input} placeholder="Rival" required />
+          <div className="grid grid-cols-3 gap-2">
+            <input type="date" value={matchDate} onChange={(e) => setMatchDate(e.target.value)} className={input} required />
+            <select value={isAway ? "a" : "h"} onChange={(e) => setIsAway(e.target.value === "a")} className={input}>
+              <option value="h">Casa</option>
+              <option value="a">Fuera</option>
+            </select>
+            <input
+              type="number"
+              min="1"
+              value={minutesPlayed}
+              onChange={(e) => setMinutesPlayed(e.target.value)}
+              className={input}
+              placeholder="Minutos"
+              required
+            />
+          </div>
+          <div className="grid grid-cols-5 gap-1.5">
+            {MODEL_FIELDS.map(([k, label, step]) => (
+              <label key={k} className="font-mono text-[9px] text-on-surface-variant uppercase">
+                {label}
+                <input
+                  type="number"
+                  step={step}
+                  value={fields[k]}
+                  onChange={(e) => setFields({ ...fields, [k]: e.target.value })}
+                  className={`${input} h-8 px-1.5`}
+                />
+              </label>
+            ))}
+          </div>
+          <p className="font-mono text-[9px] text-on-surface-variant">Deja vacío lo que no sepas: no se rellena con nada.</p>
+          <textarea
+            value={pasteText}
+            onChange={(e) => setPasteText(e.target.value)}
+            rows={3}
+            placeholder="Pegar estadísticas de Sofascore/FotMob para añadir o actualizar…"
+            className="w-full px-2.5 py-2 rounded-lg bg-surface-container text-on-surface font-mono text-[11px] border border-surface-container-high focus:outline-none focus:border-secondary"
+          />
+          {pasted && (
+            <p className="font-mono text-[10px] text-primary">{Object.keys(pasted.stats).length} estadísticas se añadirán al guardar.</p>
+          )}
+          {error && <p className="font-mono text-[11px] text-error">{error}</p>}
+          <div className="flex justify-end">
+            <button type="submit" disabled={isSaving} className="px-4 py-1.5 rounded-lg bg-secondary text-black font-mono text-xs font-bold">
+              {isSaving ? "Guardando…" : "Guardar cambios"}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* Todas las estadísticas guardadas */}
+      {Object.keys(stats).length === 0 && (
+        <p className="font-mono text-[11px] text-on-surface-variant">Este partido no tiene estadísticas guardadas.</p>
+      )}
+      {GROUPS.map((g) => {
+        const rows = g.keys.filter(([k]) => stats[k] !== undefined);
+        if (!rows.length) return null;
+        return (
+          <div key={g.title} className="bg-surface-container-low rounded-xl p-space-md border border-surface-container-high/60">
+            <p className="font-mono text-[10px] uppercase text-secondary font-bold mb-1.5 flex items-center gap-1">
+              <span className="material-symbols-outlined text-[14px]">{g.icon}</span>
+              {g.title}
+            </p>
+            <div className="flex flex-col divide-y divide-surface-container-high/40 font-mono text-[11px]">
+              {rows.map(([k, label, extra]) => {
+                const unit = extra && ["%", "m", "km", "km/h"].includes(extra) ? extra : "";
+                const total = extra && !unit ? stats[extra] : undefined;
+                const pctKey = PCT_PAIRS[k];
+                return (
+                  <div key={k} className="flex justify-between py-1">
+                    <span className="text-on-surface-variant">{label}</span>
+                    <span className="text-on-surface font-bold">
+                      {fmt(stats[k])}
+                      {total !== undefined ? `/${fmt(total)}` : ""}
+                      {unit ? ` ${unit}` : ""}
+                      {pctKey && stats[pctKey] !== undefined ? (
+                        <span className="text-on-surface-variant font-normal"> ({fmt(stats[pctKey])}%)</span>
+                      ) : null}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
-
-            <form onSubmit={handleSaveEdit} className="flex flex-col gap-3 mt-3">
-              <div>
-                <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
-                  Rival
-                </label>
-                <input
-                  type="text"
-                  value={opponent}
-                  onChange={(e) => setOpponent(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
-                  required
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
-                    Fecha
-                  </label>
-                  <input
-                    type="date"
-                    value={matchDate}
-                    onChange={(e) => setMatchDate(e.target.value)}
-                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
-                    Minutos Jugados
-                  </label>
-                  <input
-                    type="number"
-                    value={minutesPlayed}
-                    onChange={(e) => setMinutesPlayed(Number(e.target.value))}
-                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
-                    required
-                  />
-                </div>
-              </div>
-
-              <div className="flex items-center gap-4">
-                <label className="flex items-center gap-1.5 text-xs font-mono cursor-pointer">
-                  <input
-                    type="radio"
-                    checked={!isAway}
-                    onChange={() => setIsAway(false)}
-                    className="accent-primary"
-                  />
-                  <span>Local (Home)</span>
-                </label>
-                <label className="flex items-center gap-1.5 text-xs font-mono cursor-pointer">
-                  <input
-                    type="radio"
-                    checked={isAway}
-                    onChange={() => setIsAway(true)}
-                    className="accent-primary"
-                  />
-                  <span>Visitante (Away)</span>
-                </label>
-              </div>
-
-              <div>
-                <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
-                  Rol Táctico
-                </label>
-                <input
-                  type="text"
-                  value={tacticalRole}
-                  onChange={(e) => setTacticalRole(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
-                />
-              </div>
-
-              <div className="border-t border-surface-container-high pt-2">
-                <span className="font-mono text-[10px] text-primary uppercase font-bold">
-                  Métricas de Rendimiento
-                </span>
-                <div className="grid grid-cols-2 gap-2 mt-2">
-                  <div>
-                    <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
-                      Disparos Totales
-                    </label>
-                    <input
-                      type="number"
-                      value={totalShots}
-                      onChange={(e) => setTotalShots(Number(e.target.value))}
-                      className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
-                      xG Generado
-                    </label>
-                    <input
-                      type="number"
-                      step="0.01"
-                      value={xg}
-                      onChange={(e) => setXg(Number(e.target.value))}
-                      className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
-                      Pases Clave
-                    </label>
-                    <input
-                      type="number"
-                      value={keyPasses}
-                      onChange={(e) => setKeyPasses(Number(e.target.value))}
-                      className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
-                      Rating Sofascore
-                    </label>
-                    <input
-                      type="number"
-                      step="0.1"
-                      value={rating}
-                      onChange={(e) => setRating(Number(e.target.value))}
-                      className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="mt-3 pt-3 border-t border-surface-container-high flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="px-3 py-1.5 rounded-lg bg-surface-container text-on-surface-variant font-mono text-xs"
-                >
-                  Cancelar
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSaving}
-                  className="px-4 py-1.5 rounded-lg bg-primary text-on-primary font-mono text-xs font-bold shadow-lg flex items-center gap-1"
-                >
-                  {isSaving ? "Guardando..." : "Guardar Cambios"}
-                </button>
-              </div>
-            </form>
+          </div>
+        );
+      })}
+      {others.length > 0 && (
+        <div className="bg-surface-container-low rounded-xl p-space-md border border-surface-container-high/60">
+          <p className="font-mono text-[10px] uppercase text-secondary font-bold mb-1.5">Otras</p>
+          <div className="flex flex-wrap gap-1.5 font-mono text-[10px]">
+            {others.map(([k, v]) => (
+              <span key={k} className="px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant">
+                {k} <b className="text-on-surface">{fmt(v)}</b>
+              </span>
+            ))}
           </div>
         </div>
       )}
