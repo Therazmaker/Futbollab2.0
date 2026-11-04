@@ -239,3 +239,21 @@ describe("Convex: editar un partido", () => {
     expect(log!.competition).toBe("ucl");
   });
 });
+
+describe("Convex: ficha del jugador", () => {
+  test("cambiar la posición cambia la tasa base del perfil", async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(api.teams.seedInitialCompetitionsAndTeams, {});
+    const team = (await t.run((ctx) => ctx.db.query("teams").first()))!;
+    const playerId = await t.mutation(api.players.createPlayer, { teamId: team._id, name: "Prueba", position: "MF" });
+    const mf = await t.query(api.predictions.getModelReport, { playerId });
+    expect(mf!.profile.per90.totalShots.prior).toBeCloseTo(1.2, 2);
+    await t.mutation(api.players.updatePlayer, { playerId, position: "AM", number: 5 });
+    const am = await t.query(api.predictions.getModelReport, { playerId });
+    expect(am!.profile.per90.totalShots.prior).toBeCloseTo(2.2, 2);
+    const p = await t.run((ctx) => ctx.db.get(playerId));
+    expect(p!.number).toBe(5);
+    await t.mutation(api.players.updatePlayer, { playerId, number: null });
+    expect((await t.run((ctx) => ctx.db.get(playerId)))!.number).toBeUndefined();
+  });
+});
