@@ -8,6 +8,10 @@
  * @module
  */
 
+import type * as legacy from "../legacy.js";
+import type * as lib_engine from "../lib/engine.js";
+import type * as lib_playerModel from "../lib/playerModel.js";
+import type * as lib_teamRatings from "../lib/teamRatings.js";
 import type * as players from "../players.js";
 import type * as predictions from "../predictions.js";
 import type * as teams from "../teams.js";
@@ -19,6 +23,10 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  legacy: typeof legacy;
+  "lib/engine": typeof lib_engine;
+  "lib/playerModel": typeof lib_playerModel;
+  "lib/teamRatings": typeof lib_teamRatings;
   players: typeof players;
   predictions: typeof predictions;
   teams: typeof teams;

@@ -6,7 +6,10 @@
     "moduleResolution": "node",
     "strict": true,
     "skipLibCheck": true,
-    "noEmit": true
+    "noEmit": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true
   },
-  "include": ["./**/*"]
+  "include": ["./**/*", "../data/legacy/*.json"],
+  "exclude": ["./**/*.test.ts"]
 }

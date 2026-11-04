@@ -26,14 +26,53 @@ export default defineSchema({
     form: v.optional(v.array(v.string())),
     density: v.optional(v.number()),
     predAccuracy: v.optional(v.number()),
-  }).index("by_league", ["league"]),
+    // Calculado a partir de los partidos reales (tabla `matches`)
+    legacyId: v.optional(v.string()),
+    played: v.optional(v.number()),
+    goalsFor: v.optional(v.number()),
+    goalsAgainst: v.optional(v.number()),
+    attackRating: v.optional(v.number()), // 1 = media de la liga
+    defenseRating: v.optional(v.number()), // >1 = concede más que la media
+  })
+    .index("by_league", ["league"])
+    .index("by_legacyId", ["legacyId"]),
+
+  // Resultados de partidos de equipos (importados del FutbolLab viejo o nuevos)
+  matches: defineTable({
+    legacyId: v.optional(v.string()),
+    league: v.string(),
+    date: v.string(), // YYYY-MM-DD
+    homeTeamId: v.id("teams"),
+    awayTeamId: v.id("teams"),
+    homeGoals: v.number(),
+    awayGoals: v.number(),
+  })
+    .index("by_league_and_date", ["league", "date"])
+    .index("by_legacyId", ["legacyId"]),
 
   players: defineTable({
     teamId: v.id("teams"),
     name: v.string(),
     position: v.string(),
     photoUrl: v.optional(v.string()),
-  }).index("by_team", ["teamId"]),
+    legacyId: v.optional(v.string()),
+    age: v.optional(v.number()),
+    number: v.optional(v.number()),
+    // Totales de temporada (del histórico): se usan como tasa base del perfil
+    seasonStats: v.optional(
+      v.object({
+        appearances: v.optional(v.number()),
+        minutes: v.optional(v.number()),
+        goals: v.optional(v.number()),
+        assists: v.optional(v.number()),
+        yellowCards: v.optional(v.number()),
+        redCards: v.optional(v.number()),
+      })
+    ),
+  })
+    .index("by_team", ["teamId"])
+    .index("by_legacyId", ["legacyId"])
+    .searchIndex("search_name", { searchField: "name" }),
 
   playerMatchLogs: defineTable({
     playerId: v.id("players"),
@@ -44,6 +83,7 @@ export default defineSchema({
     isAway: v.boolean(),
     tacticalRole: v.optional(v.string()),
     minutesPlayed: v.number(),
+    contextFeatures: v.optional(v.array(v.string())), // p.ej. ["opponent_low_block"]
     rawStats: v.any(), // Flexible container for Sofascore/FotMob OCR ingested metrics (50+ fields)
   })
     .index("by_player", ["playerId"])
@@ -51,9 +91,11 @@ export default defineSchema({
 
   playerWeights: defineTable({
     playerId: v.id("players"),
-    featureName: v.string(), // e.g. 'is_away', 'opponent_low_block', 'missing_key_partner'
-    weightValue: v.number(), // default 0.0
-    confidenceScore: v.number(), // default 0.1
+    featureName: v.string(), // e.g. 'is_away', 'opponent_defense', 'opponent_low_block'
+    weightValue: v.number(), // multiplicador - 1 (−0.10 = −10% de producción)
+    confidenceScore: v.number(), // fracción de la información que viene de datos propios (0–1)
+    sd: v.optional(v.number()), // incertidumbre del efecto (escala log)
+    matches: v.optional(v.number()), // partidos en los que estuvo activo
     updatedAt: v.number(),
   }).index("by_player_and_feature", ["playerId", "featureName"]),
 
@@ -63,6 +105,7 @@ export default defineSchema({
     predictedMetrics: v.any(), // e.g. { totalShots: 2.8, xG: 0.35, keyPasses: 1.5 }
     actualMetrics: v.optional(v.any()),
     deltas: v.optional(v.any()),
+    kind: v.optional(v.string()), // "forecast" (próximo partido)
     appliedAt: v.number(),
   }).index("by_player", ["playerId"]),
 });

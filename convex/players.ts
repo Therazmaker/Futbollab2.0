@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { syncPlayerWeights } from "./lib/playerModel";
 
 /**
  * Retrieves full player profile: identity, team, match history (descending),
@@ -93,6 +94,8 @@ export const updateMatchLog = mutation({
     isAway: v.optional(v.boolean()),
     minutesPlayed: v.optional(v.number()),
     tacticalRole: v.optional(v.string()),
+    contextFeatures: v.optional(v.array(v.string())),
+    opponentTeamId: v.optional(v.id("teams")),
     rawStats: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -108,8 +111,12 @@ export const updateMatchLog = mutation({
     if (args.minutesPlayed !== undefined) patch.minutesPlayed = args.minutesPlayed;
     if (args.tacticalRole !== undefined) patch.tacticalRole = args.tacticalRole;
     if (args.rawStats !== undefined) patch.rawStats = args.rawStats;
+    if (args.contextFeatures !== undefined) patch.contextFeatures = args.contextFeatures;
+    if (args.opponentTeamId !== undefined) patch.opponentTeamId = args.opponentTeamId;
 
     await ctx.db.patch(args.matchLogId, patch);
+    // El perfil se recalcula con todos los partidos: editar corrige los pesos.
+    await syncPlayerWeights(ctx.db, existing.playerId);
     return { success: true, matchLogId: args.matchLogId };
   },
 });
@@ -128,6 +135,7 @@ export const deleteMatchLog = mutation({
     }
 
     await ctx.db.delete(args.matchLogId);
+    await syncPlayerWeights(ctx.db, existing.playerId);
     return { success: true, deletedId: args.matchLogId };
   },
 });
@@ -161,7 +169,7 @@ export const seedBellinghamDemo = mutation({
     });
 
     // 3. Initial Match Logs (Historical matches)
-    const log1 = await ctx.db.insert("playerMatchLogs", {
+    await ctx.db.insert("playerMatchLogs", {
       playerId,
       matchDate: "2024-10-26",
       opponent: "FC Barcelona",
@@ -183,7 +191,7 @@ export const seedBellinghamDemo = mutation({
       },
     });
 
-    const log2 = await ctx.db.insert("playerMatchLogs", {
+    await ctx.db.insert("playerMatchLogs", {
       playerId,
       matchDate: "2024-10-19",
       opponent: "Celta de Vigo",
@@ -205,7 +213,7 @@ export const seedBellinghamDemo = mutation({
       },
     });
 
-    const log3 = await ctx.db.insert("playerMatchLogs", {
+    await ctx.db.insert("playerMatchLogs", {
       playerId,
       matchDate: "2024-10-05",
       opponent: "Villarreal CF",
@@ -227,67 +235,42 @@ export const seedBellinghamDemo = mutation({
       },
     });
 
-    // 4. Initial Contextual Weights
-    await ctx.db.insert("playerWeights", {
-      playerId,
-      featureName: "is_away",
-      weightValue: -0.12,
-      confidenceScore: 0.85,
-      updatedAt: Date.now(),
-    });
-
-    await ctx.db.insert("playerWeights", {
-      playerId,
-      featureName: "opponent_low_block",
-      weightValue: -0.08,
-      confidenceScore: 0.72,
-      updatedAt: Date.now(),
-    });
-
-    await ctx.db.insert("playerWeights", {
-      playerId,
-      featureName: "missing_key_partner",
-      weightValue: 0.06,
-      confidenceScore: 0.65,
-      updatedAt: Date.now(),
-    });
-
-    await ctx.db.insert("playerWeights", {
-      playerId,
-      featureName: "home_pitch_bias",
-      weightValue: 0.084,
-      confidenceScore: 0.9,
-      updatedAt: Date.now(),
-    });
-
-    // 5. Initial Prediction for next fixture
-    await ctx.db.insert("playerPredictions", {
-      playerId,
-      matchLogId: log1,
-      predictedMetrics: {
-        totalShots: 2.1,
-        shotsPredicted: 2.4,
-        xG: 0.35,
-        keyPasses: 2.8,
-        keyPassesPredicted: 3.1,
-        aerialDuelWinPct: 68.4,
-        xtThreat: 0.84,
-        predictiveForm: 9.42,
-        confidence: 99.4,
-      },
-      actualMetrics: {
-        totalShots: 2.1,
-        xG: 0.31,
-        keyPasses: 2.8,
-      },
-      deltas: {
-        totalShots: -0.3,
-        xG: -0.04,
-        keyPasses: -0.3,
-      },
-      appliedAt: Date.now(),
-    });
+    // 4. Los pesos de contexto se calculan con los partidos (no se inventan)
+    await syncPlayerWeights(ctx.db, playerId);
 
     return { playerId, seeded: true };
+  },
+});
+
+/**
+ * Lista/busca jugadores para el selector del Lab (incluye los importados).
+ */
+export const listPlayers = query({
+  args: { search: v.optional(v.string()), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const limit = Math.min(50, args.limit ?? 25);
+    const term = args.search?.trim();
+    const rows = term
+      ? await ctx.db
+          .query("players")
+          .withSearchIndex("search_name", (q) => q.search("name", term))
+          .take(limit)
+      : await ctx.db.query("players").take(limit);
+    const out = [];
+    for (const p of rows) {
+      const team = await ctx.db.get(p.teamId);
+      const firstLog = await ctx.db
+        .query("playerMatchLogs")
+        .withIndex("by_player", (q) => q.eq("playerId", p._id))
+        .first();
+      out.push({
+        _id: p._id,
+        name: p.name,
+        position: p.position,
+        teamName: team?.name ?? "",
+        hasMatches: firstLog !== null,
+      });
+    }
+    return out;
   },
 });
