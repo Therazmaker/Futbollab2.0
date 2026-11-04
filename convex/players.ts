@@ -95,7 +95,9 @@ export const updateMatchLog = mutation({
     minutesPlayed: v.optional(v.number()),
     tacticalRole: v.optional(v.string()),
     contextFeatures: v.optional(v.array(v.string())),
-    opponentTeamId: v.optional(v.id("teams")),
+    // null = quitar el vínculo con el equipo rival (rival escrito a mano)
+    opponentTeamId: v.optional(v.union(v.id("teams"), v.null())),
+    competition: v.optional(v.string()),
     rawStats: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -112,7 +114,8 @@ export const updateMatchLog = mutation({
     if (args.tacticalRole !== undefined) patch.tacticalRole = args.tacticalRole;
     if (args.rawStats !== undefined) patch.rawStats = args.rawStats;
     if (args.contextFeatures !== undefined) patch.contextFeatures = args.contextFeatures;
-    if (args.opponentTeamId !== undefined) patch.opponentTeamId = args.opponentTeamId;
+    if (args.opponentTeamId !== undefined) patch.opponentTeamId = args.opponentTeamId ?? undefined;
+    if (args.competition !== undefined) patch.competition = args.competition;
 
     await ctx.db.patch(args.matchLogId, patch);
     // El perfil se recalcula con todos los partidos: editar corrige los pesos.

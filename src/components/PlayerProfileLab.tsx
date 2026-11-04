@@ -7,6 +7,7 @@ import { INITIAL_PLAYER, PlayerData } from "@/data/mock-data";
 import { BrainTargetRadar, PredictionMetricPoint } from "./BrainTargetRadar";
 import { LearningCurve } from "./LearningCurve";
 import { parseMatchStats } from "@/lib/parse-match-stats";
+import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
 import type { Id } from "../../convex/_generated/dataModel";
 import { MatchDetailView } from "./MatchDetailView";
 
@@ -278,6 +279,8 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
         isAway: editingLog.isAway,
         minutesPlayed: editingLog.minutesPlayed,
         tacticalRole: editingLog.tacticalRole,
+        competition: editingLog.competition,
+        opponentTeamId: editingLog.opponentTeamId ?? null,
         rawStats: editingLog.rawStats,
       });
       setEditingLog(null);
@@ -746,7 +749,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                             : "bg-emerald-950/70 text-emerald-400 border border-emerald-800/50"
                         }`}
                       >
-                        {log.competition === "ucl" ? "UCL" : log.competition}
+                        {log.competition === "ucl" ? "UCL" : competitionLabel(log.competition)}
                       </span>
                     )}
                     <span className="material-symbols-outlined text-[13px] text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">
@@ -914,6 +917,62 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                   className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
                   required
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">Competición</label>
+                  <select
+                    value={editingLog.competition ?? ""}
+                    onChange={(e) => setEditingLog({ ...editingLog, competition: e.target.value })}
+                    className="w-full h-9 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  >
+                    {!COMPETITIONS.some((c) => c.code === editingLog.competition) && (
+                      <option value={editingLog.competition ?? ""}>{editingLog.competition || "—"}</option>
+                    )}
+                    {COMPETITIONS.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">Local / visitante</label>
+                  <select
+                    value={editingLog.isAway ? "a" : "h"}
+                    onChange={(e) => setEditingLog({ ...editingLog, isAway: e.target.value === "a" })}
+                    className="w-full h-9 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  >
+                    <option value="h">Local</option>
+                    <option value="a">Visitante</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                  Equipo rival (usa su fuerza defensiva)
+                </label>
+                <select
+                  value={editingLog.opponentTeamId ?? ""}
+                  onChange={(e) => {
+                    const id = e.target.value || null;
+                    const found = (registeredTeams as any[]).find((t: any) => t._id === id);
+                    setEditingLog({ ...editingLog, opponentTeamId: id, opponent: found ? found.name : editingLog.opponent });
+                  }}
+                  className="w-full h-9 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                >
+                  <option value="">— Sin vincular (solo el nombre) —</option>
+                  {(registeredTeams as any[])
+                    .filter((tm: any) => tm._id !== activeTeam?._id)
+                    .sort((x: any, y: any) => x.name.localeCompare(y.name))
+                    .map((tm: any) => (
+                      <option key={tm._id} value={tm._id}>
+                        {tm.name} ({tm.league?.toUpperCase()})
+                      </option>
+                    ))}
+                </select>
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -1117,13 +1176,11 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                     onChange={(e) => setMatchCompetition(e.target.value)}
                     className="w-full h-9 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
                   >
-                    <option value="ucl">🏆 Champions League (UCL)</option>
-                    <option value="laliga">🇪🇸 LaLiga</option>
-                    <option value="seriea">🇮🇹 Serie A</option>
-                    <option value="premier">🇬🇧 Premier League</option>
-                    <option value="bundesliga">🇩🇪 Bundesliga</option>
-                    <option value="ligue1">🇫🇷 Ligue 1</option>
-                    <option value="copa">🏆 Copa Nacional</option>
+                    {COMPETITIONS.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.label}
+                      </option>
+                    ))}
                   </select>
                 </div>
 

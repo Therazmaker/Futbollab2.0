@@ -212,3 +212,30 @@ describe("Convex: flujo equipo → jugador", () => {
     expect(after!.squad.find((p) => p._id === playerId)!.loggedMatches).toBe(1);
   }, 120_000);
 });
+
+describe("Convex: editar un partido", () => {
+  test("cambia la competición y vincula/desvincula el rival", async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(api.teams.seedInitialCompetitionsAndTeams, {});
+    const { playerId } = await t.mutation(api.players.seedBellinghamDemo, {});
+    const inter = (await t.run((ctx) => ctx.db.query("teams").collect())).find((x) => x.name.startsWith("Inter"))!;
+    const { matchLogId } = await t.mutation(api.predictions.recordMatchAndCalibrate, {
+      playerId,
+      matchDate: "2026-09-08",
+      opponent: "Inter",
+      competition: "laliga",
+      isAway: false,
+      minutesPlayed: 90,
+      rawStats: { totalShots: 2, xG: 1.24 },
+    });
+    await t.mutation(api.players.updateMatchLog, { matchLogId, competition: "ucl", opponentTeamId: inter._id });
+    let log = await t.run((ctx) => ctx.db.get(matchLogId));
+    expect(log!.competition).toBe("ucl");
+    expect(log!.opponentTeamId).toBe(inter._id);
+    expect(log!.rawStats.xG).toBe(1.24);
+    await t.mutation(api.players.updateMatchLog, { matchLogId, opponentTeamId: null });
+    log = await t.run((ctx) => ctx.db.get(matchLogId));
+    expect(log!.opponentTeamId).toBeUndefined();
+    expect(log!.competition).toBe("ucl");
+  });
+});

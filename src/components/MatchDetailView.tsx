@@ -1,9 +1,10 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
-import { useMutation } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { parseMatchStats } from "@/lib/parse-match-stats";
+import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
 
 interface MatchDetailViewProps {
   matchLog: any;
@@ -137,6 +138,7 @@ const input =
 export function MatchDetailView({ matchLog, playerName, playerNumber, prediction, onBack, onMatchUpdated }: MatchDetailViewProps) {
   const updateMutation = useMutation(api.players.updateMatchLog);
   const deleteMutation = useMutation(api.players.deleteMatchLog);
+  const teams = useQuery(api.teams.getTeams, {}) ?? [];
 
   const stats: Record<string, number> = matchLog.rawStats || {};
   const [isEditing, setIsEditing] = useState(false);
@@ -147,6 +149,8 @@ export function MatchDetailView({ matchLog, playerName, playerNumber, prediction
   const [opponent, setOpponent] = useState<string>(matchLog.opponent || "");
   const [matchDate, setMatchDate] = useState<string>(matchLog.matchDate || "");
   const [isAway, setIsAway] = useState<boolean>(matchLog.isAway ?? false);
+  const [competition, setCompetition] = useState<string>(matchLog.competition ?? "");
+  const [opponentTeamId, setOpponentTeamId] = useState<string>(matchLog.opponentTeamId ?? "");
   const [minutesPlayed, setMinutesPlayed] = useState<string>(String(matchLog.minutesPlayed ?? ""));
   const [fields, setFields] = useState<Record<string, string>>(() =>
     Object.fromEntries(MODEL_FIELDS.map(([k]) => [k, stats[k] === undefined ? "" : String(stats[k])]))
@@ -183,6 +187,8 @@ export function MatchDetailView({ matchLog, playerName, playerNumber, prediction
         opponent,
         matchDate,
         isAway,
+        competition: competition || undefined,
+        opponentTeamId: (opponentTeamId || null) as any,
         minutesPlayed: pasted?.minutesPlayed ?? mins,
         rawStats: next,
       });
@@ -245,7 +251,7 @@ export function MatchDetailView({ matchLog, playerName, playerNumber, prediction
           <h2 className="text-lg font-bold text-on-surface">vs {matchLog.opponent}</h2>
           <p className="font-mono text-xs text-on-surface-variant">
             {matchLog.matchDate} · {matchLog.isAway ? "Fuera" : "Casa"} · {matchLog.minutesPlayed}&apos;
-            {matchLog.competition ? ` · ${String(matchLog.competition).toUpperCase()}` : ""}
+            {matchLog.competition ? ` · ${competitionLabel(matchLog.competition)}` : ""}
           </p>
         </div>
         {stats.rating !== undefined && (
@@ -281,6 +287,36 @@ export function MatchDetailView({ matchLog, playerName, playerNumber, prediction
       {isEditing && (
         <form onSubmit={handleSaveEdit} className="bg-surface-container-low rounded-xl p-space-md border border-secondary/40 flex flex-col gap-2">
           <input value={opponent} onChange={(e) => setOpponent(e.target.value)} className={input} placeholder="Rival" required />
+          <div className="grid grid-cols-2 gap-2">
+            <select value={competition} onChange={(e) => setCompetition(e.target.value)} className={input} aria-label="Competición">
+              {!COMPETITIONS.some((c) => c.code === competition) && <option value={competition}>{competition || "— Competición —"}</option>}
+              {COMPETITIONS.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <select
+              value={opponentTeamId}
+              onChange={(e) => {
+                setOpponentTeamId(e.target.value);
+                const found = (teams as any[]).find((t: any) => t._id === e.target.value);
+                if (found) setOpponent(found.name);
+              }}
+              className={input}
+              aria-label="Equipo rival"
+            >
+              <option value="">— Rival sin vincular —</option>
+              {(teams as any[])
+                .slice()
+                .sort((a: any, b: any) => a.name.localeCompare(b.name))
+                .map((t: any) => (
+                  <option key={t._id} value={t._id}>
+                    {t.name}
+                  </option>
+                ))}
+            </select>
+          </div>
           <div className="grid grid-cols-3 gap-2">
             <input type="date" value={matchDate} onChange={(e) => setMatchDate(e.target.value)} className={input} required />
             <select value={isAway ? "a" : "h"} onChange={(e) => setIsAway(e.target.value === "a")} className={input}>
