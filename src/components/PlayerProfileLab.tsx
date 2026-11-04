@@ -58,6 +58,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
 
   // Partido seleccionado en el radar (índice en report.points; null = el último)
   const [radarIndex, setRadarIndex] = useState<number | null>(null);
+  const [radarMode, setRadarMode] = useState<"match" | "all" | "last5">("match");
 
   // Próximo partido (pronóstico)
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
@@ -157,8 +158,29 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
     forecastMetrics?.confidence ?? (selectedPoint ? Math.round(selectedPoint.dataShare * 100) : 0);
   const awayEffect = profile?.effects.find((e: any) => e.feature === "is_away");
 
-  // Radar: error de la predicción pre-partido del partido seleccionado, en σ
+  // Radar: un partido, o el acumulado (todos / últimos 5) en σ
   const radarMetrics: PredictionMetricPoint[] = useMemo(() => {
+    if (radarMode !== "match") {
+      const subset = radarMode === "last5" ? points.slice(-5) : points;
+      const r2 = (x: number) => +x.toFixed(2);
+      return STAT_ORDER.map((s) => {
+        const rows = subset.map((p: any) => p.stats[s.key]).filter((st: any) => st && st.sd > 0);
+        if (!rows.length) return null;
+        const n = rows.length;
+        const mean = (f: (st: any) => number) => rows.reduce((a: number, st: any) => a + f(st), 0) / n;
+        return {
+          id: `${s.key}_${radarMode}`,
+          name: s.name,
+          predicted: r2(mean((st) => st.predicted)),
+          actual: r2(mean((st) => st.actual)),
+          meanAbsSigma: mean((st) => Math.abs(st.actual - st.predicted) / st.sd),
+          bias: mean((st) => (st.actual - st.predicted) / st.sd),
+          count: n,
+          matchIndex: 0,
+          categoryAngle: s.angle,
+        } as PredictionMetricPoint;
+      }).filter(Boolean) as PredictionMetricPoint[];
+    }
     if (!selectedPoint) return [];
     return STAT_ORDER.filter((s) => selectedPoint.stats[s.key]).map((s) => {
       const st = selectedPoint.stats[s.key];
@@ -172,7 +194,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
         categoryAngle: s.angle,
       };
     });
-  }, [selectedPoint, selIdx]);
+  }, [selectedPoint, selIdx, radarMode, points]);
 
   const teamName = (id: string) => (registeredTeams as any[]).find((t: any) => t._id === id)?.name ?? "";
 
@@ -633,7 +655,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
             <span>Trayectoria de convergencia</span>
           </span>
 
-          {points.length > 0 && (
+          {points.length > 0 && radarMode === "match" && (
             <div className="flex items-center gap-1 bg-surface-container rounded-lg p-0.5 border border-surface-container-highest font-mono text-[10px]">
               <button
                 onClick={() => setRadarIndex(0)}
@@ -668,13 +690,42 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
           )}
         </div>
 
+        {points.length > 0 && (
+          <div className="flex items-center gap-1 self-start bg-surface-container rounded-lg p-0.5 border border-surface-container-highest font-mono text-[10px]">
+            {(
+              [
+                ["match", "Partido"],
+                ["all", `Acumulado (${points.length})`],
+                ["last5", "Últimos 5"],
+              ] as const
+            ).map(([m, label]) => (
+              <button
+                key={m}
+                onClick={() => setRadarMode(m)}
+                className={`px-2.5 py-1 rounded ${radarMode === m ? "bg-primary text-on-primary font-bold" : "text-on-surface-variant hover:text-on-surface"}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        )}
+
         {radarMetrics.length > 0 ? (
           <BrainTargetRadar
             metrics={radarMetrics}
             selectedMatchLabel={
-              selectedPoint
+              radarMode === "all"
+                ? `Acumulado · ${points.length} partidos`
+                : radarMode === "last5"
+                ? `Últimos ${Math.min(5, points.length)} partidos`
+                : selectedPoint
                 ? `#${selIdx + 1} vs ${selectedPoint.opponent ?? "?"} (${selectedPoint.isAway ? "fuera" : "casa"})`
                 : ""
+            }
+            description={
+              radarMode === "match"
+                ? undefined
+                : "Error medio de las predicciones pre-partido, en σ. Con un perfil bien calibrado los puntos rondan 0.8σ (dentro del anillo de 1σ): algo de error siempre hay por el azar. Si un punto se aleja, esa stat está mal estimada; el desvío del punto indica si el modelo predice de más o de menos."
             }
           />
         ) : (
@@ -683,7 +734,47 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
           </div>
         )}
 
-        <LearningCurve points={points} selectedIndex={selIdx} onSelect={(i) => setRadarIndex(i)} />
+        {radarMode !== "match" && radarMetrics.length > 0 && (
+          <div className="grid grid-cols-2 gap-1.5 font-mono text-[10px]">
+            {radarMetrics.map((m) => {
+              const b = m.bias ?? 0;
+              const verdict =
+                (m.count ?? 0) < 4
+                  ? "pocos datos"
+                  : (m.meanAbsSigma ?? 0) > 1.3
+                  ? "mal calibrado"
+                  : Math.abs(b) > 0.5
+                  ? b > 0
+                    ? "lo subestima"
+                    : "lo sobreestima"
+                  : "bien";
+              return (
+                <div key={m.id} className="bg-surface-container-low rounded-lg p-2 border border-surface-container-high">
+                  <div className="flex justify-between">
+                    <span className="text-on-surface-variant">{m.name}</span>
+                    <span className={verdict === "bien" ? "text-primary font-bold" : "text-tertiary font-bold"}>{verdict}</span>
+                  </div>
+                  <p className="text-on-surface">
+                    {(m.meanAbsSigma ?? 0).toFixed(2)}σ · sesgo {b >= 0 ? "+" : ""}
+                    {b.toFixed(2)}σ · {m.count}p
+                  </p>
+                  <p className="text-on-surface-variant text-[9px]">
+                    prom. real {m.actual} vs pred {m.predicted}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        )}
+
+        <LearningCurve
+          points={points}
+          selectedIndex={radarMode === "match" ? selIdx : undefined}
+          onSelect={(i) => {
+            setRadarMode("match");
+            setRadarIndex(i);
+          }}
+        />
 
         {summary && summary.matches > 0 && (
           <div className="grid grid-cols-3 gap-2 font-mono text-[10px]">
