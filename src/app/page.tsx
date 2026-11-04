@@ -80,7 +80,7 @@ export default function FutbolLabApp() {
               teamId={nav.teamId}
               onBack={() => go({ ...nav, view: "explorer" })}
               onOpenTeam={openTeam}
-              onOpenPlayer={(id) => openPlayer(id, nav.teamId)}
+              onOpenPlayer={(id, tid) => openPlayer(id, tid ?? nav.teamId)}
             />
           ) : (
             <EmptyState

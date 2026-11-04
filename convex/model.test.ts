@@ -257,3 +257,103 @@ describe("Convex: ficha del jugador", () => {
     expect((await t.run((ctx) => ctx.db.get(playerId)))!.number).toBeUndefined();
   });
 });
+
+describe("Convex: partidos de equipo ↔ partidos de jugador", () => {
+  test("registrar, reutilizar, marcador, detalle, UCL, vincular y limpiar", async () => {
+    const t = convexTest(schema, modules);
+    await t.action(api.legacy.importLegacyData, {});
+    const teams = await t.run((ctx) => ctx.db.query("teams").collect());
+    const arsenal = teams.find((x) => x.name === "Arsenal")!;
+    const chelsea = teams.find((x) => x.name === "Chelsea")!;
+    const inter = teams.find((x) => x.name === "Inter")!;
+    const pA = await t.mutation(api.players.createPlayer, { teamId: arsenal._id, name: "Jugador A", position: "FW" });
+    const pB = await t.mutation(api.players.createPlayer, { teamId: arsenal._id, name: "Jugador B", position: "MF" });
+    const pointsBefore = arsenal.points!;
+
+    // 1) A registra vs Chelsea con marcador → crea el partido del equipo y cuenta en la tabla
+    const r1 = await t.mutation(api.predictions.recordMatchAndCalibrate, {
+      playerId: pA, matchDate: "2026-06-01", opponent: "Chelsea", opponentTeamId: chelsea._id,
+      isAway: false, minutesPlayed: 90, rawStats: { totalShots: 3, xG: 0.5, rating: 7.5 }, teamGoals: 2, opponentGoals: 1,
+    });
+    expect(r1.teamMatchId).not.toBeNull();
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(pointsBefore + 3);
+
+    // 2) B lo elige de la lista → mismo partido, sin duplicar
+    const recent = await t.query(api.teams.recentMatches, { teamId: arsenal._id, playerId: pB });
+    const picked = recent.find((m) => m._id === r1.teamMatchId)!;
+    expect(picked.playersLogged).toBe(1);
+    expect(picked.loggedByPlayer).toBe(false);
+    const r2 = await t.mutation(api.predictions.recordMatchAndCalibrate, {
+      playerId: pB, matchDate: "x", opponent: "x", isAway: true, matchId: picked._id,
+      minutesPlayed: 70, rawStats: { totalShots: 1, xG: 0.2, rating: 6.5 },
+    });
+    expect(r2.teamMatchId).toBe(r1.teamMatchId);
+    const logB = await t.run((ctx) => ctx.db.get(r2.matchLogId));
+    expect(logB!.isAway).toBe(false); // se toma del partido, no del formulario
+    expect(logB!.matchDate).toBe("2026-06-01");
+    expect(logB!.opponentTeamId).toBe(chelsea._id);
+
+    // 3) A no puede registrar el mismo partido dos veces
+    await expect(
+      t.mutation(api.predictions.recordMatchAndCalibrate, {
+        playerId: pA, matchDate: "2026-06-01", opponent: "Chelsea", isAway: false, matchId: r1.teamMatchId!,
+        minutesPlayed: 90, rawStats: { totalShots: 1 },
+      })
+    ).rejects.toThrow(/ya tiene registrado/);
+
+    // 4) Detalle: 2 jugadores de Arsenal, totales sumados, nota media
+    const detail = await t.query(api.teams.getMatchDetail, { matchId: r1.teamMatchId! });
+    expect(detail!.home.players.length).toBe(2);
+    expect(detail!.home.totals.totalShots).toBe(4);
+    expect(detail!.home.totals.xG).toBeCloseTo(0.7, 5);
+    expect(detail!.home.ratingAvg).toBe(7);
+    expect(detail!.home.totals.rating).toBeUndefined();
+
+    // 5) Sin marcador: no cuenta en la tabla hasta que se pone
+    const pts = (await t.run((ctx) => ctx.db.get(arsenal._id)))!.points!;
+    const r3 = await t.mutation(api.predictions.recordMatchAndCalibrate, {
+      playerId: pA, matchDate: "2026-06-08", opponent: "Chelsea", opponentTeamId: chelsea._id,
+      isAway: true, minutesPlayed: 90, rawStats: { totalShots: 2 },
+    });
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(pts);
+    await t.mutation(api.teams.setMatchScore, { matchId: r3.teamMatchId!, homeGoals: 0, awayGoals: 1 });
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(pts + 3);
+
+    // 6) UCL: aparece en el perfil pero no toca la tabla de liga
+    const ptsBeforeUcl = (await t.run((ctx) => ctx.db.get(arsenal._id)))!.points!;
+    const r4 = await t.mutation(api.predictions.recordMatchAndCalibrate, {
+      playerId: pA, matchDate: "2026-06-15", opponent: "Inter", opponentTeamId: inter._id, competition: "ucl",
+      isAway: false, minutesPlayed: 90, rawStats: { totalShots: 4 }, teamGoals: 3, opponentGoals: 0,
+    });
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(ptsBeforeUcl);
+    const profile = await t.query(api.teams.getTeamProfile, { teamId: arsenal._id });
+    const ucl = profile!.results.find((r) => r._id === r4.teamMatchId)!;
+    expect(ucl.competition).toBe("ucl");
+    expect(ucl.result).toBe("W");
+
+    // 7) Partidos viejos sin vincular → se vinculan por nombre del rival y fecha
+    const oldLog = await t.run((ctx) =>
+      ctx.db.insert("playerMatchLogs", {
+        playerId: pB, matchDate: "2026-06-08", opponent: "Chelsea", isAway: true, minutesPlayed: 80, rawStats: { totalShots: 1 },
+      })
+    );
+    expect(await t.query(api.players.unlinkedLogsCount, {})).toBeGreaterThanOrEqual(1);
+    await t.mutation(api.players.linkUnlinkedLogs, {});
+    expect((await t.run((ctx) => ctx.db.get(oldLog)))!.matchId).toBe(r3.teamMatchId);
+
+    // 8) Borrar el único jugador de un partido sin marcador elimina el partido vacío
+    const r5 = await t.mutation(api.predictions.recordMatchAndCalibrate, {
+      playerId: pA, matchDate: "2026-06-22", opponent: "Chelsea", opponentTeamId: chelsea._id,
+      isAway: false, minutesPlayed: 90, rawStats: { totalShots: 2 },
+    });
+    await t.mutation(api.players.deleteMatchLog, { matchLogId: r5.matchLogId });
+    expect(await t.run((ctx) => ctx.db.get(r5.teamMatchId!))).toBeNull();
+
+    // 9) Editar la fecha re-vincula el partido
+    await t.mutation(api.players.updateMatchLog, { matchLogId: r2.matchLogId, matchDate: "2026-06-29" });
+    const moved = await t.run((ctx) => ctx.db.get(r2.matchLogId));
+    expect(moved!.matchId).not.toBe(r1.teamMatchId);
+    const newMatch = await t.run((ctx) => ctx.db.get(moved!.matchId!));
+    expect(newMatch!.date).toBe("2026-06-29");
+  }, 180_000);
+});

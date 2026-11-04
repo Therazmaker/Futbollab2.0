@@ -45,14 +45,18 @@ export default defineSchema({
     .index("by_legacyId", ["legacyId"]),
 
   // Resultados de partidos de equipos (importados del FutbolLab viejo o nuevos)
+  // Partido de equipo. Lo crean los resultados, la importación o el registro
+  // del partido de un jugador. `league` = competición del partido (una liga
+  // doméstica o "ucl", "copa"...); solo cuentan para la tabla los partidos de
+  // liga entre equipos de esa liga y con marcador.
   matches: defineTable({
     legacyId: v.optional(v.string()),
     league: v.string(),
     date: v.string(), // YYYY-MM-DD
     homeTeamId: v.id("teams"),
     awayTeamId: v.id("teams"),
-    homeGoals: v.number(),
-    awayGoals: v.number(),
+    homeGoals: v.optional(v.number()), // sin marcador todavía = undefined
+    awayGoals: v.optional(v.number()),
   })
     .index("by_league_and_date", ["league", "date"])
     .index("by_home_and_date", ["homeTeamId", "date"])
@@ -94,9 +98,11 @@ export default defineSchema({
     minutesPlayed: v.number(),
     contextFeatures: v.optional(v.array(v.string())), // p.ej. ["opponent_low_block"]
     rawStats: v.any(), // Flexible container for Sofascore/FotMob OCR ingested metrics (50+ fields)
+    matchId: v.optional(v.id("matches")), // partido del equipo al que pertenece
   })
     .index("by_player", ["playerId"])
-    .index("by_player_and_date", ["playerId", "matchDate"]),
+    .index("by_player_and_date", ["playerId", "matchDate"])
+    .index("by_match", ["matchId"]),
 
   playerWeights: defineTable({
     playerId: v.id("players"),

@@ -16,17 +16,24 @@ export async function recomputeLeague(db: Db, league: string) {
     .withIndex("by_league_and_date", (q) => q.eq("league", league))
     .collect();
   if (!rows.length) return 0;
+  // Solo cuentan partidos con marcador entre equipos de esta liga
+  // (una "liga" como "ucl" o "copa" no tiene equipos propios: no hay tabla).
+  const leagueTeams = await db
+    .query("teams")
+    .withIndex("by_league", (q) => q.eq("league", league))
+    .collect();
+  const members = new Set(leagueTeams.map((t) => t._id as string));
+  if (!members.size) return 0;
   // Un mismo partido no puede contar dos veces (pasaba con los equipos duplicados)
   const seen = new Set<string>();
-  const unique = [];
+  const unique: Array<(typeof rows)[number] & { homeGoals: number; awayGoals: number }> = [];
   for (const r of rows) {
+    if (r.homeGoals === undefined || r.awayGoals === undefined) continue;
+    if (!members.has(r.homeTeamId) || !members.has(r.awayTeamId)) continue;
     const key = `${r.homeTeamId}|${r.awayTeamId}|${r.date}`;
-    if (seen.has(key)) {
-      await db.delete(r._id);
-      continue;
-    }
+    if (seen.has(key)) continue; // duplicado: no se cuenta dos veces
     seen.add(key);
-    unique.push(r);
+    unique.push(r as (typeof unique)[number]);
   }
   const results = unique.map((r) => ({
     home: r.homeTeamId as string,

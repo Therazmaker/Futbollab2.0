@@ -47,6 +47,21 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
   const legacyStatus = useQuery(api.legacy.legacyStatus);
   const importLegacy = useAction(api.legacy.importLegacyData);
   const [importState, setImportState] = useState<string | null>(null);
+  const unlinkedLogs = useQuery(api.players.unlinkedLogsCount);
+  const linkLogs = useMutation(api.players.linkUnlinkedLogs);
+  const [linkState, setLinkState] = useState<string | null>(null);
+  const runLinkLogs = async () => {
+    setLinkState("Vinculando…");
+    try {
+      const r = await linkLogs({});
+      setLinkState(
+        `${r.linked} partidos vinculados a su partido de equipo.` +
+          (r.pending ? ` ${r.pending} sin rival reconocible: edítalos y elige el rival de la lista.` : "")
+      );
+    } catch (err: any) {
+      setLinkState(`Error: ${err?.message ?? err}`);
+    }
+  };
 
   const runLegacyImport = async () => {
     setImportState("Importando histórico… (1–2 min)");
@@ -234,6 +249,24 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
 
   return (
     <div className="flex flex-col w-full gap-space-md">
+      {/* Partidos de jugadores anteriores a los partidos de equipo */}
+      {((unlinkedLogs ?? 0) > 0 || linkState) && (
+        <div className="p-2.5 rounded-xl border border-primary/40 bg-primary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
+          <span className="text-on-surface">
+            {linkState ??
+              `${unlinkedLogs} partidos de jugadores no están en el perfil de su equipo. Vincúlalos por rival y fecha.`}
+          </span>
+          {(unlinkedLogs ?? 0) > 0 && linkState !== "Vinculando…" && (
+            <button
+              onClick={runLinkLogs}
+              className="shrink-0 px-2.5 py-1 rounded bg-primary text-on-primary font-bold text-[10px] hover:opacity-90"
+            >
+              Vincular
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Histórico del FutbolLab viejo */}
       {legacyStatus && legacyStatus.needsImport && (
         <div className="p-2.5 rounded-xl border border-secondary/40 bg-secondary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
