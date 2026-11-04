@@ -1,6 +1,8 @@
 "use client";
 
 import React, { useState, useMemo } from "react";
+import { useQuery, useMutation } from "convex/react";
+import { api } from "../../convex/_generated/api";
 import { ClubData, INITIAL_CLUBS } from "@/data/mock-data";
 import { syncEngine, useSyncTelemetry } from "@/lib/offline-sync";
 
@@ -13,22 +15,128 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
   const [selectedLeague, setSelectedLeague] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [sortBy, setSortBy] = useState<"density" | "points" | "accuracy">("density");
-  const [clubs, setClubs] = useState<ClubData[]>(INITIAL_CLUBS);
   const { isOnline } = useSyncTelemetry();
 
-  const leaguesList = [
-    { code: "all", label: "All Leagues", count: 110, icon: "sports_soccer" },
-    { code: "laliga", label: "LaLiga", count: 20 },
-    { code: "premier", label: "Premier League", count: 20 },
-    { code: "seriea", label: "Serie A", count: 20 },
-    { code: "ucl", label: "Champions League", count: 32 },
-    { code: "bundesliga", label: "Bundesliga", count: 18 },
-  ];
+  // Convex Reactive Queries & Mutations
+  const convexLeagues = useQuery(api.teams.getLeagues);
+  const convexTeams = useQuery(api.teams.getTeams, { league: selectedLeague });
+  const createLeagueMutation = useMutation(api.teams.createLeague);
+  const createTeamMutation = useMutation(api.teams.createTeam);
+  const linkTeamMutation = useMutation(api.teams.linkTeamToCompetition);
+
+  // Modal States
+  const [isAddLeagueOpen, setIsAddLeagueOpen] = useState(false);
+  const [isAddTeamOpen, setIsAddTeamOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Form State: Add League
+  const [leagueName, setLeagueName] = useState("");
+  const [leagueCode, setLeagueCode] = useState("");
+  const [leagueCountry, setLeagueCountry] = useState("Europa");
+  const [leagueIsTournament, setLeagueIsTournament] = useState(true);
+
+  // Form State: Add Club
+  const [teamName, setTeamName] = useState("Inter de Milán");
+  const [teamShortName, setTeamShortName] = useState("INT");
+  const [teamDomesticLeague, setTeamDomesticLeague] = useState("seriea");
+  const [teamLinkUcl, setTeamLinkUcl] = useState(true);
+  const [teamFormation, setTeamFormation] = useState("3-5-2");
+  const [teamPoints, setTeamPoints] = useState(66);
+  const [teamGd, setTeamGd] = useState(37);
+  const [teamXg, setTeamXg] = useState(2.38);
+
+  // League selector list
+  const leaguesList = useMemo(() => {
+    interface LeagueTab {
+      code: string;
+      label: string;
+      count: number;
+      icon?: string;
+      isTournament?: boolean;
+    }
+
+    const base: LeagueTab[] = [
+      { code: "all", label: "Todas las Ligas", count: convexTeams?.length ?? 110, icon: "sports_soccer" },
+      { code: "laliga", label: "LaLiga", count: 20 },
+      { code: "premier", label: "Premier League", count: 20 },
+      { code: "seriea", label: "Serie A", count: 20 },
+      { code: "ucl", label: "Champions League (UCL)", count: 32, isTournament: true },
+      { code: "bundesliga", label: "Bundesliga", count: 18 },
+    ];
+
+    if (!convexLeagues || convexLeagues.length === 0) return base;
+
+    // Merge or prioritize Convex leagues
+    const codes = new Set(base.map((b) => b.code));
+    const extra: LeagueTab[] = convexLeagues
+      .filter((lg: any) => !codes.has(lg.code.toLowerCase()))
+      .map((lg: any) => ({
+        code: lg.code.toLowerCase(),
+        label: lg.name,
+        count: 20,
+        isTournament: lg.isTournament,
+      }));
+
+    return [...base, ...extra];
+  }, [convexLeagues, convexTeams]);
+
+  // Map Convex teams to ClubData format with fallback to INITIAL_CLUBS
+  const displayClubs: (ClubData & { competitions?: string[] })[] = useMemo(() => {
+    if (convexTeams && convexTeams.length > 0) {
+      return convexTeams.map((t: any) => {
+        const domestic = t.league?.toLowerCase();
+        const leagueLabel =
+          domestic === "seriea"
+            ? "Serie A"
+            : domestic === "laliga"
+            ? "LaLiga"
+            : domestic === "premier"
+            ? "Premier League"
+            : domestic === "bundesliga"
+            ? "Bundesliga"
+            : domestic === "ucl"
+            ? "Champions League"
+            : t.league;
+
+        return {
+          id: t._id,
+          name: t.name,
+          shortName: t.shortName || t.name.slice(0, 3).toUpperCase(),
+          leagueCode: t.league,
+          leagueName: leagueLabel,
+          rank: t.rank ?? 1,
+          points: t.points ?? 65,
+          goalDifference: t.goalDifference ?? 30,
+          winRate: 80,
+          meanXg: t.meanXg ?? 2.2,
+          ppda: t.ppda ?? 8.5,
+          tempo: t.tempo ?? "17.6 m/s",
+          form: t.form ?? ["W", "W", "W", "D", "W"],
+          formation: t.formation ?? "4-3-3",
+          badgeUrl:
+            t.crestUrl ||
+            "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=256&q=80",
+          density: t.density ?? 94.0,
+          predAccuracy: t.predAccuracy ?? 95.0,
+          competitions: t.competitions || [t.league],
+        };
+      });
+    }
+
+    return INITIAL_CLUBS.map((c) => ({
+      ...c,
+      competitions: [c.leagueCode, ...(c.id === "rmd" || c.id === "mci" || c.id === "bar" ? ["ucl"] : [])],
+    }));
+  }, [convexTeams]);
 
   const filteredClubs = useMemo(() => {
-    return clubs
+    return displayClubs
       .filter((c) => {
-        const matchesLeague = selectedLeague === "all" || c.leagueCode === selectedLeague;
+        const matchesLeague =
+          selectedLeague === "all" ||
+          c.leagueCode.toLowerCase() === selectedLeague.toLowerCase() ||
+          c.competitions?.includes(selectedLeague.toLowerCase());
+
         const matchesSearch =
           c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
           c.formation.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -40,32 +148,89 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
         if (sortBy === "accuracy") return b.predAccuracy - a.predAccuracy;
         return b.density - a.density;
       });
-  }, [clubs, selectedLeague, searchQuery, sortBy]);
+  }, [displayClubs, selectedLeague, searchQuery, sortBy]);
 
   const handleQuickTacticalBoost = async (clubId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const updated = clubs.map((c) => {
-      if (c.id === clubId) {
-        return {
-          ...c,
-          density: Math.min(99.9, +(c.density + 0.5).toFixed(1)),
-          meanXg: +(c.meanXg + 0.05).toFixed(2),
-        };
-      }
-      return c;
-    });
-    setClubs(updated);
-
-    // Save action into offline sync queue / Convex
     await syncEngine.enqueue("UPDATE_TACTICS", `club_${clubId}`, {
       boostedAt: Date.now(),
       clubId,
     });
   };
 
+  const handleCreateLeagueSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!leagueName.trim() || !leagueCode.trim()) return;
+    setIsSubmitting(true);
+    try {
+      await createLeagueMutation({
+        name: leagueName.trim(),
+        code: leagueCode.trim().toLowerCase(),
+        country: leagueCountry.trim(),
+        isTournament: leagueIsTournament,
+      });
+      setSelectedLeague(leagueCode.trim().toLowerCase());
+      setIsAddLeagueOpen(false);
+      setLeagueName("");
+      setLeagueCode("");
+    } catch (err) {
+      console.error("Error creating league:", err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleCreateClubSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!teamName.trim()) return;
+    setIsSubmitting(true);
+    try {
+      const comps = [teamDomesticLeague.toLowerCase()];
+      if (teamLinkUcl && !comps.includes("ucl")) {
+        comps.push("ucl");
+      }
+
+      await createTeamMutation({
+        name: teamName.trim(),
+        shortName: teamShortName.trim().toUpperCase() || teamName.slice(0, 3).toUpperCase(),
+        league: teamDomesticLeague.toLowerCase(),
+        competitions: comps,
+        formation: teamFormation,
+        rank: 1,
+        points: teamPoints,
+        goalDifference: teamGd,
+        meanXg: teamXg,
+        ppda: 8.8,
+        tempo: "17.8 m/s",
+        form: ["W", "W", "W", "D", "W"],
+        density: 95.0,
+        predAccuracy: 95.0,
+      });
+
+      setIsAddTeamOpen(false);
+      setTeamName("");
+    } catch (err) {
+      console.error("Error creating club:", err);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleLinkToUcl = async (teamId: any, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await linkTeamMutation({
+        teamId,
+        competitionCode: "ucl",
+      });
+    } catch (err) {
+      console.error("Error linking to UCL:", err);
+    }
+  };
+
   return (
     <div className="flex flex-col w-full gap-space-md">
-      {/* Breadcrumb & Telemetry Status */}
+      {/* Breadcrumb & Actions Bar */}
       <div className="flex items-center justify-between gap-space-xs pt-space-xs">
         <div className="flex items-center gap-1.5 min-w-0">
           <span className="material-symbols-outlined text-secondary text-[16px] shrink-0">public</span>
@@ -74,26 +239,38 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
           </span>
           <span className="text-outline-variant font-mono text-[10px]">/</span>
           <span className="font-mono text-[10px] text-primary font-semibold truncate uppercase">
-            Clubs Explorer
+            Clubs & Competitions Hub
           </span>
         </div>
-        <div className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface-container-high shrink-0">
-          <span className="w-1.5 h-1.5 rounded-full bg-secondary animate-ping"></span>
-          <span className="font-mono text-[10px] text-secondary">24/25 SZN</span>
+        <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setIsAddLeagueOpen(true)}
+            className="flex items-center gap-1 px-2 py-1 rounded-lg bg-surface-container-high hover:bg-surface-container-highest text-secondary text-[11px] font-mono border border-secondary/30 transition-all active:scale-95 shadow-sm"
+          >
+            <span className="material-symbols-outlined text-[13px]">add_circle</span>
+            <span>+ Liga / Torneo</span>
+          </button>
+          <button
+            onClick={() => setIsAddTeamOpen(true)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary text-on-primary text-[11px] font-mono font-bold transition-all active:scale-95 shadow-md shadow-primary/20"
+          >
+            <span className="material-symbols-outlined text-[13px]">shield</span>
+            <span>+ Agregar Club</span>
+          </button>
         </div>
       </div>
 
-      {/* Real-time Hydration Banner */}
+      {/* Non-Duplication Architecture Info Banner */}
       <div className="w-full rounded-xl bg-surface-container-low px-space-sm py-2 shadow-sm flex items-center justify-between gap-space-xs border border-surface-container-high/40">
         <div className="flex items-center gap-2 min-w-0">
-          <div className="w-2 h-2 rounded-full bg-primary shrink-0 animate-pulse"></div>
+          <div className="w-2 h-2 rounded-full bg-cyan-400 shrink-0 animate-pulse"></div>
           <p className="font-mono text-[11px] text-on-surface-variant truncate">
-            Hydrating Real-time Opta / StatsBomb telemetry
+            Arquitectura Multi-Competición: Los clubes pertenecen a su liga local y se vinculan a torneos (Champions League) sin duplicar datos.
           </p>
         </div>
-        <div className="flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-surface-container-lowest text-primary border border-primary/20">
-          <span className="material-symbols-outlined text-[12px]">bolt</span>
-          <span className="font-mono text-[12px] font-semibold text-primary">142ms</span>
+        <div className="flex items-center gap-1 shrink-0 px-1.5 py-0.5 rounded bg-surface-container-lowest text-cyan-400 border border-cyan-400/20">
+          <span className="material-symbols-outlined text-[12px]">link</span>
+          <span className="font-mono text-[11px] font-semibold">Zero-Duplicate</span>
         </div>
       </div>
 
@@ -101,9 +278,11 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
       <div className="flex flex-col gap-1.5">
         <div className="flex items-center justify-between">
           <span className="font-mono text-[11px] text-on-surface-variant uppercase tracking-wider">
-            Monitored Leagues
+            Competiciones Monitoreadas
           </span>
-          <span className="font-mono text-[10px] text-secondary">5 Active</span>
+          <span className="font-mono text-[10px] text-secondary">
+            {leaguesList.length} Registradas
+          </span>
         </div>
         <div className="flex items-center gap-2 overflow-x-auto pb-1 w-full no-scrollbar">
           {leaguesList.map((lg) => {
@@ -118,17 +297,17 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
                     : "bg-surface-container-high text-on-surface hover:text-primary"
                 }`}
               >
-                {lg.icon && (
+                {lg.code === "ucl" ? (
+                  <span className="text-[14px]">🏆</span>
+                ) : lg.icon ? (
                   <span className="material-symbols-outlined text-[16px]">{lg.icon}</span>
-                )}
+                ) : null}
                 <span>{lg.label}</span>
-                <span
-                  className={`px-1 rounded text-[10px] ${
-                    isSelected ? "bg-on-primary/20 text-on-primary" : "bg-surface-container text-on-surface-variant"
-                  }`}
-                >
-                  {lg.count}
-                </span>
+                {lg.isTournament && (
+                  <span className="px-1 py-0.2 rounded text-[9px] bg-cyan-400/20 text-cyan-300 font-bold">
+                    TORNEO
+                  </span>
+                )}
               </button>
             );
           })}
@@ -145,7 +324,7 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
             type="text"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter by club, tactic, manager or xT..."
+            placeholder="Buscar por club, táctica o competición..."
             className="w-full h-10 pl-9 pr-3 rounded-xl bg-surface-container-low text-on-surface placeholder:text-outline text-sm focus:bg-surface-container-high focus:outline-none focus:ring-1 focus:ring-primary transition-all border border-surface-container-high"
           />
         </div>
@@ -153,7 +332,7 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
         {/* Quick Sorting Chips */}
         <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar">
           <div className="flex items-center gap-1 shrink-0">
-            <span className="font-mono text-[10px] text-on-surface-variant uppercase mr-1">Sort:</span>
+            <span className="font-mono text-[10px] text-on-surface-variant uppercase mr-1">Ordenar:</span>
             {(["density", "points", "accuracy"] as const).map((s) => (
               <button
                 key={s}
@@ -174,9 +353,9 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
 
           <button
             onClick={onNavigateToPlayer}
-            className="px-2 py-1 rounded-lg bg-surface-container-high text-secondary hover:text-primary shrink-0 flex items-center gap-1 text-[11px] font-mono border border-secondary/20"
+            className="px-2.5 py-1 rounded-lg bg-surface-container-high text-secondary hover:text-primary shrink-0 flex items-center gap-1 text-[11px] font-mono border border-secondary/20"
           >
-            <span>Top Scout</span>
+            <span>Ver Jude Bellingham</span>
             <span className="material-symbols-outlined text-[14px]">arrow_forward</span>
           </button>
         </div>
@@ -184,101 +363,399 @@ export function LeaguesExplorer({ onSelectClub, onNavigateToPlayer }: LeaguesExp
 
       {/* Club Cards Catalog List */}
       <div className="flex flex-col gap-3">
-        {filteredClubs.map((club) => (
-          <div
-            key={club.id}
-            onClick={() => onSelectClub(club)}
-            className="bg-surface-container-low hover:bg-surface-container rounded-xl p-space-md border border-surface-container-high/60 transition-all cursor-pointer relative overflow-hidden group shadow-md"
-          >
-            <div className="flex items-start justify-between gap-2">
-              <div className="flex items-center gap-3 min-w-0">
-                <div className="relative w-12 h-12 rounded-xl bg-surface-container-highest flex items-center justify-center p-2 shrink-0 border border-outline-variant/30">
-                  <img
-                    src={club.badgeUrl}
-                    alt={club.name}
-                    className="w-full h-full object-contain"
-                  />
-                  <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-primary text-on-primary rounded-full flex items-center justify-center font-mono text-[10px] font-bold">
-                    {club.rank}
-                  </span>
-                </div>
-                <div className="flex flex-col min-w-0">
-                  <div className="flex items-center gap-1.5">
-                    <h3 className="font-semibold text-base text-on-surface truncate group-hover:text-primary transition-colors">
-                      {club.name}
-                    </h3>
-                    <span className="font-mono text-[10px] text-secondary font-bold px-1 rounded bg-secondary/10">
-                      {club.leagueName}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs text-on-surface-variant mt-0.5 font-mono">
-                    <span className="text-primary font-semibold">{club.points} Pts</span>
-                    <span>•</span>
-                    <span>GD +{club.goalDifference}</span>
-                    <span>•</span>
-                    <span className="text-secondary font-semibold">{club.formation}</span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex flex-col items-end gap-1">
-                <span className="font-mono text-[10px] text-on-surface-variant uppercase">Tactical Form</span>
-                <div className="flex items-center gap-0.5">
-                  {club.form.map((res, i) => (
-                    <span
-                      key={i}
-                      className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center font-mono text-[9px] font-bold ${
-                        res === "W"
-                          ? "bg-primary/20 text-primary border border-primary/30"
-                          : res === "D"
-                          ? "bg-secondary/20 text-secondary border border-secondary/30"
-                          : "bg-error/20 text-error border border-error/30"
-                      }`}
-                    >
-                      {res}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Metrics Rail */}
-            <div className="grid grid-cols-3 gap-2 mt-3 pt-2 border-t border-surface-container-high/40">
-              <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
-                <span className="font-mono text-[9px] text-on-surface-variant uppercase">xG / 90</span>
-                <span className="font-mono text-xs font-bold text-primary mt-0.5">{club.meanXg}</span>
-              </div>
-              <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
-                <span className="font-mono text-[9px] text-on-surface-variant uppercase">PPDA Metric</span>
-                <span className="font-mono text-xs font-bold text-secondary mt-0.5">{club.ppda}</span>
-              </div>
-              <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
-                <span className="font-mono text-[9px] text-on-surface-variant uppercase">Pred. Acc</span>
-                <span className="font-mono text-xs font-bold text-on-surface mt-0.5">
-                  {club.predAccuracy}%
-                </span>
-              </div>
-            </div>
-
-            {/* Quick Action Button for Instant/Offline Simulation */}
-            <div className="mt-2.5 flex items-center justify-between">
-              <span className="font-mono text-[10px] text-on-surface-variant flex items-center gap-1">
-                <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                <span>Tempo: {club.tempo}</span>
-              </span>
-
-              <button
-                onClick={(e) => handleQuickTacticalBoost(club.id, e)}
-                title="Aplica ajuste táctico (optimistic update con sync offline)"
-                className="px-2 py-0.5 rounded bg-surface-container-highest hover:bg-primary hover:text-on-primary text-secondary text-[10px] font-mono transition-colors flex items-center gap-1 border border-outline-variant/30"
+        {filteredClubs.length === 0 ? (
+          <div className="p-8 text-center bg-surface-container-low rounded-xl border border-surface-container-high/60 flex flex-col items-center justify-center gap-2">
+            <span className="material-symbols-outlined text-4xl text-on-surface-variant">search_off</span>
+            <p className="text-sm font-mono text-on-surface-variant">
+              No hay clubes vinculados a esta competición o filtro.
+            </p>
+            <button
+              onClick={() => setIsAddTeamOpen(true)}
+              className="mt-2 px-3 py-1.5 rounded-lg bg-primary text-on-primary font-mono text-xs font-bold"
+            >
+              + Agregar Club y Vincular
+            </button>
+          </div>
+        ) : (
+          filteredClubs.map((club) => {
+            const playsUcl = club.competitions?.includes("ucl");
+            return (
+              <div
+                key={club.id}
+                onClick={() => onSelectClub(club)}
+                className="bg-surface-container-low hover:bg-surface-container rounded-xl p-space-md border border-surface-container-high/60 transition-all cursor-pointer relative overflow-hidden group shadow-md"
               >
-                <span className="material-symbols-outlined text-[12px]">tune</span>
-                <span>Optimizar Táctica</span>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="relative w-12 h-12 rounded-xl bg-surface-container-highest flex items-center justify-center p-2 shrink-0 border border-outline-variant/30">
+                      <img
+                        src={club.badgeUrl}
+                        alt={club.name}
+                        className="w-full h-full object-contain"
+                      />
+                      <span className="absolute -bottom-1 -right-1 w-4 h-4 bg-primary text-on-primary rounded-full flex items-center justify-center font-mono text-[10px] font-bold">
+                        {club.rank}
+                      </span>
+                    </div>
+                    <div className="flex flex-col min-w-0">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <h3 className="font-semibold text-base text-on-surface truncate group-hover:text-primary transition-colors">
+                          {club.name}
+                        </h3>
+                        {/* Domestic League Badge */}
+                        <span className="font-mono text-[10px] text-secondary font-bold px-1.5 py-0.2 rounded bg-secondary/10">
+                          {club.leagueName}
+                        </span>
+                        {/* Champions League Linked Badge */}
+                        {playsUcl && (
+                          <span className="font-mono text-[10px] text-cyan-300 font-bold px-1.5 py-0.2 rounded bg-cyan-950/70 border border-cyan-800/60 flex items-center gap-0.5">
+                            <span>🏆 UCL</span>
+                          </span>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 text-xs text-on-surface-variant mt-0.5 font-mono">
+                        <span className="text-primary font-semibold">{club.points} Pts</span>
+                        <span>•</span>
+                        <span>GD +{club.goalDifference}</span>
+                        <span>•</span>
+                        <span className="text-secondary font-semibold">{club.formation}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="font-mono text-[10px] text-on-surface-variant uppercase">Tactical Form</span>
+                    <div className="flex items-center gap-0.5">
+                      {club.form.map((res, i) => (
+                        <span
+                          key={i}
+                          className={`w-3.5 h-3.5 rounded-sm flex items-center justify-center font-mono text-[9px] font-bold ${
+                            res === "W"
+                              ? "bg-primary/20 text-primary border border-primary/30"
+                              : res === "D"
+                              ? "bg-secondary/20 text-secondary border border-secondary/30"
+                              : "bg-error/20 text-error border border-error/30"
+                          }`}
+                        >
+                          {res}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Metrics Rail */}
+                <div className="grid grid-cols-3 gap-2 mt-3 pt-2 border-t border-surface-container-high/40">
+                  <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
+                    <span className="font-mono text-[9px] text-on-surface-variant uppercase">xG / 90</span>
+                    <span className="font-mono text-xs font-bold text-primary mt-0.5">{club.meanXg}</span>
+                  </div>
+                  <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
+                    <span className="font-mono text-[9px] text-on-surface-variant uppercase">PPDA Metric</span>
+                    <span className="font-mono text-xs font-bold text-secondary mt-0.5">{club.ppda}</span>
+                  </div>
+                  <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
+                    <span className="font-mono text-[9px] text-on-surface-variant uppercase">Pred. Acc</span>
+                    <span className="font-mono text-xs font-bold text-on-surface mt-0.5">
+                      {club.predAccuracy}%
+                    </span>
+                  </div>
+                </div>
+
+                {/* Quick Action Button for Instant/Offline Simulation */}
+                <div className="mt-2.5 flex items-center justify-between">
+                  <span className="font-mono text-[10px] text-on-surface-variant flex items-center gap-1">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
+                    <span>Tempo: {club.tempo}</span>
+                  </span>
+
+                  <div className="flex items-center gap-1.5">
+                    {!playsUcl && (
+                      <button
+                        onClick={(e) => handleLinkToUcl(club.id, e)}
+                        title="Vincular a Champions League (sin duplicar)"
+                        className="px-2 py-0.5 rounded bg-cyan-950/60 hover:bg-cyan-900 text-cyan-300 text-[10px] font-mono transition-colors border border-cyan-800/40 flex items-center gap-1"
+                      >
+                        <span>+ Vincular UCL</span>
+                      </button>
+                    )}
+                    <button
+                      onClick={(e) => handleQuickTacticalBoost(club.id, e)}
+                      title="Aplica ajuste táctico (optimistic update con sync offline)"
+                      className="px-2 py-0.5 rounded bg-surface-container-highest hover:bg-primary hover:text-on-primary text-secondary text-[10px] font-mono transition-colors flex items-center gap-1 border border-outline-variant/30"
+                    >
+                      <span className="material-symbols-outlined text-[12px]">tune</span>
+                      <span>Optimizar Táctica</span>
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      {/* Modal: Crear Liga o Torneo */}
+      {isAddLeagueOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-low border border-secondary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl relative">
+            <div className="flex items-center justify-between pb-3 border-b border-surface-container-high">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-secondary text-[22px]">public</span>
+                <h3 className="font-bold text-base text-on-surface">Crear Liga o Torneo</h3>
+              </div>
+              <button
+                onClick={() => setIsAddLeagueOpen(false)}
+                className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-on-surface"
+              >
+                ✕
               </button>
             </div>
+
+            <form onSubmit={handleCreateLeagueSubmit} className="flex flex-col gap-3 mt-3">
+              <p className="text-xs text-on-surface-variant">
+                Define ligas domésticas (ej. Serie A, LaLiga) o torneos continentales (ej. Champions League) que vinculan clubes existentes.
+              </p>
+
+              <div>
+                <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                  Nombre de la Competición
+                </label>
+                <input
+                  type="text"
+                  placeholder="ej. UEFA Champions League, Serie A"
+                  value={leagueName}
+                  onChange={(e) => setLeagueName(e.target.value)}
+                  className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-secondary"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    Código Único
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="ej. ucl, seriea"
+                    value={leagueCode}
+                    onChange={(e) => setLeagueCode(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-secondary"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    País / Región
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="ej. Europa, Italia"
+                    value={leagueCountry}
+                    onChange={(e) => setLeagueCountry(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-secondary"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="p-3 rounded-xl bg-surface-container/70 border border-surface-container-high/60 mt-1">
+                <label className="flex items-center gap-2 cursor-pointer text-xs font-mono">
+                  <input
+                    type="checkbox"
+                    checked={leagueIsTournament}
+                    onChange={(e) => setLeagueIsTournament(e.target.checked)}
+                    className="accent-secondary w-4 h-4"
+                  />
+                  <div>
+                    <span className="font-bold text-on-surface">Torneo Continental / Copa</span>
+                    <p className="text-[10px] text-on-surface-variant">
+                      Permite vincular equipos de ligas domésticas sin duplicar sus registros.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="mt-3 pt-3 border-t border-surface-container-high flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddLeagueOpen(false)}
+                  className="px-3 py-1.5 rounded-lg bg-surface-container text-on-surface-variant font-mono text-xs"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-1.5 rounded-lg bg-secondary text-black font-mono text-xs font-bold shadow-lg"
+                >
+                  {isSubmitting ? "Creando..." : "Crear Competición"}
+                </button>
+              </div>
+            </form>
           </div>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {/* Modal: Agregar Club y Vincular Competiciones */}
+      {isAddTeamOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl relative">
+            <div className="flex items-center justify-between pb-3 border-b border-surface-container-high">
+              <div className="flex items-center gap-2">
+                <span className="material-symbols-outlined text-primary text-[22px]">shield</span>
+                <h3 className="font-bold text-base text-on-surface">Agregar Club (Sin Duplicados)</h3>
+              </div>
+              <button
+                onClick={() => setIsAddTeamOpen(false)}
+                className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-on-surface-variant hover:text-on-surface"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateClubSubmit} className="flex flex-col gap-3 mt-3">
+              <p className="text-xs text-on-surface-variant">
+                El club pertenecerá a su liga doméstica y estará vinculado a torneos como la Champions League con un único registro.
+              </p>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div className="col-span-2">
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    Nombre del Club
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="ej. Inter de Milán"
+                    value={teamName}
+                    onChange={(e) => setTeamName(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    Sigla (3)
+                  </label>
+                  <input
+                    type="text"
+                    maxLength={4}
+                    placeholder="INT"
+                    value={teamShortName}
+                    onChange={(e) => setTeamShortName(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high uppercase"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    Liga Doméstica Principal
+                  </label>
+                  <select
+                    value={teamDomesticLeague}
+                    onChange={(e) => setTeamDomesticLeague(e.target.value)}
+                    className="w-full h-9 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+                  >
+                    <option value="seriea">🇮🇹 Serie A</option>
+                    <option value="laliga">🇪🇸 LaLiga</option>
+                    <option value="premier">🇬🇧 Premier League</option>
+                    <option value="bundesliga">🇩🇪 Bundesliga</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    Formación
+                  </label>
+                  <input
+                    type="text"
+                    value={teamFormation}
+                    onChange={(e) => setTeamFormation(e.target.value)}
+                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  />
+                </div>
+              </div>
+
+              {/* Champions League Linking Checkbox */}
+              <div className="p-3 rounded-xl bg-cyan-950/40 border border-cyan-800/50 mt-1">
+                <label className="flex items-center gap-2.5 cursor-pointer text-xs font-mono">
+                  <input
+                    type="checkbox"
+                    checked={teamLinkUcl}
+                    onChange={(e) => setTeamLinkUcl(e.target.checked)}
+                    className="accent-cyan-400 w-4 h-4 rounded"
+                  />
+                  <div>
+                    <span className="font-bold text-cyan-300 flex items-center gap-1">
+                      <span>🏆 Participa en Champions League (UCL)</span>
+                    </span>
+                    <p className="text-[10px] text-cyan-200/70 mt-0.5">
+                      Se vinculará a la Champions League sin duplicar el club en la base de datos.
+                    </p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
+                    Puntos
+                  </label>
+                  <input
+                    type="number"
+                    value={teamPoints}
+                    onChange={(e) => setTeamPoints(Number(e.target.value))}
+                    className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
+                    Dif. Gol
+                  </label>
+                  <input
+                    type="number"
+                    value={teamGd}
+                    onChange={(e) => setTeamGd(Number(e.target.value))}
+                    className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[9px] font-mono text-on-surface-variant uppercase mb-0.5">
+                    xG / 90
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    value={teamXg}
+                    onChange={(e) => setTeamXg(Number(e.target.value))}
+                    className="w-full h-8 px-2 rounded bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-3 pt-3 border-t border-surface-container-high flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddTeamOpen(false)}
+                  className="px-3 py-1.5 rounded-lg bg-surface-container text-on-surface-variant font-mono text-xs"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSubmitting}
+                  className="px-4 py-1.5 rounded-lg bg-primary text-on-primary font-mono text-xs font-bold shadow-lg"
+                >
+                  {isSubmitting ? "Guardando..." : "Guardar y Vincular"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

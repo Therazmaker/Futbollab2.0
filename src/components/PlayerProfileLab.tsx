@@ -16,6 +16,7 @@ interface PlayerProfileLabProps {
 export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProfileLabProps) {
   // Convex Reactive Hooks
   const profileData = useQuery(api.players.getPlayerProfile, {});
+  const registeredTeams = useQuery(api.teams.getTeams, {}) || [];
   const seedDemo = useMutation(api.players.seedBellinghamDemo);
   const calibrateMutation = useMutation(api.predictions.recordMatchAndCalibrate);
   const predictMutation = useMutation(api.predictions.calculateAndPredict);
@@ -41,8 +42,11 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
   // Ingest / Calibrate Modal state
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
   const [isSubmittingMatch, setIsSubmittingMatch] = useState<boolean>(false);
-  const [matchOpponent, setMatchOpponent] = useState<string>("Athletic Club (San Mamés)");
-  const [matchIsAway, setMatchIsAway] = useState<boolean>(true);
+  const [matchOpponent, setMatchOpponent] = useState<string>("Inter de Milán");
+  const [selectedOpponentTeamId, setSelectedOpponentTeamId] = useState<string>("");
+  const [matchCompetition, setMatchCompetition] = useState<string>("ucl");
+  const [matchDate, setMatchDate] = useState<string>("2024-09-08");
+  const [matchIsAway, setMatchIsAway] = useState<boolean>(false);
   const [actualShots, setActualShots] = useState<number>(3);
   const [actualXg, setActualXg] = useState<number>(0.42);
   const [actualKeyPasses, setActualKeyPasses] = useState<number>(3);
@@ -184,8 +188,10 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           playerId: activePlayer?._id,
-          matchDate: new Date().toISOString().split("T")[0],
+          matchDate: matchDate || new Date().toISOString().split("T")[0],
           opponent: matchOpponent,
+          opponentTeamId: selectedOpponentTeamId || undefined,
+          competition: matchCompetition || "laliga",
           isAway: matchIsAway,
           minutesPlayed: 90,
           rawStats: {
@@ -686,6 +692,17 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                     <p className="font-semibold text-xs text-on-surface truncate group-hover:text-primary transition-colors">
                       vs {log.opponent}
                     </p>
+                    {log.competition && (
+                      <span
+                        className={`font-mono text-[9px] px-1.5 py-0.2 rounded font-bold uppercase ${
+                          log.competition === "ucl"
+                            ? "bg-cyan-950/70 text-cyan-400 border border-cyan-800/50"
+                            : "bg-emerald-950/70 text-emerald-400 border border-emerald-800/50"
+                        }`}
+                      >
+                        {log.competition === "ucl" ? "UCL" : log.competition}
+                      </span>
+                    )}
                     <span className="material-symbols-outlined text-[13px] text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">
                       arrow_forward
                     </span>
@@ -941,20 +958,115 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                 Ingesta de resultado para calcular error (<code className="text-primary">delta = actual - predicted</code>) y recalibrar pesos mediante descenso por gradiente.
               </p>
 
-              <div>
-                <label className="block text-[11px] font-mono text-on-surface-variant uppercase mb-1">
-                  Rival del Partido
-                </label>
-                <input
-                  type="text"
-                  value={matchOpponent}
-                  onChange={(e) => setMatchOpponent(e.target.value)}
-                  className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
-                  required
-                />
+              {/* Competición y Fecha */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    Competición / Torneo
+                  </label>
+                  <select
+                    value={matchCompetition}
+                    onChange={(e) => setMatchCompetition(e.target.value)}
+                    className="w-full h-9 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+                  >
+                    <option value="ucl">🏆 Champions League (UCL)</option>
+                    <option value="laliga">🇪🇸 LaLiga</option>
+                    <option value="seriea">🇮🇹 Serie A</option>
+                    <option value="premier">🇬🇧 Premier League</option>
+                    <option value="copa">🏆 Copa Nacional</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
+                    Fecha de Partido
+                  </label>
+                  <input
+                    type="date"
+                    value={matchDate}
+                    onChange={(e) => setMatchDate(e.target.value)}
+                    className="w-full h-9 px-2.5 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+                    required
+                  />
+                </div>
               </div>
 
-              <div className="flex items-center gap-3">
+              {/* Rival Selection (con vinculación a clubes registrados en Convex) */}
+              <div>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-[10px] font-mono text-on-surface-variant uppercase">
+                    Rival del Partido
+                  </label>
+                  <span className="text-[10px] font-mono text-secondary">
+                    {registeredTeams.length} clubes en Convex
+                  </span>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <select
+                    value={selectedOpponentTeamId}
+                    onChange={(e) => {
+                      const id = e.target.value;
+                      setSelectedOpponentTeamId(id);
+                      if (id) {
+                        const found = (registeredTeams as any[]).find((t: any) => t._id === id);
+                        if (found) {
+                          setMatchOpponent(found.name);
+                          if (found.competitions?.includes("ucl")) {
+                            setMatchCompetition("ucl");
+                          }
+                        }
+                      }
+                    }}
+                    className="w-full h-9 px-2.5 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+                  >
+                    <option value="">-- Seleccionar club existente o escribir manual --</option>
+                    {(registeredTeams as any[]).map((tm: any) => (
+                      <option key={tm._id} value={tm._id}>
+                        {tm.name} ({tm.league?.toUpperCase()}{tm.competitions?.includes("ucl") ? " + UCL" : ""})
+                      </option>
+                    ))}
+                  </select>
+
+                  <input
+                    type="text"
+                    value={matchOpponent}
+                    onChange={(e) => setMatchOpponent(e.target.value)}
+                    placeholder="Nombre del rival..."
+                    className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
+                    required
+                  />
+                </div>
+              </div>
+
+              {/* Preset Rápido Real Madrid vs Inter 08/09 */}
+              <div className="flex items-center gap-1.5 pt-0.5">
+                <span className="text-[10px] font-mono text-on-surface-variant">Fixture Rápido:</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const inter = (registeredTeams as any[]).find((t: any) =>
+                      t.name.toLowerCase().includes("inter")
+                    );
+                    if (inter) {
+                      setSelectedOpponentTeamId(inter._id);
+                    }
+                    setMatchOpponent("Inter de Milán");
+                    setMatchCompetition("ucl");
+                    setMatchDate("2024-09-08");
+                    setMatchIsAway(false);
+                    setActualShots(4);
+                    setActualXg(0.55);
+                    setActualKeyPasses(3);
+                    setActualRating(8.7);
+                  }}
+                  className="px-2 py-0.5 rounded bg-cyan-950/60 text-cyan-400 border border-cyan-800/40 text-[10px] font-mono hover:bg-cyan-900/50 flex items-center gap-1"
+                >
+                  <span>⚡ 08/09 Real Madrid vs Inter (UCL)</span>
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3 pt-1">
                 <label className="flex items-center gap-2 text-xs font-mono cursor-pointer">
                   <input
                     type="radio"
@@ -971,7 +1083,7 @@ export function PlayerProfileLab({ onBackToExplorer, onOpenTactics }: PlayerProf
                     onChange={() => setMatchIsAway(false)}
                     className="accent-primary"
                   />
-                  <span>Local (Home)</span>
+                  <span>Local (Home - Bernabéu)</span>
                 </label>
               </div>
 

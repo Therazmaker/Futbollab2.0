@@ -2,11 +2,31 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  leagues: defineTable({
+    code: v.string(), // "ucl", "laliga", "seriea", "premier", "bundesliga"
+    name: v.string(), // "Champions League", "Serie A", "LaLiga"
+    country: v.string(), // "Europa", "Italia", "España"
+    isTournament: v.boolean(), // true for UCL/copas, false for domestic
+    crestUrl: v.optional(v.string()),
+  }).index("by_code", ["code"]),
+
   teams: defineTable({
     name: v.string(),
-    league: v.string(),
+    shortName: v.optional(v.string()),
+    league: v.string(), // Domestic league code, e.g. "seriea", "laliga"
+    competitions: v.optional(v.array(v.string())), // e.g. ["seriea", "ucl"] -> Links without duplicating!
     crestUrl: v.optional(v.string()),
-  }),
+    rank: v.optional(v.number()),
+    points: v.optional(v.number()),
+    goalDifference: v.optional(v.number()),
+    formation: v.optional(v.string()),
+    meanXg: v.optional(v.number()),
+    ppda: v.optional(v.number()),
+    tempo: v.optional(v.string()),
+    form: v.optional(v.array(v.string())),
+    density: v.optional(v.number()),
+    predAccuracy: v.optional(v.number()),
+  }).index("by_league", ["league"]),
 
   players: defineTable({
     teamId: v.id("teams"),
@@ -19,6 +39,8 @@ export default defineSchema({
     playerId: v.id("players"),
     matchDate: v.string(),
     opponent: v.string(),
+    opponentTeamId: v.optional(v.id("teams")), // Link to existing opponent team
+    competition: v.optional(v.string()), // "ucl", "laliga", "copa_del_rey"
     isAway: v.boolean(),
     tacticalRole: v.optional(v.string()),
     minutesPlayed: v.number(),

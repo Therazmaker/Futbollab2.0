@@ -72,6 +72,8 @@ export async function POST(req: NextRequest) {
     let playerId: any = null;
     let matchDate = new Date().toISOString().split("T")[0];
     let opponent = "Athletic Club";
+    let opponentTeamId: any = undefined;
+    let competition: string = "laliga";
     let isAway = true;
     let minutesPlayed = 90;
     let tacticalRole = "AM / Box-to-Box";
@@ -84,6 +86,8 @@ export async function POST(req: NextRequest) {
       const file = formData.get("file") as File | null;
       playerId = formData.get("playerId") as string | null;
       if (formData.get("opponent")) opponent = formData.get("opponent") as string;
+      if (formData.get("opponentTeamId")) opponentTeamId = formData.get("opponentTeamId") as string;
+      if (formData.get("competition")) competition = formData.get("competition") as string;
       if (formData.get("isAway")) isAway = formData.get("isAway") === "true";
       if (formData.get("matchDate")) matchDate = formData.get("matchDate") as string;
 
@@ -128,6 +132,8 @@ export async function POST(req: NextRequest) {
       playerId = body.playerId;
       if (body.matchDate) matchDate = body.matchDate;
       if (body.opponent) opponent = body.opponent;
+      if (body.opponentTeamId) opponentTeamId = body.opponentTeamId;
+      if (body.competition) competition = body.competition;
       if (body.isAway !== undefined) isAway = body.isAway;
       if (body.minutesPlayed) minutesPlayed = body.minutesPlayed;
       if (body.tacticalRole) tacticalRole = body.tacticalRole;
@@ -177,6 +183,8 @@ export async function POST(req: NextRequest) {
         playerId,
         matchDate,
         opponent,
+        opponentTeamId: opponentTeamId || undefined,
+        competition: competition || "laliga",
         isAway,
         minutesPlayed,
         rawStats,
