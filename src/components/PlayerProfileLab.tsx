@@ -6,6 +6,7 @@ import { api } from "../../convex/_generated/api";
 import { INITIAL_PLAYER, PlayerData } from "@/data/mock-data";
 import { BrainTargetRadar, PredictionMetricPoint } from "./BrainTargetRadar";
 import { LearningCurve } from "./LearningCurve";
+import { parseMatchStats } from "@/lib/parse-match-stats";
 import type { Id } from "../../convex/_generated/dataModel";
 import { MatchDetailView } from "./MatchDetailView";
 
@@ -78,6 +79,47 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
   const [actualKeyPasses, setActualKeyPasses] = useState<string>("");
   const [actualDuels, setActualDuels] = useState<string>("");
   const [actualRating, setActualRating] = useState<string>("");
+  // Stats pegadas desde Sofascore/FotMob (se guardan todas con el partido)
+  const [pastedText, setPastedText] = useState<string>("");
+  const [pastedStats, setPastedStats] = useState<Record<string, number> | null>(null);
+  const [pasteInfo, setPasteInfo] = useState<string | null>(null);
+
+  const applyPastedStats = (text: string) => {
+    setPastedText(text);
+    if (!text.trim()) {
+      setPastedStats(null);
+      setPasteInfo(null);
+      return;
+    }
+    const parsed = parseMatchStats(text);
+    const n = Object.keys(parsed.stats).length;
+    if (!n) {
+      setPastedStats(null);
+      setPasteInfo("No reconozco estadísticas en ese texto. Formato esperado: etiqueta en una línea y valor en la siguiente.");
+      return;
+    }
+    const st = parsed.stats;
+    const str = (v: number | undefined) => (v === undefined ? undefined : String(v));
+    // Rellena los campos del modelo con lo que venga (lo que no venga se deja igual)
+    if (st.totalShots !== undefined) setActualShots(str(st.totalShots)!);
+    if (st.xG !== undefined) setActualXg(str(st.xG)!);
+    if (st.keyPasses !== undefined) setActualKeyPasses(str(st.keyPasses)!);
+    if (st.groundDuelsWon !== undefined) setActualDuels(str(st.groundDuelsWon)!);
+    if (st.rating !== undefined) setActualRating(str(st.rating)!);
+    if (parsed.minutesPlayed) setMatchMinutes(parsed.minutesPlayed);
+    setPastedStats(st);
+    const missing = [
+      st.totalShots === undefined && "tiros",
+      st.xG === undefined && "xG",
+      st.keyPasses === undefined && "pases clave",
+      st.groundDuelsWon === undefined && "duelos ganados",
+    ].filter(Boolean);
+    setPasteInfo(
+      `${n} estadísticas leídas${parsed.unknownLines.length ? ` (${parsed.unknownLines.length} con nombre no estándar, se guardan igual)` : ""}.` +
+        (parsed.minutesPlayed ? ` Minutos: ${parsed.minutesPlayed}.` : " Revisa los minutos jugados: no venían en el texto.") +
+        (missing.length ? ` Faltan para el modelo: ${missing.join(", ")}.` : "")
+    );
+  };
   const [lastCalibrationNotice, setLastCalibrationNotice] = useState<string | null>(null);
 
   // Auto-seed demo on first mount if database is empty
@@ -156,8 +198,9 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
     e.preventDefault();
     setIsSubmittingMatch(true);
 
-    // Solo se envían las stats que el usuario rellenó (nada inventado)
-    const rawStats: Record<string, number> = {};
+    // Todas las stats pegadas + los campos del formulario (que mandan si se editaron).
+    // Solo se envía lo que hay: nada inventado.
+    const rawStats: Record<string, number> = { ...(pastedStats ?? {}) };
     const put = (k: string, v: string) => {
       if (v.trim() !== "" && Number.isFinite(Number(v))) rawStats[k] = Number(v);
     };
@@ -198,6 +241,9 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
         setActualXg("");
         setActualKeyPasses("");
         setActualDuels("");
+        setPastedText("");
+        setPastedStats(null);
+        setPasteInfo(null);
         setActualRating("");
       } else {
         setLastCalibrationNotice(`No se registró: ${data.error}`);
@@ -247,6 +293,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
     return (
       <MatchDetailView
         matchLog={selectedMatchLog}
+        prediction={(points as any[]).find((pt: any) => pt.logId === selectedMatchLog._id) ?? null}
         playerName={activePlayer?.name || player.name}
         playerNumber={(activePlayer as any)?.number ?? (isDemoPlayer ? player.number : 0)}
         onBack={() => setSelectedMatchLog(null)}
@@ -1017,6 +1064,47 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                 Se compara con la predicción que el modelo hacía <b>antes</b> de este partido y el perfil se
                 recalcula con todos los partidos. Deja vacío lo que no tengas: no se inventa nada.
               </p>
+
+              {/* Pegar estadísticas de Sofascore / FotMob */}
+              <div className="rounded-lg border border-secondary/30 bg-secondary/5 p-2.5 flex flex-col gap-1.5">
+                <label className="flex items-center justify-between text-[10px] font-mono text-secondary uppercase">
+                  <span className="flex items-center gap-1">
+                    <span className="material-symbols-outlined text-[14px]">content_paste</span>
+                    Pegar estadísticas (Sofascore / FotMob)
+                  </span>
+                  {pastedStats && (
+                    <button
+                      type="button"
+                      onClick={() => applyPastedStats("")}
+                      className="normal-case text-on-surface-variant hover:text-on-surface"
+                    >
+                      limpiar
+                    </button>
+                  )}
+                </label>
+                <textarea
+                  value={pastedText}
+                  onChange={(e) => applyPastedStats(e.target.value)}
+                  placeholder={"General\nGoals\n0\nExpected goals (xG)\n1.24\n…"}
+                  rows={4}
+                  className="w-full px-2.5 py-2 rounded-lg bg-surface-container text-on-surface font-mono text-[11px] border border-surface-container-high focus:outline-none focus:border-secondary resize-y"
+                />
+                {pasteInfo && (
+                  <p className={`font-mono text-[10px] ${pastedStats ? "text-primary" : "text-tertiary"}`}>{pasteInfo}</p>
+                )}
+                {pastedStats && (
+                  <div className="flex flex-wrap gap-1 max-h-24 overflow-y-auto">
+                    {Object.entries(pastedStats).map(([k, v]) => (
+                      <span
+                        key={k}
+                        className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-surface-container-highest text-on-surface-variant"
+                      >
+                        {k} <b className="text-on-surface">{v}</b>
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               {/* Competición y Fecha */}
               <div className="grid grid-cols-2 gap-2">

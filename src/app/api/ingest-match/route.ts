@@ -94,6 +94,19 @@ function cleanStats(source: any): Record<string, number> {
   return out;
 }
 
+/** Todas las stats numéricas con nombre razonable (máx. 150). */
+function cleanAnyStats(source: any): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!source || typeof source !== "object") return out;
+  for (const [k, raw] of Object.entries(source).slice(0, 150)) {
+    if (!/^[A-Za-z][A-Za-z0-9]{0,40}$/.test(k)) continue;
+    if (raw === null || raw === undefined || raw === "") continue;
+    const n = Number(raw);
+    if (Number.isFinite(n)) out[k] = n;
+  }
+  return out;
+}
+
 export async function POST(req: NextRequest) {
   try {
     let playerId: any = null;
@@ -157,7 +170,12 @@ export async function POST(req: NextRequest) {
     isAway = typeof body.isAway === "boolean" ? body.isAway : typeof extracted?.isAway === "boolean" ? extracted.isAway : null;
     const mins = Number(body.minutesPlayed ?? extracted?.minutesPlayed);
     minutesPlayed = Number.isFinite(mins) && mins > 0 ? mins : null;
-    const rawStats = { ...cleanStats(extracted), ...cleanStats(body.rawStats ?? body) };
+    // rawStats (p.ej. pegado de Sofascore) puede traer decenas de stats: se guardan
+    // todas las numéricas. Sin rawStats, solo los campos conocidos del cuerpo.
+    const rawStats = {
+      ...cleanStats(extracted),
+      ...(body.rawStats ? cleanAnyStats(body.rawStats) : cleanStats(body)),
+    };
 
     const missing = [
       !opponent && "opponent",
