@@ -1,30 +1,27 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 
-export const getClubs = query({
+export const getTeams = query({
   args: { league: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    const all = await ctx.db.query("teams").collect();
     if (args.league && args.league !== "all") {
-      return await ctx.db
-        .query("clubs")
-        .withIndex("by_league", (q) => q.eq("leagueCode", args.league!))
-        .collect();
+      return all.filter((t: any) => t.league === args.league);
     }
-    return await ctx.db.query("clubs").collect();
+    return all;
   },
 });
 
-export const updateClubTactics = mutation({
+export const updateTeam = mutation({
   args: {
-    clubId: v.id("clubs"),
-    formation: v.string(),
-    tempo: v.string(),
+    teamId: v.id("teams"),
+    name: v.optional(v.string()),
+    crestUrl: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await ctx.db.patch(args.clubId, {
-      formation: args.formation,
-      tempo: args.tempo,
-      lastUpdated: Date.now(),
-    });
+    const patch: any = {};
+    if (args.name !== undefined) patch.name = args.name;
+    if (args.crestUrl !== undefined) patch.crestUrl = args.crestUrl;
+    await ctx.db.patch(args.teamId, patch);
   },
 });

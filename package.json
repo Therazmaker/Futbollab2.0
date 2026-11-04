@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node -e \"if(process.env.CONVEX_DEPLOY_KEY){require('child_process').execSync('npx convex deploy',{stdio:'inherit'})}\" && next build",
+    "convex:deploy": "npx convex deploy",
     "start": "next start",
     "lint": "next lint"
   },
