@@ -1369,6 +1369,64 @@ export const setMatchScore = mutation({
   },
 });
 
+/**
+ * Edita un partido de equipo: competición, fecha, local/visitante y marcador.
+ * Los partidos de jugadores vinculados se actualizan igual (competición, fecha
+ * y casa/fuera) y se recalculan las tablas afectadas y el modelo de nota.
+ */
+export const updateMatch = mutation({
+  args: {
+    matchId: v.id("matches"),
+    competition: v.optional(v.string()),
+    date: v.optional(v.string()),
+    swapHomeAway: v.optional(v.boolean()),
+    // null = quitar el marcador
+    homeGoals: v.optional(v.union(v.number(), v.null())),
+    awayGoals: v.optional(v.union(v.number(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const m = await ctx.db.get(args.matchId);
+    if (!m) throw new Error("Partido no encontrado");
+    const swap = !!args.swapHomeAway;
+    const homeTeamId = swap ? m.awayTeamId : m.homeTeamId;
+    const awayTeamId = swap ? m.homeTeamId : m.awayTeamId;
+    const date = args.date ?? m.date;
+    // Marcador: si se intercambia local/visitante, los goles viajan con su equipo
+    let homeGoals = swap ? m.awayGoals : m.homeGoals;
+    let awayGoals = swap ? m.homeGoals : m.awayGoals;
+    if (args.homeGoals !== undefined) homeGoals = args.homeGoals ?? undefined;
+    if (args.awayGoals !== undefined) awayGoals = args.awayGoals ?? undefined;
+    if ((homeGoals === undefined) !== (awayGoals === undefined)) throw new Error("Pon los goles de los dos equipos (o ninguno).");
+    if ((homeGoals ?? 0) < 0 || (awayGoals ?? 0) < 0) throw new Error("Goles no válidos");
+    const league = (args.competition || m.league).toLowerCase();
+
+    if (date !== m.date || swap) {
+      const clash = await findTeamMatch(ctx.db, homeTeamId, awayTeamId, date);
+      if (clash && clash._id !== m._id) throw new Error("Ya existe ese partido (mismos equipos y fecha).");
+    }
+
+    await ctx.db.patch(args.matchId, { homeTeamId, awayTeamId, date, league, homeGoals, awayGoals });
+
+    // Partidos de jugadores de este partido: misma competición, fecha y casa/fuera
+    const logs = await ctx.db
+      .query("playerMatchLogs")
+      .withIndex("by_match", (q) => q.eq("matchId", args.matchId))
+      .collect();
+    for (const l of logs) {
+      await ctx.db.patch(l._id, {
+        competition: league,
+        matchDate: date,
+        ...(swap ? { isAway: !l.isAway } : {}),
+      });
+    }
+
+    await recomputeLeague(ctx.db, m.league);
+    if (league !== m.league) await recomputeLeague(ctx.db, league);
+    await refreshRatingModel(ctx.db);
+    return args.matchId;
+  },
+});
+
 /** Partidos recientes de un equipo (para elegirlos al registrar un jugador). */
 export const recentMatches = query({
   args: { teamId: v.id("teams"), playerId: v.optional(v.id("players")), limit: v.optional(v.number()) },

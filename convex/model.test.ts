@@ -562,3 +562,39 @@ describe("equipos solo de Champions", () => {
     expect((await t.run((ctx) => ctx.db.get(id)))!.competitionSeason).toBe(currentSeason());
   }, 120_000);
 });
+
+describe("Convex: editar partido de equipo", () => {
+  test("cambiar a Champions saca el partido de la tabla y actualiza a los jugadores", async () => {
+    const t = convexTest(schema, modules);
+    await t.action(api.legacy.importLegacyData, {});
+    const teams = await t.run((ctx) => ctx.db.query("teams").collect());
+    const arsenal = teams.find((x) => x.name === "Arsenal")!;
+    const city = teams.find((x) => x.name === "Manchester City")!;
+    const playerId = await t.mutation(api.players.createPlayer, { teamId: arsenal._id, name: "Nueve", position: "FW" });
+    const r = await t.mutation(api.predictions.recordMatchAndCalibrate, {
+      playerId, matchDate: inSeason("10-14"), opponent: "Manchester City", opponentTeamId: city._id,
+      competition: "premier", isAway: true, minutesPlayed: 90, rawStats: { totalShots: 2, rating: 7 },
+      teamGoals: 4, opponentGoals: 2,
+    });
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(3);
+
+    // Era de Champions, en casa del Arsenal, y fue el 15
+    await t.mutation(api.teams.updateMatch, {
+      matchId: r.teamMatchId!, competition: "ucl", date: inSeason("10-15"), swapHomeAway: true, homeGoals: 4, awayGoals: 2,
+    });
+    const m = (await t.run((ctx) => ctx.db.get(r.teamMatchId!)))!;
+    expect(m.league).toBe("ucl");
+    expect(m.homeTeamId).toBe(arsenal._id);
+    expect([m.homeGoals, m.awayGoals]).toEqual([4, 2]);
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points ?? 0).toBe(0); // ya no cuenta en la Premier
+    const log = (await t.run((ctx) => ctx.db.get(r.matchLogId)))!;
+    expect(log.competition).toBe("ucl");
+    expect(log.matchDate).toBe(inSeason("10-15"));
+    expect(log.isAway).toBe(false);
+
+    // Quitar el marcador
+    await t.mutation(api.teams.updateMatch, { matchId: r.teamMatchId!, homeGoals: null, awayGoals: null });
+    expect((await t.run((ctx) => ctx.db.get(r.teamMatchId!)))!.homeGoals).toBeUndefined();
+    await expect(t.mutation(api.teams.updateMatch, { matchId: r.teamMatchId!, homeGoals: 1 })).rejects.toThrow(/dos equipos/);
+  }, 120_000);
+});

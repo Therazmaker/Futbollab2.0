@@ -530,6 +530,17 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
+                    setOpenMatchId(r._id);
+                  }}
+                  className="opacity-60 group-hover:opacity-100 text-on-surface-variant hover:text-secondary"
+                  aria-label="Editar partido"
+                  title="Editar competición, fecha, local/visitante o marcador"
+                >
+                  <span className="material-symbols-outlined text-[14px]">edit</span>
+                </button>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
                     const label = r.result ? `${r.goalsFor}-${r.goalsAgainst}` : "(sin marcador)";
                     if (
                       window.confirm(
