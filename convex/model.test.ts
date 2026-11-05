@@ -4,6 +4,11 @@ import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { fitProfile, walkForward, summarizeWalkForward, ModelLog } from "./lib/engine";
+import { currentSeason, seasonOf } from "./lib/season";
+
+// Fechas dentro de la temporada actual (para que los tests no caduquen)
+const SEASON_YEAR = Number(currentSeason().slice(0, 4));
+const inSeason = (mmdd: string) => `${Number(mmdd.slice(0, 2)) >= 7 ? SEASON_YEAR : SEASON_YEAR + 1}-${mmdd}`;
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -129,7 +134,10 @@ describe("Convex: registro, informe e importación", () => {
     const teams = await t.run((ctx) => ctx.db.query("teams").collect());
     const city = teams.filter((x) => x.name === "Manchester City");
     expect(city.length).toBe(1);
-    expect(city[0].played).toBeGreaterThan(20);
+    // El histórico (2025-26) no cuenta para la tabla actual, pero queda como referencia
+    expect(city[0].played).toBeUndefined();
+    expect(city[0].lastSeason!.played).toBeGreaterThan(20);
+    expect(city[0].attackRating).toBeGreaterThan(0);
     const rated = teams.filter((x) => x.defenseRating);
     const meanDef = rated.reduce((a, x) => a + x.defenseRating!, 0) / rated.length;
     expect(meanDef).toBeGreaterThan(0.85);
@@ -139,7 +147,7 @@ describe("Convex: registro, informe e importación", () => {
     expect(status.needsImport).toBe(false);
     const villa = teams.filter((x) => x.name === "Aston Villa");
     expect(villa.length).toBe(1);
-    expect(villa[0].points).toBeGreaterThan(30);
+    expect(villa[0].lastSeason!.points).toBeGreaterThan(30);
     expect(teams.filter((x) => x.league === "premier").length).toBe(20);
   }, 120_000);
 
@@ -175,10 +183,11 @@ describe("Convex: flujo equipo → jugador", () => {
     const chelsea = teams.find((x) => x.name === "Chelsea")!;
 
     const profile = await t.query(api.teams.getTeamProfile, { teamId: arsenal._id });
-    expect(profile!.record.total.played).toBe(arsenal.played);
-    expect(profile!.record.total.wins + profile!.record.total.draws + profile!.record.total.losses).toBe(arsenal.played);
+    expect(profile!.record.total.played).toBe(0); // temporada actual: aún sin partidos
+    expect(arsenal.lastSeason!.played).toBeGreaterThan(30);
     expect(profile!.squad.length).toBeGreaterThan(10);
-    expect(profile!.table.length).toBe(20);
+    expect(profile!.table.length).toBe(0);
+    expect(profile!.lastTable.length).toBe(20);
     expect(profile!.results[0].date >= profile!.results[profile!.results.length - 1].date).toBe(true);
 
     const sim = await t.query(api.teams.predictMatch, { homeTeamId: arsenal._id, awayTeamId: chelsea._id });
@@ -186,22 +195,22 @@ describe("Convex: flujo equipo → jugador", () => {
     expect(sum).toBeCloseTo(1, 2);
     expect(sim!.expectedGoals.home).toBeGreaterThan(0);
 
-    const before = arsenal.points!;
+    const before = arsenal.points ?? 0;
     const matchId = await t.mutation(api.teams.addMatchResult, {
       homeTeamId: arsenal._id,
       awayTeamId: chelsea._id,
       homeGoals: 3,
       awayGoals: 0,
-      date: "2026-05-30",
+      date: inSeason("09-30"),
     });
     expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(before + 3);
     await t.mutation(api.teams.deleteMatchResult, { matchId });
-    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(before);
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points ?? 0).toBe(before);
 
     const playerId = await t.mutation(api.players.createPlayer, { teamId: arsenal._id, name: "Nuevo Nueve", position: "FW" });
     await t.mutation(api.predictions.recordMatchAndCalibrate, {
       playerId,
-      matchDate: "2026-05-30",
+      matchDate: inSeason("09-30"),
       opponent: "Chelsea",
       opponentTeamId: chelsea._id,
       isAway: false,
@@ -268,11 +277,11 @@ describe("Convex: partidos de equipo ↔ partidos de jugador", () => {
     const inter = teams.find((x) => x.name === "Inter")!;
     const pA = await t.mutation(api.players.createPlayer, { teamId: arsenal._id, name: "Jugador A", position: "FW" });
     const pB = await t.mutation(api.players.createPlayer, { teamId: arsenal._id, name: "Jugador B", position: "MF" });
-    const pointsBefore = arsenal.points!;
+    const pointsBefore = arsenal.points ?? 0;
 
     // 1) A registra vs Chelsea con marcador → crea el partido del equipo y cuenta en la tabla
     const r1 = await t.mutation(api.predictions.recordMatchAndCalibrate, {
-      playerId: pA, matchDate: "2026-06-01", opponent: "Chelsea", opponentTeamId: chelsea._id,
+      playerId: pA, matchDate: inSeason("09-01"), opponent: "Chelsea", opponentTeamId: chelsea._id,
       isAway: false, minutesPlayed: 90, rawStats: { totalShots: 3, xG: 0.5, rating: 7.5 }, teamGoals: 2, opponentGoals: 1,
     });
     expect(r1.teamMatchId).not.toBeNull();
@@ -290,13 +299,13 @@ describe("Convex: partidos de equipo ↔ partidos de jugador", () => {
     expect(r2.teamMatchId).toBe(r1.teamMatchId);
     const logB = await t.run((ctx) => ctx.db.get(r2.matchLogId));
     expect(logB!.isAway).toBe(false); // se toma del partido, no del formulario
-    expect(logB!.matchDate).toBe("2026-06-01");
+    expect(logB!.matchDate).toBe(inSeason("09-01"));
     expect(logB!.opponentTeamId).toBe(chelsea._id);
 
     // 3) A no puede registrar el mismo partido dos veces
     await expect(
       t.mutation(api.predictions.recordMatchAndCalibrate, {
-        playerId: pA, matchDate: "2026-06-01", opponent: "Chelsea", isAway: false, matchId: r1.teamMatchId!,
+        playerId: pA, matchDate: inSeason("09-01"), opponent: "Chelsea", isAway: false, matchId: r1.teamMatchId!,
         minutesPlayed: 90, rawStats: { totalShots: 1 },
       })
     ).rejects.toThrow(/ya tiene registrado/);
@@ -310,19 +319,19 @@ describe("Convex: partidos de equipo ↔ partidos de jugador", () => {
     expect(detail!.home.totals.rating).toBeUndefined();
 
     // 5) Sin marcador: no cuenta en la tabla hasta que se pone
-    const pts = (await t.run((ctx) => ctx.db.get(arsenal._id)))!.points!;
+    const pts = (await t.run((ctx) => ctx.db.get(arsenal._id)))!.points ?? 0;
     const r3 = await t.mutation(api.predictions.recordMatchAndCalibrate, {
-      playerId: pA, matchDate: "2026-06-08", opponent: "Chelsea", opponentTeamId: chelsea._id,
+      playerId: pA, matchDate: inSeason("09-08"), opponent: "Chelsea", opponentTeamId: chelsea._id,
       isAway: true, minutesPlayed: 90, rawStats: { totalShots: 2 },
     });
-    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(pts);
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points ?? 0).toBe(pts);
     await t.mutation(api.teams.setMatchScore, { matchId: r3.teamMatchId!, homeGoals: 0, awayGoals: 1 });
     expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(pts + 3);
 
     // 6) UCL: aparece en el perfil pero no toca la tabla de liga
-    const ptsBeforeUcl = (await t.run((ctx) => ctx.db.get(arsenal._id)))!.points!;
+    const ptsBeforeUcl = (await t.run((ctx) => ctx.db.get(arsenal._id)))!.points ?? 0;
     const r4 = await t.mutation(api.predictions.recordMatchAndCalibrate, {
-      playerId: pA, matchDate: "2026-06-15", opponent: "Inter", opponentTeamId: inter._id, competition: "ucl",
+      playerId: pA, matchDate: inSeason("09-15"), opponent: "Inter", opponentTeamId: inter._id, competition: "ucl",
       isAway: false, minutesPlayed: 90, rawStats: { totalShots: 4 }, teamGoals: 3, opponentGoals: 0,
     });
     expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(ptsBeforeUcl);
@@ -334,7 +343,7 @@ describe("Convex: partidos de equipo ↔ partidos de jugador", () => {
     // 7) Partidos viejos sin vincular → se vinculan por nombre del rival y fecha
     const oldLog = await t.run((ctx) =>
       ctx.db.insert("playerMatchLogs", {
-        playerId: pB, matchDate: "2026-06-08", opponent: "Chelsea", isAway: true, minutesPlayed: 80, rawStats: { totalShots: 1 },
+        playerId: pB, matchDate: inSeason("09-08"), opponent: "Chelsea", isAway: true, minutesPlayed: 80, rawStats: { totalShots: 1 },
       })
     );
     expect(await t.query(api.players.unlinkedLogsCount, {})).toBeGreaterThanOrEqual(1);
@@ -343,18 +352,19 @@ describe("Convex: partidos de equipo ↔ partidos de jugador", () => {
 
     // 8) Borrar el único jugador de un partido sin marcador elimina el partido vacío
     const r5 = await t.mutation(api.predictions.recordMatchAndCalibrate, {
-      playerId: pA, matchDate: "2026-06-22", opponent: "Chelsea", opponentTeamId: chelsea._id,
+      playerId: pA, matchDate: inSeason("09-22"), opponent: "Chelsea", opponentTeamId: chelsea._id,
       isAway: false, minutesPlayed: 90, rawStats: { totalShots: 2 },
     });
     await t.mutation(api.players.deleteMatchLog, { matchLogId: r5.matchLogId });
     expect(await t.run((ctx) => ctx.db.get(r5.teamMatchId!))).toBeNull();
 
     // 9) Editar la fecha re-vincula el partido
-    await t.mutation(api.players.updateMatchLog, { matchLogId: r2.matchLogId, matchDate: "2026-06-29" });
+    await t.mutation(api.players.updateMatchLog, { matchLogId: r2.matchLogId, matchDate: inSeason("09-29") });
     const moved = await t.run((ctx) => ctx.db.get(r2.matchLogId));
     expect(moved!.matchId).not.toBe(r1.teamMatchId);
     const newMatch = await t.run((ctx) => ctx.db.get(moved!.matchId!));
-    expect(newMatch!.date).toBe("2026-06-29");
+    expect(newMatch!.date).toBe(inSeason("09-29"));
+    expect(seasonOf(newMatch!.date)).toBe(currentSeason());
   }, 180_000);
 });
 
@@ -481,4 +491,35 @@ describe("Convex: próximo partido y nota esperada", () => {
     expect(last.stats.rating.actual).toBeCloseTo(7.5, 5);
     expect(last.stats.rating.predicted).toBeGreaterThan(6);
   }, 180_000);
+});
+
+describe("temporadas", () => {
+  test("seasonOf usa julio como inicio", () => {
+    expect(seasonOf("2026-11-05")).toBe("2026-27");
+    expect(seasonOf("2026-06-30")).toBe("2025-26");
+    expect(seasonOf("2026-07-01")).toBe("2026-27");
+  });
+
+  test("la tabla solo cuenta la temporada actual; la fuerza usa todo", async () => {
+    const t = convexTest(schema, modules);
+    await t.action(api.legacy.importLegacyData, {});
+    const before = await t.run((ctx) => ctx.db.query("teams").collect());
+    const arsenal = before.find((x) => x.name === "Arsenal")!;
+    const chelsea = before.find((x) => x.name === "Chelsea")!;
+    expect(arsenal.rank).toBeUndefined();
+    expect(arsenal.lastSeason!.rank).toBeGreaterThan(0);
+    await t.mutation(api.teams.addMatchResult, {
+      homeTeamId: arsenal._id, awayTeamId: chelsea._id, homeGoals: 2, awayGoals: 0, date: inSeason("10-01"),
+    });
+    const a = (await t.run((ctx) => ctx.db.get(arsenal._id)))!;
+    expect(a.played).toBe(1);
+    expect(a.points).toBe(3);
+    expect(a.rank).toBe(1);
+    expect(a.season).toBe(currentSeason());
+    expect(a.lastSeason!.played).toBeGreaterThan(30); // no se mezcla
+    // La fuerza sigue entrenada con todo el histórico (+ el partido nuevo)
+    expect(Math.abs(a.attackRating! - arsenal.attackRating!)).toBeLessThan(0.15);
+    const status = await t.query(api.legacy.seasonStatus, {});
+    expect(status.staleLeagues).toEqual([]);
+  }, 120_000);
 });

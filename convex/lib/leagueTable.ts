@@ -1,6 +1,7 @@
 import type { GenericDatabaseWriter } from "convex/server";
 import type { DataModel, Id } from "../_generated/dataModel";
 import { fitTeamRatings, standings } from "./teamRatings";
+import { currentSeason, previousSeason, seasonOf } from "./season";
 
 type Db = GenericDatabaseWriter<DataModel>;
 
@@ -10,7 +11,7 @@ type Db = GenericDatabaseWriter<DataModel>;
  * También guarda en la liga la ventaja de local y los goles medios, que usa
  * el simulador de partidos.
  */
-export async function recomputeLeague(db: Db, league: string) {
+export async function recomputeLeague(db: Db, league: string, opts: { season?: string } = {}) {
   const rows = await db
     .query("matches")
     .withIndex("by_league_and_date", (q) => q.eq("league", league))
@@ -52,23 +53,37 @@ export async function recomputeLeague(db: Db, league: string) {
       homeAdvantage: +homeAdvantage.toFixed(3),
       goalsPerTeam: +goalsPerTeam.toFixed(3),
       matchesPlayed: unique.length,
+      currentSeason: opts.season ?? currentSeason(),
     });
   }
-  for (const row of standings(results)) {
-    const rating = ratings.get(row.team);
-    await db.patch(row.team as Id<"teams">, {
-      rank: row.rank,
-      points: row.points,
-      played: row.played,
-      wins: row.w,
-      draws: row.d,
-      losses: row.l,
-      goalsFor: row.gf,
-      goalsAgainst: row.ga,
-      goalDifference: row.gf - row.ga,
-      form: row.form,
-      attackRating: rating ? +rating.attack.toFixed(3) : undefined,
-      defenseRating: rating ? +rating.defense.toFixed(3) : undefined,
+  // Tabla = SOLO temporada actual. La fuerza usa todo (con más peso a lo reciente).
+  const season = opts.season ?? currentSeason();
+  const prev = previousSeason(season);
+  const current = standings(results.filter((r) => seasonOf(r.date) === season));
+  const last = standings(results.filter((r) => seasonOf(r.date) === prev));
+  const currentByTeam = new Map(current.map((row) => [row.team, row]));
+  const lastByTeam = new Map(last.map((row) => [row.team, row]));
+  for (const t of leagueTeams) {
+    const row = currentByTeam.get(t._id);
+    const prevRow = lastByTeam.get(t._id);
+    const rating = ratings.get(t._id);
+    await db.patch(t._id, {
+      season,
+      rank: row?.rank,
+      points: row?.points,
+      played: row?.played,
+      wins: row?.w,
+      draws: row?.d,
+      losses: row?.l,
+      goalsFor: row?.gf,
+      goalsAgainst: row?.ga,
+      goalDifference: row ? row.gf - row.ga : undefined,
+      form: row?.form,
+      lastSeason: prevRow
+        ? { season: prev, rank: prevRow.rank, points: prevRow.points, played: prevRow.played, goalsFor: prevRow.gf, goalsAgainst: prevRow.ga }
+        : undefined,
+      attackRating: rating ? +rating.attack.toFixed(3) : t.attackRating,
+      defenseRating: rating ? +rating.defense.toFixed(3) : t.defenseRating,
     });
   }
   return unique.length;

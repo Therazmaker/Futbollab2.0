@@ -27,6 +27,8 @@ interface TeamCard {
   form: string[];
   badgeUrl?: string;
   competitions: string[];
+  season?: string;
+  lastSeason?: { season: string; rank: number; points: number; played: number } | null;
 }
 
 const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
@@ -47,6 +49,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
   const legacyStatus = useQuery(api.legacy.legacyStatus);
   const importLegacy = useAction(api.legacy.importLegacyData);
   const [importState, setImportState] = useState<string | null>(null);
+  const seasonStatus = useQuery(api.legacy.seasonStatus);
+  const recomputeSeason = useMutation(api.legacy.recomputeSeason);
+  const [seasonState, setSeasonState] = useState<string | null>(null);
   const unlinkedLogs = useQuery(api.players.unlinkedLogsCount);
   const linkLogs = useMutation(api.players.linkUnlinkedLogs);
   const [linkState, setLinkState] = useState<string | null>(null);
@@ -160,6 +165,8 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
         form: t.played ? t.form ?? [] : [],
         badgeUrl: t.crestUrl,
         competitions: t.competitions || [t.league],
+        season: t.season,
+        lastSeason: t.lastSeason ?? null,
       };
     });
   }, [convexTeams]);
@@ -181,7 +188,12 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
         if (sortBy === "name") return a.name.localeCompare(b.name);
         if (sortBy === "attack") return (b.attack ?? 0) - (a.attack ?? 0);
         if (sortBy === "defense") return (a.defense ?? 9) - (b.defense ?? 9);
-        return b.points - a.points || b.goalDifference - a.goalDifference || a.name.localeCompare(b.name);
+        return (
+          b.points - a.points ||
+          b.goalDifference - a.goalDifference ||
+          (a.lastSeason?.rank ?? 99) - (b.lastSeason?.rank ?? 99) ||
+          a.name.localeCompare(b.name)
+        );
       });
   }, [displayClubs, selectedLeague, searchQuery, sortBy]);
 
@@ -249,6 +261,32 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
 
   return (
     <div className="flex flex-col w-full gap-space-md">
+      {/* Cambio de temporada: la tabla solo cuenta la temporada actual */}
+      {((seasonStatus?.staleLeagues.length ?? 0) > 0 || seasonState) && (
+        <div className="p-2.5 rounded-xl border border-secondary/40 bg-secondary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
+          <span className="text-on-surface">
+            {seasonState ??
+              `Las tablas aún mezclan temporadas. Actualízalas a la ${seasonStatus?.season}: el histórico queda solo para entrenar los modelos.`}
+          </span>
+          {(seasonStatus?.staleLeagues.length ?? 0) > 0 && seasonState !== "Actualizando…" && (
+            <button
+              onClick={async () => {
+                setSeasonState("Actualizando…");
+                try {
+                  const r = await recomputeSeason({});
+                  setSeasonState(`Tablas de la temporada ${r.season} listas (${r.leagues} ligas). Fuerza de equipos y modelo de nota re-entrenados con ${r.matches} partidos.`);
+                } catch (err: any) {
+                  setSeasonState(`Error: ${err?.message ?? err}`);
+                }
+              }}
+              className="shrink-0 px-2.5 py-1 rounded bg-secondary text-black font-bold text-[10px] hover:opacity-90"
+            >
+              Actualizar
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Partidos de jugadores anteriores a los partidos de equipo */}
       {((unlinkedLogs ?? 0) > 0 || linkState) && (
         <div className="p-2.5 rounded-xl border border-primary/40 bg-primary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
@@ -474,11 +512,17 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                         )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-on-surface-variant mt-0.5 font-mono">
-                        <span className="text-primary font-semibold">{club.points} Pts</span>
-                        <span>•</span>
-                        <span>{club.played} PJ</span>
-                        <span>•</span>
-                        <span>DG {signed(club.goalDifference)}</span>
+                        {club.played > 0 ? (
+                          <>
+                            <span className="text-primary font-semibold">{club.points} Pts</span>
+                            <span>•</span>
+                            <span>{club.played} PJ</span>
+                            <span>•</span>
+                            <span>DG {signed(club.goalDifference)}</span>
+                          </>
+                        ) : (
+                          <span>Sin partidos de liga {club.season ?? "esta temporada"}</span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -504,10 +548,16 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                   </div>
                 </div>
 
+                {club.lastSeason && (
+                  <p className="font-mono text-[10px] text-on-surface-variant mt-1">
+                    {club.lastSeason.season}: {club.lastSeason.rank}º · {club.lastSeason.points} pts en {club.lastSeason.played} PJ
+                  </p>
+                )}
+
                 {/* Métricas reales */}
                 <div className="grid grid-cols-3 gap-2 mt-3 pt-2 border-t border-surface-container-high/40">
                   <div className="bg-surface-container/60 rounded-lg p-1.5 flex flex-col">
-                    <span className="font-mono text-[9px] text-on-surface-variant uppercase">Goles / PJ</span>
+                    <span className="font-mono text-[9px] text-on-surface-variant uppercase">Goles / PJ {club.season ?? ""}</span>
                     <span className="font-mono text-xs font-bold text-primary mt-0.5">
                       {club.goalsForPg !== null ? `${club.goalsForPg.toFixed(2)} : ${club.goalsAgainstPg!.toFixed(2)}` : "—"}
                     </span>

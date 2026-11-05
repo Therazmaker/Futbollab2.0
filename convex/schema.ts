@@ -12,6 +12,7 @@ export default defineSchema({
     homeAdvantage: v.optional(v.number()),
     goalsPerTeam: v.optional(v.number()),
     matchesPlayed: v.optional(v.number()),
+    currentSeason: v.optional(v.string()), // "2026-27"
   }).index("by_code", ["code"]),
 
   teams: defineTable({
@@ -32,12 +33,23 @@ export default defineSchema({
     predAccuracy: v.optional(v.number()),
     // Calculado a partir de los partidos reales (tabla `matches`)
     legacyId: v.optional(v.string()),
+    season: v.optional(v.string()), // temporada a la que corresponden rank/points/played…
     played: v.optional(v.number()),
     wins: v.optional(v.number()),
     draws: v.optional(v.number()),
     losses: v.optional(v.number()),
     goalsFor: v.optional(v.number()),
     goalsAgainst: v.optional(v.number()),
+    lastSeason: v.optional(
+      v.object({
+        season: v.string(),
+        rank: v.number(),
+        points: v.number(),
+        played: v.number(),
+        goalsFor: v.number(),
+        goalsAgainst: v.number(),
+      })
+    ),
     attackRating: v.optional(v.number()), // 1 = media de la liga
     defenseRating: v.optional(v.number()), // >1 = concede más que la media
   })

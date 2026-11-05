@@ -6,6 +6,7 @@ import type { GenericDatabaseWriter } from "convex/server";
 import type { DataModel } from "./_generated/dataModel";
 import { recomputeLeague } from "./lib/leagueTable";
 import { refreshRatingModel } from "./lib/ratingStore";
+import { currentSeason } from "./lib/season";
 import legacyLeagues from "../data/legacy/leagues.json";
 import legacyTeams from "../data/legacy/teams.json";
 import legacyMatches from "../data/legacy/matches.json";
@@ -327,5 +328,35 @@ export const refreshRatingModelInternal = internalMutation({
   handler: async (ctx) => {
     await refreshRatingModel(ctx.db);
     return null;
+  },
+});
+
+/** ¿Hay ligas cuya tabla no está calculada para la temporada actual? */
+export const seasonStatus = query({
+  args: {},
+  handler: async (ctx) => {
+    const season = currentSeason();
+    const leagues = await ctx.db.query("leagues").collect();
+    const stale = [];
+    for (const lg of leagues) {
+      const anyMatch = await ctx.db
+        .query("matches")
+        .withIndex("by_league_and_date", (q) => q.eq("league", lg.code))
+        .first();
+      if (anyMatch && lg.currentSeason !== season) stale.push(lg.code);
+    }
+    return { season, staleLeagues: stale };
+  },
+});
+
+/** Recalcula todas las ligas para la temporada actual y re-entrena el modelo de nota. */
+export const recomputeSeason = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const leagues = await ctx.db.query("leagues").collect();
+    let matches = 0;
+    for (const lg of leagues) matches += await recomputeLeague(ctx.db, lg.code);
+    await refreshRatingModel(ctx.db);
+    return { season: currentSeason(), leagues: leagues.length, matches };
   },
 });

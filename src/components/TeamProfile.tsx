@@ -99,6 +99,8 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
   const [simAway, setSimAway] = useState(false);
   const [showAllResults, setShowAllResults] = useState(false);
   const [openMatchId, setOpenMatchId] = useState<Id<"matches"> | null>(null);
+  const [resultsScope, setResultsScope] = useState<"season" | "all">("season");
+  const [tableScope, setTableScope] = useState<"current" | "last">("current");
   const [resultModal, setResultModal] = useState(false);
   const [playerModal, setPlayerModal] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -145,9 +147,14 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
     );
   }
 
-  const { team, record, results, squad, table } = data;
+  const { team, record, results: allResults, squad } = data;
+  const season = data.season;
   const leagueName = LEAGUE_LABEL[team.league] ?? data.league?.name ?? team.league;
+  const seasonResults = allResults.filter((r) => r.season === season);
+  const results = resultsScope === "season" ? seasonResults : allResults;
   const visibleResults = showAllResults ? results : results.slice(0, 8);
+  const showingLast = tableScope === "last" || (data.table.length === 0 && data.lastTable.length > 0);
+  const table = showingLast ? data.lastTable : data.table;
   const tableIdx = table.findIndex((t) => t._id === teamId);
   const tableSlice = table.length <= 7 ? table : table.slice(Math.max(0, Math.min(tableIdx - 3, table.length - 7)), Math.max(0, Math.min(tableIdx - 3, table.length - 7)) + 7);
 
@@ -242,7 +249,16 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-2 mt-3 font-mono text-center">
+        <p className="mt-3 font-mono text-[10px] uppercase text-on-surface-variant">
+          Temporada {season} · liga
+          {team.lastSeason && (
+            <span className="normal-case">
+              {" "}
+              · {team.lastSeason.season}: {team.lastSeason.rank}º, {team.lastSeason.points} pts en {team.lastSeason.played} PJ
+            </span>
+          )}
+        </p>
+        <div className="grid grid-cols-4 gap-2 mt-1 font-mono text-center">
           {[
             ["Pts", team.points ?? 0],
             ["PJ", record.total.played],
@@ -405,7 +421,7 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
         <div className="flex items-center justify-between mb-2">
           <span className="font-mono text-xs uppercase text-primary font-bold flex items-center gap-1.5">
             <span className="material-symbols-outlined text-[16px]">scoreboard</span>
-            Resultados ({results.length})
+            Resultados
           </span>
           <div className="flex gap-1.5">
           <button
@@ -429,7 +445,31 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
           </button>
           </div>
         </div>
-        {results.length === 0 && <p className="font-mono text-[11px] text-on-surface-variant">Sin resultados registrados.</p>}
+        <div className="flex gap-1 mb-2 font-mono text-[10px]">
+          {(
+            [
+              ["season", `Temporada ${season} (${seasonResults.length})`],
+              ["all", `Todo el histórico (${allResults.length})`],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => {
+                setResultsScope(k);
+                setShowAllResults(false);
+              }}
+              className={`px-2 py-0.5 rounded ${resultsScope === k ? "bg-primary text-on-primary font-bold" : "bg-surface-container text-on-surface-variant"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {resultsScope === "season" && seasonResults.length === 0 && allResults.length > 0 && (
+          <p className="font-mono text-[10px] text-on-surface-variant mb-1">
+            Aún no hay partidos de esta temporada. Los de temporadas anteriores siguen entrenando los modelos (fuerza, simulador, nota esperada).
+          </p>
+        )}
+        {allResults.length === 0 && <p className="font-mono text-[11px] text-on-surface-variant">Sin resultados registrados.</p>}
         <div className="flex flex-col divide-y divide-surface-container-high/40">
           {visibleResults.map((r) => (
             <div
@@ -442,6 +482,9 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
                 <span className="text-on-surface-variant w-20 shrink-0">{r.date}</span>
                 <span className="text-on-surface-variant w-4">{r.isHome ? "C" : "F"}</span>
                 <span className="truncate text-on-surface">{r.opponent}</span>
+                {resultsScope === "all" && r.season !== season && (
+                  <span className="shrink-0 text-[9px] px-1 rounded bg-surface-container-highest text-on-surface-variant">{r.season}</span>
+                )}
                 {r.competition !== team.league && (
                   <span className="shrink-0 text-[9px] px-1 rounded bg-cyan-950/70 text-cyan-300 border border-cyan-800/50">
                     {r.competition === "ucl" ? "UCL" : competitionLabel(r.competition)}
@@ -492,12 +535,27 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
       </div>
 
       {/* Tabla */}
-      {table.length > 0 && (
+      {(data.table.length > 0 || data.lastTable.length > 0) && (
         <div className={card}>
-          <span className="font-mono text-xs uppercase text-primary font-bold flex items-center gap-1.5 mb-2">
-            <span className="material-symbols-outlined text-[16px]">leaderboard</span>
-            Tabla {leagueName}
-          </span>
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-xs uppercase text-primary font-bold flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px]">leaderboard</span>
+              Tabla {leagueName} {showingLast ? data.lastSeason : season}
+            </span>
+            {data.lastTable.length > 0 && data.table.length > 0 && (
+              <button
+                onClick={() => setTableScope(tableScope === "current" ? "last" : "current")}
+                className="font-mono text-[10px] text-secondary"
+              >
+                {tableScope === "current" ? `ver ${data.lastSeason}` : `ver ${season}`}
+              </button>
+            )}
+          </div>
+          {showingLast && data.table.length === 0 && (
+            <p className="font-mono text-[10px] text-on-surface-variant mb-1">
+              Sin partidos de liga en {season} todavía: se muestra la tabla final de {data.lastSeason} como referencia.
+            </p>
+          )}
           <div className="flex flex-col font-mono text-[11px]">
             {tableSlice.map((t) => (
               <button
