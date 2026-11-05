@@ -40,6 +40,18 @@ export default defineSchema({
     goalsAgainst: v.optional(v.number()),
     attackRating: v.optional(v.number()), // 1 = media de la liga
     defenseRating: v.optional(v.number()), // >1 = concede más que la media
+    // Estadísticas oficiales UEFA Champions League (Fase de Liga 36 clubes - Ronda 4)
+    uclRank: v.optional(v.number()),
+    uclPoints: v.optional(v.number()),
+    uclPlayed: v.optional(v.number()),
+    uclWins: v.optional(v.number()),
+    uclDraws: v.optional(v.number()),
+    uclLosses: v.optional(v.number()),
+    uclGoalsFor: v.optional(v.number()),
+    uclGoalsAgainst: v.optional(v.number()),
+    uclGoalDifference: v.optional(v.number()),
+    uclForm: v.optional(v.array(v.string())),
+    uclPhase: v.optional(v.string()), // "direct_round_16" | "qualification_playoff" | "eliminated"
   })
     .index("by_league", ["league"])
     .index("by_legacyId", ["legacyId"]),
