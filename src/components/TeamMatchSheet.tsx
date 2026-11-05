@@ -4,7 +4,7 @@ import React, { useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
-import { competitionLabel } from "@/lib/competitions";
+import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
 
 interface TeamMatchSheetProps {
   matchId: Id<"matches">;
@@ -50,9 +50,9 @@ const fmt = (v: unknown) => (v === undefined || v === null || v === "" ? "—" :
 
 export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenTeam }: TeamMatchSheetProps) {
   const data = useQuery(api.teams.getMatchDetail, { matchId });
-  const setScore = useMutation(api.teams.setMatchScore);
-  const [editingScore, setEditingScore] = useState(false);
-  const [score, setScoreState] = useState({ home: "", away: "" });
+  const updateMatch = useMutation(api.teams.updateMatch);
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ competition: "", date: "", home: "", away: "", swap: false });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -60,14 +60,35 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
   const ownSide = data ? (data.home.teamId === teamId ? data.home : data.away) : null;
   const otherSide = data ? (data.home.teamId === teamId ? data.away : data.home) : null;
 
-  const saveScore = async (e: React.FormEvent) => {
+  const openEdit = () => {
+    if (!data) return;
+    setError(null);
+    setForm({
+      competition: data.competition,
+      date: data.match.date,
+      home: data.match.homeGoals === undefined ? "" : String(data.match.homeGoals),
+      away: data.match.awayGoals === undefined ? "" : String(data.match.awayGoals),
+      swap: false,
+    });
+    setEditing(true);
+  };
+
+  const save = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (score.home === "" || score.away === "") return setError("Pon los goles de los dos equipos.");
+    if ((form.home === "") !== (form.away === "")) return setError("Pon los goles de los dos equipos, o deja los dos vacíos.");
     setBusy(true);
     setError(null);
     try {
-      await setScore({ matchId, homeGoals: Number(score.home), awayGoals: Number(score.away) });
-      setEditingScore(false);
+      // Los goles del formulario están en el orden que se ve (tras intercambiar, si se marcó)
+      await updateMatch({
+        matchId,
+        competition: form.competition,
+        date: form.date,
+        swapHomeAway: form.swap,
+        homeGoals: form.home === "" ? null : Number(form.home),
+        awayGoals: form.away === "" ? null : Number(form.away),
+      });
+      setEditing(false);
     } catch (err: any) {
       setError(err?.message ?? String(err));
     } finally {
@@ -82,9 +103,20 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
           <span className="font-mono text-[10px] uppercase text-secondary">
             {data ? `${competitionLabel(data.competition)} · ${data.match.date}` : "Cargando…"}
           </span>
-          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-surface-container text-on-surface-variant hover:text-on-surface">
-            ✕
-          </button>
+          <div className="flex items-center gap-1.5">
+            {data && !editing && (
+              <button
+                onClick={openEdit}
+                className="px-2.5 h-8 rounded-lg bg-surface-container-high text-secondary font-mono text-[11px] border border-secondary/30 flex items-center gap-1"
+              >
+                <span className="material-symbols-outlined text-[14px]">edit</span>
+                Editar
+              </button>
+            )}
+            <button onClick={onClose} className="w-8 h-8 rounded-lg bg-surface-container text-on-surface-variant hover:text-on-surface">
+              ✕
+            </button>
+          </div>
         </div>
 
         {data && (
@@ -95,10 +127,7 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
                 {data.home.name}
               </button>
               <button
-                onClick={() => {
-                  setScoreState({ home: fmt(data.match.homeGoals).replace("—", ""), away: fmt(data.match.awayGoals).replace("—", "") });
-                  setEditingScore(true);
-                }}
+                onClick={openEdit}
                 className="px-3 py-1.5 rounded-lg bg-surface-container font-mono text-2xl font-bold text-primary"
                 title="Editar marcador"
               >
@@ -108,36 +137,83 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
                 {data.away.name}
               </button>
             </div>
-            {!hasScore && !editingScore && (
+            {!hasScore && !editing && (
               <p className="font-mono text-[10px] text-tertiary text-center">
-                Sin marcador: toca "? - ?" para ponerlo (cuenta para la tabla si es de liga).
+                Sin marcador: toca "? - ?" o "Editar" para ponerlo (cuenta para la tabla si es de liga).
               </p>
             )}
-            {editingScore && (
-              <form onSubmit={saveScore} className="flex items-center justify-center gap-2 font-mono text-xs">
-                <input
-                  type="number"
-                  min="0"
-                  value={score.home}
-                  onChange={(e) => setScoreState({ ...score, home: e.target.value })}
-                  className="w-14 h-9 text-center rounded-lg bg-surface-container text-on-surface border border-surface-container-high"
-                  aria-label={`Goles ${data.home.name}`}
-                />
-                <span>-</span>
-                <input
-                  type="number"
-                  min="0"
-                  value={score.away}
-                  onChange={(e) => setScoreState({ ...score, away: e.target.value })}
-                  className="w-14 h-9 text-center rounded-lg bg-surface-container text-on-surface border border-surface-container-high"
-                  aria-label={`Goles ${data.away.name}`}
-                />
-                <button type="submit" disabled={busy} className="px-3 h-9 rounded-lg bg-primary text-on-primary font-bold">
-                  {busy ? "…" : "Guardar"}
-                </button>
-                <button type="button" onClick={() => setEditingScore(false)} className="px-2 h-9 text-on-surface-variant">
-                  Cancelar
-                </button>
+            {editing && (
+              <form onSubmit={save} className="flex flex-col gap-2 p-3 rounded-xl border border-secondary/40 bg-surface-container font-mono text-xs">
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-[10px] text-on-surface-variant uppercase">
+                    Competición
+                    <select
+                      value={form.competition}
+                      onChange={(e) => setForm({ ...form, competition: e.target.value })}
+                      className="w-full h-9 px-2 mt-0.5 rounded-lg bg-surface-container-low text-on-surface border border-surface-container-high normal-case"
+                    >
+                      {!COMPETITIONS.some((c) => c.code === form.competition) && (
+                        <option value={form.competition}>{competitionLabel(form.competition) || form.competition}</option>
+                      )}
+                      {COMPETITIONS.map((c) => (
+                        <option key={c.code} value={c.code}>
+                          {c.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="text-[10px] text-on-surface-variant uppercase">
+                    Fecha
+                    <input
+                      type="date"
+                      value={form.date}
+                      onChange={(e) => setForm({ ...form, date: e.target.value })}
+                      className="w-full h-9 px-2 mt-0.5 rounded-lg bg-surface-container-low text-on-surface border border-surface-container-high"
+                      required
+                    />
+                  </label>
+                </div>
+                <label className="flex items-center gap-2 text-[11px] cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={form.swap}
+                    onChange={(e) => setForm({ ...form, swap: e.target.checked, home: form.away, away: form.home })}
+                  />
+                  Intercambiar local y visitante (local: {form.swap ? data.away.name : data.home.name})
+                </label>
+                <div className="flex items-center justify-center gap-2">
+                  <span className="truncate text-right flex-1">{form.swap ? data.away.name : data.home.name}</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={form.home}
+                    onChange={(e) => setForm({ ...form, home: e.target.value })}
+                    className="w-14 h-9 text-center rounded-lg bg-surface-container-low text-on-surface border border-surface-container-high"
+                    aria-label="Goles local"
+                  />
+                  <span>-</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={form.away}
+                    onChange={(e) => setForm({ ...form, away: e.target.value })}
+                    className="w-14 h-9 text-center rounded-lg bg-surface-container-low text-on-surface border border-surface-container-high"
+                    aria-label="Goles visitante"
+                  />
+                  <span className="truncate flex-1">{form.swap ? data.home.name : data.away.name}</span>
+                </div>
+                <p className="text-[10px] text-on-surface-variant">
+                  Deja los goles vacíos si aún no se jugó. Los partidos de los jugadores de este partido se actualizan
+                  igual, y se recalculan la tabla y la fuerza de las ligas afectadas.
+                </p>
+                <div className="flex justify-end gap-2">
+                  <button type="button" onClick={() => setEditing(false)} className="px-3 h-8 rounded-lg text-on-surface-variant">
+                    Cancelar
+                  </button>
+                  <button type="submit" disabled={busy} className="px-4 h-8 rounded-lg bg-primary text-on-primary font-bold">
+                    {busy ? "Guardando…" : "Guardar"}
+                  </button>
+                </div>
               </form>
             )}
             {error && <p className="font-mono text-[11px] text-error text-center">{error}</p>}
