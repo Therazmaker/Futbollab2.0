@@ -6,6 +6,7 @@ import { api } from "../../convex/_generated/api";
 import { INITIAL_PLAYER, PlayerData } from "@/data/mock-data";
 import { BrainTargetRadar, PredictionMetricPoint } from "./BrainTargetRadar";
 import { LearningCurve } from "./LearningCurve";
+import { HScroll } from "./HScroll";
 import { parseMatchStats } from "@/lib/parse-match-stats";
 import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -961,7 +962,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
 
         {/* Partidos programados del equipo */}
         {(upcoming as any[]).length > 0 ? (
-          <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1 mb-2">
+          <HScroll className="gap-1.5 pb-1 mb-2">
             {(upcoming as any[]).map((m: any) => {
               const active = nextOpponentTeamId === m.opponentId && nextIsAway === !m.isHome;
               return (
@@ -981,7 +982,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                 </button>
               );
             })}
-          </div>
+          </HScroll>
         ) : (
           <p className="font-mono text-[10px] text-on-surface-variant mb-2">
             Sin partidos programados.{" "}
