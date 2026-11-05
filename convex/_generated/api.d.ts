@@ -9,6 +9,7 @@
  */
 
 import type * as legacy from "../legacy.js";
+import type * as lib_competitionTable from "../lib/competitionTable.js";
 import type * as lib_engine from "../lib/engine.js";
 import type * as lib_leagueTable from "../lib/leagueTable.js";
 import type * as lib_noLeague from "../lib/noLeague.js";
@@ -30,6 +31,7 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   legacy: typeof legacy;
+  "lib/competitionTable": typeof lib_competitionTable;
   "lib/engine": typeof lib_engine;
   "lib/leagueTable": typeof lib_leagueTable;
   "lib/noLeague": typeof lib_noLeague;
