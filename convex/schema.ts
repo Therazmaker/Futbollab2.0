@@ -104,6 +104,13 @@ export default defineSchema({
     .index("by_player_and_date", ["playerId", "matchDate"])
     .index("by_match", ["matchId"]),
 
+  // Parámetros globales aprendidos con todos los jugadores (p. ej. el modelo de nota)
+  modelParams: defineTable({
+    name: v.string(),
+    params: v.any(),
+    updatedAt: v.number(),
+  }).index("by_name", ["name"]),
+
   playerWeights: defineTable({
     playerId: v.id("players"),
     featureName: v.string(), // e.g. 'is_away', 'opponent_defense', 'opponent_low_block'

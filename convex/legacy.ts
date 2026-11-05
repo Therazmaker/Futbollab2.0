@@ -5,6 +5,7 @@ import type { Id } from "./_generated/dataModel";
 import type { GenericDatabaseWriter } from "convex/server";
 import type { DataModel } from "./_generated/dataModel";
 import { recomputeLeague } from "./lib/leagueTable";
+import { refreshRatingModel } from "./lib/ratingStore";
 import legacyLeagues from "../data/legacy/leagues.json";
 import legacyTeams from "../data/legacy/teams.json";
 import legacyMatches from "../data/legacy/matches.json";
@@ -316,6 +317,15 @@ export const importLegacyData = action({
     for (const code of Array.from(new Set(legacyMatches.map((m) => m.league)))) {
       await ctx.runMutation(internal.legacy.recomputeTeamStrengthInternal, { league: code });
     }
+    await ctx.runMutation(internal.legacy.refreshRatingModelInternal, {});
     return report;
+  },
+});
+
+export const refreshRatingModelInternal = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    await refreshRatingModel(ctx.db);
+    return null;
   },
 });

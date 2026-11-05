@@ -2,6 +2,7 @@ import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { syncPlayerWeights } from "./lib/playerModel";
 import { deleteIfOrphan, linkLogToTeamMatch } from "./lib/teamMatches";
+import { refreshRatingModel } from "./lib/ratingStore";
 
 /**
  * Retrieves full player profile: identity, team, match history (descending),
@@ -127,6 +128,7 @@ export const updateMatchLog = mutation({
     }
     // El perfil se recalcula con todos los partidos: editar corrige los pesos.
     await syncPlayerWeights(ctx.db, existing.playerId);
+    await refreshRatingModel(ctx.db);
     return { success: true, matchLogId: args.matchLogId };
   },
 });
@@ -147,6 +149,7 @@ export const deleteMatchLog = mutation({
     await ctx.db.delete(args.matchLogId);
     await deleteIfOrphan(ctx.db, existing.matchId);
     await syncPlayerWeights(ctx.db, existing.playerId);
+    await refreshRatingModel(ctx.db);
     return { success: true, deletedId: args.matchLogId };
   },
 });

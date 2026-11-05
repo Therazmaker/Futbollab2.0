@@ -393,3 +393,92 @@ describe("calibración del xG", () => {
     expect(meanZ).toBeLessThan(1.0);
   });
 });
+
+import { fitRatingModel, forecastRating, RatingRow } from "./lib/ratingModel";
+
+describe("modelo de nota", () => {
+  test("aprende de todos los jugadores los efectos de rival, casa y minutos", () => {
+    const r = rng(3);
+    const g = () => Math.sqrt(-2 * Math.log(r())) * Math.cos(2 * Math.PI * r());
+    const TRUE = { home: 0.12, strengthDiff: 0.5, shortMinutes: -0.3 };
+    const rows: RatingRow[] = [];
+    const byPlayer = new Map<string, RatingRow[]>();
+    for (let p = 0; p < 40; p++) {
+      const level = 6.9 + 0.4 * g();
+      const own = 0.3 * g();
+      const list: RatingRow[] = [];
+      for (let k = 0; k < 15; k++) {
+        const isAway = r() < 0.5;
+        const opp = 0.35 * g();
+        const minutes = r() < 0.15 ? 25 : 90;
+        const rating =
+          level + TRUE.home * (isAway ? 0 : 1) + TRUE.strengthDiff * (own - opp) + TRUE.shortMinutes * (minutes < 45 ? 1 : 0) + 0.6 * g();
+        list.push({ playerId: `p${p}`, rating: +rating.toFixed(1), isAway, minutes, ownStrength: own, opponentStrength: opp, order: k, total: 15 });
+      }
+      rows.push(...list);
+      byPlayer.set(`p${p}`, list);
+    }
+    const fit = fitRatingModel(rows);
+    expect(fit.beta.strengthDiff).toBeGreaterThan(0.3);
+    expect(fit.beta.strengthDiff).toBeLessThan(0.7);
+    expect(fit.beta.shortMinutes).toBeLessThan(-0.1);
+    expect(fit.sigma).toBeGreaterThan(0.5);
+    expect(fit.sigma).toBeLessThan(0.75);
+    let em = 0;
+    let en = 0;
+    byPlayer.forEach((h) => {
+      for (let i = 3; i < h.length; i++) {
+        const fc = forecastRating(fit, h.slice(0, i), h[i]);
+        const naive = h.slice(0, i).reduce((a, x) => a + x.rating, 0) / i;
+        em += Math.abs(h[i].rating - fc.mean);
+        en += Math.abs(h[i].rating - naive);
+      }
+    });
+    expect(em).toBeLessThan(en);
+  });
+});
+
+describe("Convex: próximo partido y nota esperada", () => {
+  test("programar partido, verlo como próximo y nota según el rival", async () => {
+    const t = convexTest(schema, modules);
+    await t.action(api.legacy.importLegacyData, {});
+    const teams = await t.run((ctx) => ctx.db.query("teams").collect());
+    const arsenal = teams.find((x) => x.name === "Arsenal")!;
+    const rated = teams.filter((x) => x.league === "premier" && x._id !== arsenal._id && x.attackRating);
+    const strengthOf = (x: any) => Math.log(x.attackRating) - Math.log(x.defenseRating);
+    const strongest = rated.reduce((a, b) => (strengthOf(b) > strengthOf(a) ? b : a));
+    const weakest = rated.reduce((a, b) => (strengthOf(b) < strengthOf(a) ? b : a));
+
+    const playerId = await t.mutation(api.players.createPlayer, { teamId: arsenal._id, name: "Ocho", position: "MF" });
+    for (let k = 0; k < 4; k++) {
+      await t.mutation(api.predictions.recordMatchAndCalibrate, {
+        playerId, matchDate: `2026-07-0${k + 1}`, opponent: weakest.name, opponentTeamId: weakest._id,
+        isAway: k % 2 === 1, minutesPlayed: 90, rawStats: { totalShots: 1, rating: 7.2 + 0.1 * k },
+      });
+    }
+    const params = await t.run((ctx) => ctx.db.query("modelParams").collect());
+    expect(params[0].params.matches).toBe(4);
+
+    await t.mutation(api.teams.scheduleMatch, {
+      teamId: arsenal._id, opponentTeamId: strongest._id, isHome: false, date: "2099-01-10",
+    });
+    const upcoming = await t.query(api.teams.upcomingMatches, { teamId: arsenal._id, fromDate: "2099-01-01" });
+    expect(upcoming.length).toBe(1);
+    expect(upcoming[0].opponentId).toBe(strongest._id);
+    expect(upcoming[0].isHome).toBe(false);
+
+    const vsStrongAway = await t.query(api.predictions.previewForecast, { playerId, opponentTeamId: strongest._id, isAway: true });
+    const vsWeakHome = await t.query(api.predictions.previewForecast, { playerId, opponentTeamId: weakest._id, isAway: false });
+    const neutral = await t.query(api.predictions.previewForecast, { playerId, isAway: false });
+    expect(vsStrongAway!.rating.mean).toBeLessThan(vsWeakHome!.rating.mean);
+    expect(vsWeakHome!.rating.low).toBeLessThan(vsWeakHome!.rating.mean);
+    expect(vsStrongAway!.rating.contributions.some((c) => c.feature === "strengthDiff")).toBe(true);
+    expect(neutral!.rating.ownMatches).toBe(4);
+    expect(vsStrongAway!.opponent).toBe(strongest.name);
+
+    const report = await t.query(api.predictions.getModelReport, { playerId });
+    const last = report!.points[report!.points.length - 1] as any;
+    expect(last.stats.rating.actual).toBeCloseTo(7.5, 5);
+    expect(last.stats.rating.predicted).toBeGreaterThan(6);
+  }, 180_000);
+});

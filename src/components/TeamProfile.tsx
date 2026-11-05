@@ -5,7 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { TeamMatchSheet } from "./TeamMatchSheet";
-import { competitionLabel } from "@/lib/competitions";
+import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
 
 interface TeamProfileProps {
   teamId: Id<"teams">;
@@ -91,6 +91,9 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
   const addResult = useMutation(api.teams.addMatchResult);
   const deleteResult = useMutation(api.teams.deleteMatchResult);
   const createPlayer = useMutation(api.players.createPlayer);
+  const scheduleMatch = useMutation(api.teams.scheduleMatch);
+  const [scheduleModal, setScheduleModal] = useState(false);
+  const [sched, setSched] = useState({ rival: "", isHome: true, date: "", competition: "" });
 
   const [simRival, setSimRival] = useState<string>("");
   const [simAway, setSimAway] = useState(false);
@@ -404,6 +407,17 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
             <span className="material-symbols-outlined text-[16px]">scoreboard</span>
             Resultados ({results.length})
           </span>
+          <div className="flex gap-1.5">
+          <button
+            onClick={() => {
+              setError(null);
+              setSched({ rival: "", isHome: true, date: "", competition: team.league });
+              setScheduleModal(true);
+            }}
+            className="px-2.5 py-1 rounded-lg bg-surface-container-high text-primary font-mono text-[11px] border border-primary/30"
+          >
+            + Próximo
+          </button>
           <button
             onClick={() => {
               setError(null);
@@ -413,6 +427,7 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
           >
             + Resultado
           </button>
+          </div>
         </div>
         {results.length === 0 && <p className="font-mono text-[11px] text-on-surface-variant">Sin resultados registrados.</p>}
         <div className="flex flex-col divide-y divide-surface-container-high/40">
@@ -440,7 +455,11 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
               </div>
               <div className="flex items-center gap-2 shrink-0">
                 <span className={`font-bold ${r.result ? "text-on-surface" : "text-on-surface-variant"}`}>
-                  {r.result ? `${r.goalsFor}-${r.goalsAgainst}` : "sin marcador"}
+                  {r.result
+                    ? `${r.goalsFor}-${r.goalsAgainst}`
+                    : r.date >= new Date().toISOString().split("T")[0]
+                    ? "próximo"
+                    : "sin marcador"}
                 </span>
                 <button
                   onClick={(e) => {
@@ -551,6 +570,64 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
             <p className="font-mono text-[10px] text-on-surface-variant">Al guardar se recalculan la tabla y la fuerza de toda la liga.</p>
             {error && <p className="font-mono text-[11px] text-error">{error}</p>}
             <ModalActions busy={busy} label="Guardar resultado" onCancel={() => setResultModal(false)} />
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: programar partido */}
+      {scheduleModal && (
+        <Modal title={`Próximo partido de ${team.name}`} onClose={() => setScheduleModal(false)}>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setError(null);
+              if (!sched.rival || !sched.date) return setError("Elige rival y fecha.");
+              setBusy(true);
+              try {
+                await scheduleMatch({
+                  teamId,
+                  opponentTeamId: sched.rival as Id<"teams">,
+                  isHome: sched.isHome,
+                  date: sched.date,
+                  competition: sched.competition || undefined,
+                });
+                setScheduleModal(false);
+              } catch (err: any) {
+                setError(err?.message ?? String(err));
+              } finally {
+                setBusy(false);
+              }
+            }}
+            className="flex flex-col gap-2"
+          >
+            <select value={sched.rival} onChange={(e) => setSched({ ...sched, rival: e.target.value })} className={input} required>
+              <option value="">— Rival —</option>
+              {rivals.map((t: any) => (
+                <option key={t._id} value={t._id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <select value={sched.isHome ? "h" : "a"} onChange={(e) => setSched({ ...sched, isHome: e.target.value === "h" })} className={input}>
+                <option value="h">{team.name} en casa</option>
+                <option value="a">{team.name} fuera</option>
+              </select>
+              <input type="date" value={sched.date} onChange={(e) => setSched({ ...sched, date: e.target.value })} className={input} required />
+            </div>
+            <select value={sched.competition} onChange={(e) => setSched({ ...sched, competition: e.target.value })} className={input}>
+              {COMPETITIONS.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <p className="font-mono text-[10px] text-on-surface-variant">
+              Aparecerá en el perfil de cada jugador del equipo en "Próximo partido", con su nota esperada contra este rival.
+              Después del partido, sus jugadores lo eligen al registrar y le pones el marcador.
+            </p>
+            {error && <p className="font-mono text-[11px] text-error">{error}</p>}
+            <ModalActions busy={busy} label="Programar" onCancel={() => setScheduleModal(false)} />
           </form>
         </Modal>
       )}
