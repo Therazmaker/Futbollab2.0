@@ -2,6 +2,7 @@ import type { GenericDatabaseWriter } from "convex/server";
 import type { DataModel, Id } from "../_generated/dataModel";
 import { fitTeamRatings, standings } from "./teamRatings";
 import { currentSeason, previousSeason, seasonOf } from "./season";
+import { recomputeChampions } from "./competitionTable";
 
 type Db = GenericDatabaseWriter<DataModel>;
 
@@ -12,6 +13,8 @@ type Db = GenericDatabaseWriter<DataModel>;
  * el simulador de partidos.
  */
 export async function recomputeLeague(db: Db, league: string, opts: { season?: string } = {}) {
+  // La Champions no es una liga doméstica: su clasificación sale de sus partidos
+  if (league === "ucl") return recomputeChampions(db, league, opts.season);
   const rows = await db
     .query("matches")
     .withIndex("by_league_and_date", (q) => q.eq("league", league))

@@ -105,11 +105,11 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
 
   const handleSyncUclRound4 = async () => {
     setIsSyncingUcl(true);
-    setUclSyncMessage("Sincronizando 36 clubes de Champions League (Ronda 4)...");
+    setUclSyncMessage("Inscribiendo los 36 clubes de la fase liga…");
     try {
       const res = await seedUclMutation();
       setUclSyncMessage(
-        `¡Listo! ${res.total} clubes sincronizados (${res.updatedCount} actualizados/enlazados, ${res.createdCount} nuevos creados) sin duplicar.`
+        `Listo: ${res.total} clubes inscritos en la UCL (${res.updatedCount} ya existían, ${res.createdCount} nuevos). La clasificación sale de los partidos que registres.`
       );
     } catch (err: any) {
       setUclSyncMessage(`Error: ${err?.message ?? err}`);
@@ -468,7 +468,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
 
           <div className="flex flex-col items-end gap-1">
             <span className="font-mono text-[10px] text-on-surface-variant uppercase">
-              {isUclView ? "Forma UCL (R1-R4)" : "Forma"}
+              {isUclView ? "Forma UCL" : "Forma"}
             </span>
             <div className="flex items-center gap-0.5">
               {club.form.map((res, i) => (
@@ -726,7 +726,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
               <span className={`material-symbols-outlined text-[15px] ${isSyncingUcl ? "animate-spin" : ""}`}>
                 sync
               </span>
-              <span>{isSyncingUcl ? "Sincronizando..." : "Sincronizar 36 Clubes R4"}</span>
+              <span>{isSyncingUcl ? "Inscribiendo…" : "Inscribir los 36 clubes"}</span>
             </button>
           </div>
 
@@ -902,7 +902,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
               </h3>
             </div>
             <p className="font-mono text-xs text-on-surface-variant mt-1">
-              Emparejamientos provisionales según la clasificación de la Ronda 4: Los equipos del 9º al 16º son <strong>cabezas de serie</strong> y jugarán el partido de vuelta en su estadio frente a los del 17º al 24º. Los 8 ganadores avanzan a Octavos de Final.
+              Emparejamientos provisionales según la clasificación actual (con los partidos registrados): Los equipos del 9º al 16º son <strong>cabezas de serie</strong> y jugarán el partido de vuelta en su estadio frente a los del 17º al 24º. Los 8 ganadores avanzan a Octavos de Final.
             </p>
           </div>
 
@@ -993,7 +993,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                   onClick={handleSyncUclRound4}
                   className="mt-2 px-3 py-1.5 rounded-lg bg-cyan-400 text-black font-mono text-xs font-bold shadow-md hover:bg-cyan-300"
                 >
-                  ⚡ Sincronizar los 36 Clubes Oficiales de UCL Ronda 4
+                  ⚡ Inscribir los 36 clubes de la fase liga
                 </button>
               ) : (
                 <button

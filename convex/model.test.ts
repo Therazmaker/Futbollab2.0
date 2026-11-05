@@ -673,3 +673,52 @@ describe("lesiones", () => {
     expect(prof!.injuries.length).toBe(0);
   }, 120_000);
 });
+
+describe("Champions: clasificación con partidos reales", () => {
+  test("la siembra no inventa números y la tabla sale de los partidos", async () => {
+    const t = convexTest(schema, modules);
+    await t.action(api.legacy.importLegacyData, {});
+    await t.mutation(api.teams.seedChampionsLeagueRound4, {});
+    let teams = await t.run((ctx) => ctx.db.query("teams").collect());
+    // Tras inscribir los 36: nadie tiene puntos de UCL sin partidos
+    expect(teams.filter((x) => x.uclPlayed !== undefined).length).toBe(0);
+    expect(teams.filter((x) => (x.competitions ?? []).includes("ucl")).length).toBeGreaterThanOrEqual(30);
+
+    const psg = teams.find((x) => x.name === "PSG" || x.name.startsWith("Paris"))!;
+    const liverpool = teams.find((x) => x.name === "Liverpool")!;
+    // PSG sin la UCL vinculada a mano: al jugar un partido de UCL queda inscrito
+    await t.run((ctx) => ctx.db.patch(psg._id, { competitions: [psg.league] }));
+    await t.mutation(api.teams.addMatchResult, {
+      homeTeamId: psg._id, awayTeamId: liverpool._id, homeGoals: 2, awayGoals: 1, date: inSeason("09-17"), competition: "ucl",
+    });
+    teams = await t.run((ctx) => ctx.db.query("teams").collect());
+    const p = teams.find((x) => x._id === psg._id)!;
+    const l = teams.find((x) => x._id === liverpool._id)!;
+    expect(p.competitions).toContain("ucl");
+    expect([p.uclPlayed, p.uclPoints, p.uclRank, p.uclGoalDifference]).toEqual([1, 3, 1, 1]);
+    expect([l.uclPlayed, l.uclPoints, l.uclLosses]).toEqual([1, 0, 1]);
+    const ucl = await t.query(api.teams.getTeams, { league: "ucl" });
+    expect(ucl[0]._id).toBe(psg._id);
+    // No toca la tabla de liga
+    expect(p.points ?? 0).toBe(0);
+  }, 120_000);
+});
+
+describe("Champions: limpieza de datos sembrados", () => {
+  test("Actualizar borra la clasificación inventada", async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(api.teams.seedInitialCompetitionsAndTeams, {});
+    // Simula lo que dejó la versión anterior: UCL sembrada a mano
+    await t.run(async (ctx) => {
+      await ctx.db.insert("leagues", { code: "ucl", name: "Champions League", country: "Europa", isTournament: true });
+      const team = (await ctx.db.query("teams").first())!;
+      await ctx.db.patch(team._id, { uclRank: 1, uclPoints: 12, uclPlayed: 4, uclPhase: "direct_round_16" });
+    });
+    const status = await t.query(api.legacy.seasonStatus, {});
+    expect(status.staleLeagues).toContain("ucl");
+    await t.mutation(api.legacy.recomputeSeason, {});
+    const teams = await t.run((ctx) => ctx.db.query("teams").collect());
+    expect(teams.some((x) => x.uclPlayed !== undefined)).toBe(false);
+    expect((await t.query(api.legacy.seasonStatus, {})).staleLeagues).toEqual([]);
+  });
+});

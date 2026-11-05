@@ -2,6 +2,7 @@ import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { recomputeLeague } from "./lib/leagueTable";
+import { recomputeChampions } from "./lib/competitionTable";
 import { findTeamMatch } from "./lib/teamMatches";
 import { refreshRatingModel } from "./lib/ratingStore";
 import { currentSeason, seasonOf } from "./lib/season";
@@ -1262,7 +1263,10 @@ export const getChampionsLeagueStandings = query({
 });
 
 /**
- * Seeds or synchronizes the 36 Champions League clubs for Round 4.
+ * Inscribe en la UCL a los 36 clubes de la fase liga (los crea si no existen).
+ * Antes copiaba también una clasificación escrita a mano; ahora la
+ * clasificación se calcula con los partidos registrados.
+ * (Original: Seeds or synchronizes the 36 Champions League clubs for Round 4.)
  * Uses zero-duplication logic: matching existing teams by name/alias,
  * adding "ucl" to competitions, and setting their official UCL table metrics.
  */
@@ -1316,17 +1320,6 @@ export const seedChampionsLeagueRound4 = mutation({
 
         await ctx.db.patch(existing._id, {
           competitions: Array.from(comps),
-          uclRank: seed.rank,
-          uclPoints: seed.points,
-          uclPlayed: seed.played,
-          uclWins: seed.wins,
-          uclDraws: seed.draws,
-          uclLosses: seed.losses,
-          uclGoalsFor: seed.goalsFor,
-          uclGoalsAgainst: seed.goalsAgainst,
-          uclGoalDifference: seed.goalDifference,
-          uclForm: seed.form,
-          uclPhase: seed.phase,
           crestUrl: existing.crestUrl || seed.crestUrl,
         });
         updatedCount++;
@@ -1339,21 +1332,13 @@ export const seedChampionsLeagueRound4 = mutation({
           competitions: [seed.league, "ucl"],
           crestUrl: seed.crestUrl,
           formation: "4-3-3",
-          uclRank: seed.rank,
-          uclPoints: seed.points,
-          uclPlayed: seed.played,
-          uclWins: seed.wins,
-          uclDraws: seed.draws,
-          uclLosses: seed.losses,
-          uclGoalsFor: seed.goalsFor,
-          uclGoalsAgainst: seed.goalsAgainst,
-          uclGoalDifference: seed.goalDifference,
-          uclForm: seed.form,
-          uclPhase: seed.phase,
         });
         createdCount++;
       }
     }
+
+    // Las estadísticas NO se copian de la lista: salen de los partidos registrados
+    await recomputeChampions(ctx.db, "ucl");
 
     return {
       success: true,

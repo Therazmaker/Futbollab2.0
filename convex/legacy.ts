@@ -343,7 +343,8 @@ export const seasonStatus = query({
         .query("matches")
         .withIndex("by_league_and_date", (q) => q.eq("league", lg.code))
         .first();
-      if (anyMatch && lg.currentSeason !== season) stale.push(lg.code);
+      // La UCL también, aunque no tenga partidos: así se limpian datos sembrados a mano
+      if ((anyMatch || lg.code === "ucl") && lg.currentSeason !== season) stale.push(lg.code);
     }
     return { season, staleLeagues: stale };
   },
