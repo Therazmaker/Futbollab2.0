@@ -1,6 +1,8 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { syncPlayerWeights } from "./lib/playerModel";
+import { deleteIfOrphan, linkLogToTeamMatch } from "./lib/teamMatches";
+import { refreshRatingModel } from "./lib/ratingStore";
 
 /**
  * Retrieves full player profile: identity, team, match history (descending),
@@ -95,7 +97,9 @@ export const updateMatchLog = mutation({
     minutesPlayed: v.optional(v.number()),
     tacticalRole: v.optional(v.string()),
     contextFeatures: v.optional(v.array(v.string())),
-    opponentTeamId: v.optional(v.id("teams")),
+    // null = quitar el vínculo con el equipo rival (rival escrito a mano)
+    opponentTeamId: v.optional(v.union(v.id("teams"), v.null())),
+    competition: v.optional(v.string()),
     rawStats: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -112,11 +116,19 @@ export const updateMatchLog = mutation({
     if (args.tacticalRole !== undefined) patch.tacticalRole = args.tacticalRole;
     if (args.rawStats !== undefined) patch.rawStats = args.rawStats;
     if (args.contextFeatures !== undefined) patch.contextFeatures = args.contextFeatures;
-    if (args.opponentTeamId !== undefined) patch.opponentTeamId = args.opponentTeamId;
+    if (args.opponentTeamId !== undefined) patch.opponentTeamId = args.opponentTeamId ?? undefined;
+    if (args.competition !== undefined) patch.competition = args.competition;
 
     await ctx.db.patch(args.matchLogId, patch);
+    // Si cambió algo que identifica el partido, se re-vincula al partido del equipo
+    if (["matchDate", "isAway", "opponentTeamId", "competition", "opponent"].some((k) => k in patch)) {
+      const updated = await ctx.db.get(args.matchLogId);
+      // opponentTeamId = null: el usuario quiso desvincular el rival; no adivinar por nombre
+      if (updated) await linkLogToTeamMatch(ctx.db, updated, { resolveByName: args.opponentTeamId !== null });
+    }
     // El perfil se recalcula con todos los partidos: editar corrige los pesos.
     await syncPlayerWeights(ctx.db, existing.playerId);
+    await refreshRatingModel(ctx.db);
     return { success: true, matchLogId: args.matchLogId };
   },
 });
@@ -135,7 +147,9 @@ export const deleteMatchLog = mutation({
     }
 
     await ctx.db.delete(args.matchLogId);
+    await deleteIfOrphan(ctx.db, existing.matchId);
     await syncPlayerWeights(ctx.db, existing.playerId);
+    await refreshRatingModel(ctx.db);
     return { success: true, deletedId: args.matchLogId };
   },
 });
@@ -292,5 +306,63 @@ export const createPlayer = mutation({
     const playerId = await ctx.db.insert("players", { ...args, name });
     await syncPlayerWeights(ctx.db, playerId);
     return playerId;
+  },
+});
+
+/**
+ * Edita la ficha del jugador. Cambiar la posición cambia su tasa base
+ * (prior), así que el perfil y los efectos se recalculan al momento.
+ */
+export const updatePlayer = mutation({
+  args: {
+    playerId: v.id("players"),
+    name: v.optional(v.string()),
+    position: v.optional(v.string()),
+    number: v.optional(v.union(v.number(), v.null())),
+    age: v.optional(v.union(v.number(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const player = await ctx.db.get(args.playerId);
+    if (!player) throw new Error("Jugador no encontrado");
+    const patch: Record<string, unknown> = {};
+    if (args.name !== undefined) {
+      const name = args.name.trim();
+      if (!name) throw new Error("El nombre es obligatorio");
+      patch.name = name;
+    }
+    if (args.position !== undefined) patch.position = args.position;
+    if (args.number !== undefined) patch.number = args.number ?? undefined;
+    if (args.age !== undefined) patch.age = args.age ?? undefined;
+    await ctx.db.patch(args.playerId, patch);
+    await syncPlayerWeights(ctx.db, args.playerId);
+    return { success: true };
+  },
+});
+
+/**
+ * Vincula los partidos de jugadores registrados antes de que existiera el
+ * partido de equipo: por rival (o su nombre) y fecha. Seguro de repetir.
+ */
+export const linkUnlinkedLogs = mutation({
+  args: {},
+  handler: async (ctx) => {
+    const logs = await ctx.db.query("playerMatchLogs").collect();
+    let linked = 0;
+    let pending = 0;
+    for (const l of logs) {
+      if (l.matchId) continue;
+      const id = await linkLogToTeamMatch(ctx.db, l);
+      if (id) linked++;
+      else pending++;
+    }
+    return { linked, pending };
+  },
+});
+
+export const unlinkedLogsCount = query({
+  args: {},
+  handler: async (ctx) => {
+    const logs = await ctx.db.query("playerMatchLogs").collect();
+    return logs.filter((l) => !l.matchId).length;
   },
 });

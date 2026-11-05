@@ -12,6 +12,7 @@ export default defineSchema({
     homeAdvantage: v.optional(v.number()),
     goalsPerTeam: v.optional(v.number()),
     matchesPlayed: v.optional(v.number()),
+    currentSeason: v.optional(v.string()), // "2026-27"
   }).index("by_code", ["code"]),
 
   teams: defineTable({
@@ -32,12 +33,25 @@ export default defineSchema({
     predAccuracy: v.optional(v.number()),
     // Calculado a partir de los partidos reales (tabla `matches`)
     legacyId: v.optional(v.string()),
+    season: v.optional(v.string()), // temporada a la que corresponden rank/points/played…
+    // Equipo sin liga (league = "intl"): temporada en la que está inscrito en su competición
+    competitionSeason: v.optional(v.string()),
     played: v.optional(v.number()),
     wins: v.optional(v.number()),
     draws: v.optional(v.number()),
     losses: v.optional(v.number()),
     goalsFor: v.optional(v.number()),
     goalsAgainst: v.optional(v.number()),
+    lastSeason: v.optional(
+      v.object({
+        season: v.string(),
+        rank: v.number(),
+        points: v.number(),
+        played: v.number(),
+        goalsFor: v.number(),
+        goalsAgainst: v.number(),
+      })
+    ),
     attackRating: v.optional(v.number()), // 1 = media de la liga
     defenseRating: v.optional(v.number()), // >1 = concede más que la media
     // Estadísticas oficiales UEFA Champions League (Fase de Liga 36 clubes - Ronda 4)
@@ -57,14 +71,18 @@ export default defineSchema({
     .index("by_legacyId", ["legacyId"]),
 
   // Resultados de partidos de equipos (importados del FutbolLab viejo o nuevos)
+  // Partido de equipo. Lo crean los resultados, la importación o el registro
+  // del partido de un jugador. `league` = competición del partido (una liga
+  // doméstica o "ucl", "copa"...); solo cuentan para la tabla los partidos de
+  // liga entre equipos de esa liga y con marcador.
   matches: defineTable({
     legacyId: v.optional(v.string()),
     league: v.string(),
     date: v.string(), // YYYY-MM-DD
     homeTeamId: v.id("teams"),
     awayTeamId: v.id("teams"),
-    homeGoals: v.number(),
-    awayGoals: v.number(),
+    homeGoals: v.optional(v.number()), // sin marcador todavía = undefined
+    awayGoals: v.optional(v.number()),
   })
     .index("by_league_and_date", ["league", "date"])
     .index("by_home_and_date", ["homeTeamId", "date"])
@@ -106,9 +124,18 @@ export default defineSchema({
     minutesPlayed: v.number(),
     contextFeatures: v.optional(v.array(v.string())), // p.ej. ["opponent_low_block"]
     rawStats: v.any(), // Flexible container for Sofascore/FotMob OCR ingested metrics (50+ fields)
+    matchId: v.optional(v.id("matches")), // partido del equipo al que pertenece
   })
     .index("by_player", ["playerId"])
-    .index("by_player_and_date", ["playerId", "matchDate"]),
+    .index("by_player_and_date", ["playerId", "matchDate"])
+    .index("by_match", ["matchId"]),
+
+  // Parámetros globales aprendidos con todos los jugadores (p. ej. el modelo de nota)
+  modelParams: defineTable({
+    name: v.string(),
+    params: v.any(),
+    updatedAt: v.number(),
+  }).index("by_name", ["name"]),
 
   playerWeights: defineTable({
     playerId: v.id("players"),

@@ -4,12 +4,14 @@ import React, { useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
+import { TeamMatchSheet } from "./TeamMatchSheet";
+import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
 
 interface TeamProfileProps {
   teamId: Id<"teams">;
   onBack: () => void;
   onOpenTeam: (teamId: Id<"teams">) => void;
-  onOpenPlayer: (playerId: Id<"players">) => void;
+  onOpenPlayer: (playerId: Id<"players">, teamId?: Id<"teams">) => void;
 }
 
 const POSITION_GROUPS: Array<{ key: string; label: string; test: (p: string) => boolean }> = [
@@ -34,7 +36,14 @@ const input =
 const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
 const pct = (x: number) => `${Math.round(x * 100)}%`;
 
-function FormChip({ r }: { r: string }) {
+function FormChip({ r }: { r: string | null }) {
+  if (!r) {
+    return (
+      <span className="w-5 h-5 rounded flex items-center justify-center font-mono text-[10px] font-bold border border-outline-variant/40 text-on-surface-variant">
+        ?
+      </span>
+    );
+  }
   const cls =
     r === "W"
       ? "bg-primary/20 text-primary border-primary/30"
@@ -82,10 +91,16 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
   const addResult = useMutation(api.teams.addMatchResult);
   const deleteResult = useMutation(api.teams.deleteMatchResult);
   const createPlayer = useMutation(api.players.createPlayer);
+  const scheduleMatch = useMutation(api.teams.scheduleMatch);
+  const [scheduleModal, setScheduleModal] = useState(false);
+  const [sched, setSched] = useState({ rival: "", isHome: true, date: "", competition: "" });
 
   const [simRival, setSimRival] = useState<string>("");
   const [simAway, setSimAway] = useState(false);
   const [showAllResults, setShowAllResults] = useState(false);
+  const [openMatchId, setOpenMatchId] = useState<Id<"matches"> | null>(null);
+  const [resultsScope, setResultsScope] = useState<"season" | "all">("season");
+  const [tableScope, setTableScope] = useState<"current" | "last">("current");
   const [resultModal, setResultModal] = useState(false);
   const [playerModal, setPlayerModal] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -132,9 +147,20 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
     );
   }
 
-  const { team, record, results, squad, table } = data;
-  const leagueName = LEAGUE_LABEL[team.league] ?? data.league?.name ?? team.league;
+  const { team, record, results: allResults, squad } = data;
+  const season = data.season;
+  const noLeague = team.league === "intl";
+  const ownComp = noLeague ? (team.competitions ?? []).find((c) => c !== "intl") ?? "ucl" : team.league;
+  const leagueName = noLeague
+    ? `Solo ${LEAGUE_LABEL[ownComp] ?? ownComp.toUpperCase()}`
+    : LEAGUE_LABEL[team.league] ?? data.league?.name ?? team.league;
+  // Sin liga no hay tabla: los puntos se cuentan con sus partidos de la competición
+  const points = noLeague ? record.total.wins * 3 + record.total.draws : team.points ?? 0;
+  const seasonResults = allResults.filter((r) => r.season === season);
+  const results = resultsScope === "season" ? seasonResults : allResults;
   const visibleResults = showAllResults ? results : results.slice(0, 8);
+  const showingLast = tableScope === "last" || (data.table.length === 0 && data.lastTable.length > 0);
+  const table = showingLast ? data.lastTable : data.table;
   const tableIdx = table.findIndex((t) => t._id === teamId);
   const tableSlice = table.length <= 7 ? table : table.slice(Math.max(0, Math.min(tableIdx - 3, table.length - 7)), Math.max(0, Math.min(tableIdx - 3, table.length - 7)) + 7);
 
@@ -229,9 +255,18 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
           </div>
         </div>
 
-        <div className="grid grid-cols-4 gap-2 mt-3 font-mono text-center">
+        <p className="mt-3 font-mono text-[10px] uppercase text-on-surface-variant">
+          Temporada {season} · {noLeague ? `${LEAGUE_LABEL[ownComp] ?? ownComp.toUpperCase()} (sin liga doméstica)` : "liga"}
+          {team.lastSeason && (
+            <span className="normal-case">
+              {" "}
+              · {team.lastSeason.season}: {team.lastSeason.rank}º, {team.lastSeason.points} pts en {team.lastSeason.played} PJ
+            </span>
+          )}
+        </p>
+        <div className="grid grid-cols-4 gap-2 mt-1 font-mono text-center">
           {[
-            ["Pts", team.points ?? 0],
+            ["Pts", points],
             ["PJ", record.total.played],
             ["G-E-P", `${record.total.wins}-${record.total.draws}-${record.total.losses}`],
             ["Goles", `${record.total.goalsFor}:${record.total.goalsAgainst}`],
@@ -392,8 +427,19 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
         <div className="flex items-center justify-between mb-2">
           <span className="font-mono text-xs uppercase text-primary font-bold flex items-center gap-1.5">
             <span className="material-symbols-outlined text-[16px]">scoreboard</span>
-            Resultados ({results.length})
+            Resultados
           </span>
+          <div className="flex gap-1.5">
+          <button
+            onClick={() => {
+              setError(null);
+              setSched({ rival: "", isHome: true, date: "", competition: team.league });
+              setScheduleModal(true);
+            }}
+            className="px-2.5 py-1 rounded-lg bg-surface-container-high text-primary font-mono text-[11px] border border-primary/30"
+          >
+            + Próximo
+          </button>
           <button
             onClick={() => {
               setError(null);
@@ -403,26 +449,78 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
           >
             + Resultado
           </button>
+          </div>
         </div>
-        {results.length === 0 && <p className="font-mono text-[11px] text-on-surface-variant">Sin resultados registrados.</p>}
+        <div className="flex gap-1 mb-2 font-mono text-[10px]">
+          {(
+            [
+              ["season", `Temporada ${season} (${seasonResults.length})`],
+              ["all", `Todo el histórico (${allResults.length})`],
+            ] as const
+          ).map(([k, label]) => (
+            <button
+              key={k}
+              onClick={() => {
+                setResultsScope(k);
+                setShowAllResults(false);
+              }}
+              className={`px-2 py-0.5 rounded ${resultsScope === k ? "bg-primary text-on-primary font-bold" : "bg-surface-container text-on-surface-variant"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {resultsScope === "season" && seasonResults.length === 0 && allResults.length > 0 && (
+          <p className="font-mono text-[10px] text-on-surface-variant mb-1">
+            Aún no hay partidos de esta temporada. Los de temporadas anteriores siguen entrenando los modelos (fuerza, simulador, nota esperada).
+          </p>
+        )}
+        {allResults.length === 0 && <p className="font-mono text-[11px] text-on-surface-variant">Sin resultados registrados.</p>}
         <div className="flex flex-col divide-y divide-surface-container-high/40">
           {visibleResults.map((r) => (
-            <div key={r._id} className="flex items-center justify-between py-1.5 font-mono text-[11px] group">
+            <div
+              key={r._id}
+              onClick={() => setOpenMatchId(r._id)}
+              className="flex items-center justify-between py-1.5 font-mono text-[11px] group cursor-pointer hover:bg-surface-container/60 rounded px-1 -mx-1"
+            >
               <div className="flex items-center gap-2 min-w-0">
                 <FormChip r={r.result} />
                 <span className="text-on-surface-variant w-20 shrink-0">{r.date}</span>
                 <span className="text-on-surface-variant w-4">{r.isHome ? "C" : "F"}</span>
-                <button onClick={() => onOpenTeam(r.opponentId)} className="truncate text-on-surface hover:text-primary text-left">
-                  {r.opponent}
-                </button>
+                <span className="truncate text-on-surface">{r.opponent}</span>
+                {resultsScope === "all" && r.season !== season && (
+                  <span className="shrink-0 text-[9px] px-1 rounded bg-surface-container-highest text-on-surface-variant">{r.season}</span>
+                )}
+                {r.competition !== team.league && (
+                  <span className="shrink-0 text-[9px] px-1 rounded bg-cyan-950/70 text-cyan-300 border border-cyan-800/50">
+                    {r.competition === "ucl" ? "UCL" : competitionLabel(r.competition)}
+                  </span>
+                )}
+                {r.playersLogged > 0 && (
+                  <span className="shrink-0 text-[9px] px-1 rounded bg-primary/15 text-primary" title="Jugadores registrados">
+                    {r.playersLogged}👤
+                  </span>
+                )}
               </div>
               <div className="flex items-center gap-2 shrink-0">
-                <span className="font-bold text-on-surface">
-                  {r.goalsFor}-{r.goalsAgainst}
+                <span className={`font-bold ${r.result ? "text-on-surface" : "text-on-surface-variant"}`}>
+                  {r.result
+                    ? `${r.goalsFor}-${r.goalsAgainst}`
+                    : r.date >= new Date().toISOString().split("T")[0]
+                    ? "próximo"
+                    : "sin marcador"}
                 </span>
                 <button
-                  onClick={() => {
-                    if (window.confirm(`¿Borrar ${team.name} ${r.goalsFor}-${r.goalsAgainst} ${r.opponent} (${r.date})?`)) {
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    const label = r.result ? `${r.goalsFor}-${r.goalsAgainst}` : "(sin marcador)";
+                    if (
+                      window.confirm(
+                        `¿Borrar ${team.name} ${label} ${r.opponent} (${r.date})?${
+                          r.playersLogged ? `\nLos ${r.playersLogged} partidos de jugadores se conservan, solo se desvinculan.` : ""
+                        }`
+                      )
+                    ) {
                       deleteResult({ matchId: r._id });
                     }
                   }}
@@ -443,12 +541,27 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
       </div>
 
       {/* Tabla */}
-      {table.length > 0 && (
+      {(data.table.length > 0 || data.lastTable.length > 0) && (
         <div className={card}>
-          <span className="font-mono text-xs uppercase text-primary font-bold flex items-center gap-1.5 mb-2">
-            <span className="material-symbols-outlined text-[16px]">leaderboard</span>
-            Tabla {leagueName}
-          </span>
+          <div className="flex items-center justify-between mb-2">
+            <span className="font-mono text-xs uppercase text-primary font-bold flex items-center gap-1.5">
+              <span className="material-symbols-outlined text-[16px]">leaderboard</span>
+              Tabla {leagueName} {showingLast ? data.lastSeason : season}
+            </span>
+            {data.lastTable.length > 0 && data.table.length > 0 && (
+              <button
+                onClick={() => setTableScope(tableScope === "current" ? "last" : "current")}
+                className="font-mono text-[10px] text-secondary"
+              >
+                {tableScope === "current" ? `ver ${data.lastSeason}` : `ver ${season}`}
+              </button>
+            )}
+          </div>
+          {showingLast && data.table.length === 0 && (
+            <p className="font-mono text-[10px] text-on-surface-variant mb-1">
+              Sin partidos de liga en {season} todavía: se muestra la tabla final de {data.lastSeason} como referencia.
+            </p>
+          )}
           <div className="flex flex-col font-mono text-[11px]">
             {tableSlice.map((t) => (
               <button
@@ -471,6 +584,22 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
             ))}
           </div>
         </div>
+      )}
+
+      {openMatchId && (
+        <TeamMatchSheet
+          matchId={openMatchId}
+          teamId={teamId}
+          onClose={() => setOpenMatchId(null)}
+          onOpenPlayer={(pid, tid) => {
+            setOpenMatchId(null);
+            onOpenPlayer(pid, tid);
+          }}
+          onOpenTeam={(tid) => {
+            setOpenMatchId(null);
+            if (tid !== teamId) onOpenTeam(tid);
+          }}
+        />
       )}
 
       {/* Modal: resultado */}
@@ -505,6 +634,64 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
             <p className="font-mono text-[10px] text-on-surface-variant">Al guardar se recalculan la tabla y la fuerza de toda la liga.</p>
             {error && <p className="font-mono text-[11px] text-error">{error}</p>}
             <ModalActions busy={busy} label="Guardar resultado" onCancel={() => setResultModal(false)} />
+          </form>
+        </Modal>
+      )}
+
+      {/* Modal: programar partido */}
+      {scheduleModal && (
+        <Modal title={`Próximo partido de ${team.name}`} onClose={() => setScheduleModal(false)}>
+          <form
+            onSubmit={async (e) => {
+              e.preventDefault();
+              setError(null);
+              if (!sched.rival || !sched.date) return setError("Elige rival y fecha.");
+              setBusy(true);
+              try {
+                await scheduleMatch({
+                  teamId,
+                  opponentTeamId: sched.rival as Id<"teams">,
+                  isHome: sched.isHome,
+                  date: sched.date,
+                  competition: sched.competition || undefined,
+                });
+                setScheduleModal(false);
+              } catch (err: any) {
+                setError(err?.message ?? String(err));
+              } finally {
+                setBusy(false);
+              }
+            }}
+            className="flex flex-col gap-2"
+          >
+            <select value={sched.rival} onChange={(e) => setSched({ ...sched, rival: e.target.value })} className={input} required>
+              <option value="">— Rival —</option>
+              {rivals.map((t: any) => (
+                <option key={t._id} value={t._id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+            <div className="grid grid-cols-2 gap-2">
+              <select value={sched.isHome ? "h" : "a"} onChange={(e) => setSched({ ...sched, isHome: e.target.value === "h" })} className={input}>
+                <option value="h">{team.name} en casa</option>
+                <option value="a">{team.name} fuera</option>
+              </select>
+              <input type="date" value={sched.date} onChange={(e) => setSched({ ...sched, date: e.target.value })} className={input} required />
+            </div>
+            <select value={sched.competition} onChange={(e) => setSched({ ...sched, competition: e.target.value })} className={input}>
+              {COMPETITIONS.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <p className="font-mono text-[10px] text-on-surface-variant">
+              Aparecerá en el perfil de cada jugador del equipo en "Próximo partido", con su nota esperada contra este rival.
+              Después del partido, sus jugadores lo eligen al registrar y le pones el marcador.
+            </p>
+            {error && <p className="font-mono text-[11px] text-error">{error}</p>}
+            <ModalActions busy={busy} label="Programar" onCancel={() => setScheduleModal(false)} />
           </form>
         </Modal>
       )}
@@ -545,8 +732,8 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-      <div className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl">
+    <div className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain flex justify-center bg-black/80 backdrop-blur-sm p-4">
+      <div className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl my-auto">
         <div className="flex items-center justify-between pb-3 mb-3 border-b border-surface-container-high">
           <h3 className="font-bold text-base text-on-surface">{title}</h3>
           <button onClick={onClose} className="w-8 h-8 rounded-lg bg-surface-container text-on-surface-variant hover:text-on-surface">
@@ -561,7 +748,7 @@ function Modal({ title, onClose, children }: { title: string; onClose: () => voi
 
 function ModalActions({ busy, label, onCancel }: { busy: boolean; label: string; onCancel: () => void }) {
   return (
-    <div className="mt-2 pt-3 border-t border-surface-container-high flex justify-end gap-2">
+    <div className="mt-2 pt-3 pb-1 border-t border-surface-container-high flex justify-end gap-2 sticky bottom-0 bg-surface-container-low z-10">
       <button type="button" onClick={onCancel} className="px-3 py-1.5 rounded-lg bg-surface-container text-on-surface-variant font-mono text-xs">
         Cancelar
       </button>

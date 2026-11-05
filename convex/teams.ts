@@ -2,6 +2,10 @@ import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { recomputeLeague } from "./lib/leagueTable";
+import { findTeamMatch } from "./lib/teamMatches";
+import { refreshRatingModel } from "./lib/ratingStore";
+import { currentSeason, seasonOf } from "./lib/season";
+import { activeIn, homeCompetition, isNoLeague, NO_LEAGUE } from "./lib/noLeague";
 
 /**
  * Returns all registered leagues and continental tournaments.
@@ -65,7 +69,7 @@ export const getTeams = query({
         (c: string) => c.toLowerCase() === code
       );
       const hasUclRank = code === "ucl" && t.uclRank !== undefined;
-      return isDomestic || isLinkedToCompetition || hasUclRank;
+      return isDomestic || isLinkedToCompetition || hasUclRank || (typeof activeIn === 'function' ? activeIn(t, code) : false);
     });
 
     if (code === "ucl") {
@@ -88,7 +92,7 @@ export const createTeam = mutation({
   args: {
     name: v.string(),
     shortName: v.optional(v.string()),
-    league: v.string(), // Domestic league code, e.g. "seriea"
+    league: v.string(), // Liga doméstica ("seriea"…) o "intl" = sin liga, solo competición internacional
     competitions: v.optional(v.array(v.string())), // e.g. ["seriea", "ucl"]
     crestUrl: v.optional(v.string()),
     rank: v.optional(v.number()),
@@ -103,19 +107,21 @@ export const createTeam = mutation({
     predAccuracy: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    // Ensure domestic league is included in competitions list
+    const league = args.league.toLowerCase();
     const comps = new Set<string>();
-    comps.add(args.league.toLowerCase());
-    if (args.competitions) {
-      args.competitions.forEach((c) => comps.add(c.toLowerCase()));
+    if (league !== NO_LEAGUE) comps.add(league);
+    (args.competitions ?? []).forEach((c) => c.toLowerCase() !== NO_LEAGUE && comps.add(c.toLowerCase()));
+    if (league === NO_LEAGUE && comps.size === 0) {
+      throw new Error("Un equipo sin liga tiene que estar inscrito en alguna competición (p. ej. la Champions).");
     }
 
     // Solo se guarda lo que el usuario dio: tabla, forma y fuerza salen de los resultados
     return await ctx.db.insert("teams", {
       name: args.name,
       shortName: args.shortName || args.name.slice(0, 3).toUpperCase(),
-      league: args.league.toLowerCase(),
+      league,
       competitions: Array.from(comps),
+      competitionSeason: league === NO_LEAGUE ? currentSeason() : undefined,
       crestUrl: args.crestUrl,
       formation: args.formation,
     });
@@ -139,7 +145,9 @@ export const linkTeamToCompetition = mutation({
     comps.add(args.competitionCode.toLowerCase());
 
     await ctx.db.patch(args.teamId, {
-      competitions: Array.from(comps),
+      competitions: Array.from(comps).filter((c) => c !== NO_LEAGUE),
+      // Un equipo sin liga se (re)inscribe para la temporada actual
+      ...(isNoLeague(team) ? { competitionSeason: currentSeason() } : {}),
     });
 
     return { success: true, competitions: Array.from(comps) };
@@ -313,15 +321,22 @@ export const getTeamProfile = query({
       isHome: boolean;
       opponentId: Id<"teams">;
       opponent: string;
-      goalsFor: number;
-      goalsAgainst: number;
-      result: "W" | "D" | "L";
+      goalsFor: number | null;
+      goalsAgainst: number | null;
+      result: "W" | "D" | "L" | null;
+      competition: string;
+      playersLogged: number;
+      season: string;
     };
     const results: ResultRow[] = [];
     for (const m of all) {
       const isHome = m.homeTeamId === teamId;
-      const gf = isHome ? m.homeGoals : m.awayGoals;
-      const ga = isHome ? m.awayGoals : m.homeGoals;
+      const gf = (isHome ? m.homeGoals : m.awayGoals) ?? null;
+      const ga = (isHome ? m.awayGoals : m.homeGoals) ?? null;
+      const logs = await ctx.db
+        .query("playerMatchLogs")
+        .withIndex("by_match", (q) => q.eq("matchId", m._id))
+        .collect();
       results.push({
         _id: m._id,
         date: m.date,
@@ -330,17 +345,23 @@ export const getTeamProfile = query({
         opponent: await nameOf(isHome ? m.awayTeamId : m.homeTeamId),
         goalsFor: gf,
         goalsAgainst: ga,
-        result: (gf > ga ? "W" : gf === ga ? "D" : "L") as ResultRow["result"],
+        result: (gf === null || ga === null ? null : gf > ga ? "W" : gf === ga ? "D" : "L") as ResultRow["result"],
+        competition: m.league,
+        playersLogged: logs.length,
+        season: seasonOf(m.date),
       });
     }
-    const split = (rows: ResultRow[]) => ({
+    const split = (all: ResultRow[]) => {
+      const rows = all.filter((r) => r.result !== null) as Array<ResultRow & { goalsFor: number; goalsAgainst: number }>;
+      return {
       played: rows.length,
       wins: rows.filter((r) => r.result === "W").length,
       draws: rows.filter((r) => r.result === "D").length,
       losses: rows.filter((r) => r.result === "L").length,
       goalsFor: rows.reduce((a, r) => a + r.goalsFor, 0),
       goalsAgainst: rows.reduce((a, r) => a + r.goalsAgainst, 0),
-    });
+      };
+    };
 
     const players = await ctx.db
       .query("players")
@@ -374,6 +395,18 @@ export const getTeamProfile = query({
       .query("teams")
       .withIndex("by_league", (q) => q.eq("league", team.league))
       .collect();
+    // Tabla de la temporada anterior (referencia; el histórico solo entrena modelos)
+    const lastTable = leagueTeams
+      .filter((t) => t.lastSeason)
+      .sort((a, b) => a.lastSeason!.rank - b.lastSeason!.rank)
+      .map((t) => ({
+        _id: t._id,
+        name: t.name,
+        rank: t.lastSeason!.rank,
+        points: t.lastSeason!.points,
+        played: t.lastSeason!.played,
+        goalDifference: t.lastSeason!.goalsFor - t.lastSeason!.goalsAgainst,
+      }));
     const table = leagueTeams
       .filter((t) => t.rank)
       .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99))
@@ -389,10 +422,21 @@ export const getTeamProfile = query({
     return {
       team,
       league: league ?? null,
-      record: { total: split(results), home: split(results.filter((r) => r.isHome)), away: split(results.filter((r) => !r.isHome)) },
+      season: team.season ?? currentSeason(),
+      // Récord de LIGA de la TEMPORADA ACTUAL (igual que los puntos); `results` incluye todo
+      record: (() => {
+        const season = team.season ?? currentSeason();
+        const comp = homeCompetition(team);
+        // Equipo sin liga: su récord es el de su competición (p. ej. UCL) en la temporada actual
+        const recSeason = isNoLeague(team) ? currentSeason() : season;
+        const league = results.filter((r) => r.competition === comp && r.season === recSeason);
+        return { total: split(league), home: split(league.filter((r) => r.isHome)), away: split(league.filter((r) => !r.isHome)) };
+      })(),
       results,
       squad,
       table,
+      lastTable,
+      lastSeason: lastTable.length ? team.lastSeason?.season ?? null : null,
     };
   },
 });
@@ -465,14 +509,32 @@ export const addMatchResult = mutation({
     homeGoals: v.number(),
     awayGoals: v.number(),
     date: v.string(),
+    competition: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     if (args.homeTeamId === args.awayTeamId) throw new Error("Local y visitante deben ser distintos");
     if (args.homeGoals < 0 || args.awayGoals < 0) throw new Error("Goles no válidos");
     const home = await ctx.db.get(args.homeTeamId);
     if (!home) throw new Error("Equipo local no encontrado");
-    const id = await ctx.db.insert("matches", { ...args, league: home.league });
-    await recomputeLeague(ctx.db, home.league);
+    // Si ya existe (p. ej. creado al registrar un jugador), solo se pone el marcador
+    const existing = await findTeamMatch(ctx.db, args.homeTeamId, args.awayTeamId, args.date);
+    if (existing) {
+      await ctx.db.patch(existing._id, { homeGoals: args.homeGoals, awayGoals: args.awayGoals });
+      await recomputeLeague(ctx.db, existing.league);
+      await refreshRatingModel(ctx.db);
+      return existing._id;
+    }
+    const league = args.competition || homeCompetition(home);
+    const id = await ctx.db.insert("matches", {
+      homeTeamId: args.homeTeamId,
+      awayTeamId: args.awayTeamId,
+      homeGoals: args.homeGoals,
+      awayGoals: args.awayGoals,
+      date: args.date,
+      league,
+    });
+    await recomputeLeague(ctx.db, league);
+    await refreshRatingModel(ctx.db);
     return id;
   },
 });
@@ -482,8 +544,15 @@ export const deleteMatchResult = mutation({
   handler: async (ctx, { matchId }) => {
     const m = await ctx.db.get(matchId);
     if (!m) return null;
+    // Los partidos de jugadores no se borran: solo se desvinculan
+    const logs = await ctx.db
+      .query("playerMatchLogs")
+      .withIndex("by_match", (q) => q.eq("matchId", matchId))
+      .collect();
+    for (const l of logs) await ctx.db.patch(l._id, { matchId: undefined });
     await ctx.db.delete(matchId);
     await recomputeLeague(ctx.db, m.league);
+    await refreshRatingModel(ctx.db);
     return matchId;
   },
 });
@@ -1283,5 +1352,175 @@ export const seedChampionsLeagueRound4 = mutation({
       createdCount,
       total: UCL_ROUND_4_DATA.length,
     };
+  },
+});
+
+/** Pone o cambia el marcador de un partido del equipo. */
+export const setMatchScore = mutation({
+  args: { matchId: v.id("matches"), homeGoals: v.number(), awayGoals: v.number() },
+  handler: async (ctx, { matchId, homeGoals, awayGoals }) => {
+    const m = await ctx.db.get(matchId);
+    if (!m) throw new Error("Partido no encontrado");
+    if (homeGoals < 0 || awayGoals < 0) throw new Error("Goles no válidos");
+    await ctx.db.patch(matchId, { homeGoals, awayGoals });
+    await recomputeLeague(ctx.db, m.league);
+    await refreshRatingModel(ctx.db);
+    return matchId;
+  },
+});
+
+/** Partidos recientes de un equipo (para elegirlos al registrar un jugador). */
+export const recentMatches = query({
+  args: { teamId: v.id("teams"), playerId: v.optional(v.id("players")), limit: v.optional(v.number()) },
+  handler: async (ctx, { teamId, playerId, limit }) => {
+    const take = Math.min(30, limit ?? 12);
+    const home = await ctx.db
+      .query("matches")
+      .withIndex("by_home_and_date", (q) => q.eq("homeTeamId", teamId))
+      .order("desc")
+      .take(take);
+    const away = await ctx.db
+      .query("matches")
+      .withIndex("by_away_and_date", (q) => q.eq("awayTeamId", teamId))
+      .order("desc")
+      .take(take);
+    const rows = [...home, ...away].sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, take);
+    const out = [];
+    for (const m of rows) {
+      const isHome = m.homeTeamId === teamId;
+      const opponentId = isHome ? m.awayTeamId : m.homeTeamId;
+      const logs = await ctx.db
+        .query("playerMatchLogs")
+        .withIndex("by_match", (q) => q.eq("matchId", m._id))
+        .collect();
+      out.push({
+        _id: m._id,
+        date: m.date,
+        isHome,
+        opponentId,
+        opponent: (await ctx.db.get(opponentId))?.name ?? "?",
+        competition: m.league,
+        goalsFor: (isHome ? m.homeGoals : m.awayGoals) ?? null,
+        goalsAgainst: (isHome ? m.awayGoals : m.homeGoals) ?? null,
+        playersLogged: logs.length,
+        loggedByPlayer: playerId ? logs.some((l) => l.playerId === playerId) : false,
+      });
+    }
+    return out;
+  },
+});
+
+/** Claves que no tiene sentido sumar entre jugadores. */
+const NON_ADDITIVE = /(Pct|^rating$|^topSpeedKmh$|^longestProgressiveCarryM$)/;
+
+/** Detalle de un partido de equipo: marcador, quién jugó, sus stats y los totales. */
+export const getMatchDetail = query({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, { matchId }) => {
+    const m = await ctx.db.get(matchId);
+    if (!m) return null;
+    const home = await ctx.db.get(m.homeTeamId);
+    const away = await ctx.db.get(m.awayTeamId);
+    const logs = await ctx.db
+      .query("playerMatchLogs")
+      .withIndex("by_match", (q) => q.eq("matchId", matchId))
+      .collect();
+    const side = (teamId: Id<"teams">) => ({ teamId, players: [] as any[], totals: {} as Record<string, number>, ratingAvg: null as number | null });
+    const sides = { home: side(m.homeTeamId), away: side(m.awayTeamId) };
+    for (const l of logs) {
+      const p = await ctx.db.get(l.playerId);
+      if (!p) continue;
+      const s = p.teamId === m.homeTeamId ? sides.home : p.teamId === m.awayTeamId ? sides.away : null;
+      if (!s) continue;
+      s.players.push({
+        logId: l._id,
+        playerId: p._id,
+        name: p.name,
+        position: p.position,
+        number: p.number ?? null,
+        minutesPlayed: l.minutesPlayed,
+        rawStats: l.rawStats ?? {},
+      });
+    }
+    for (const s of [sides.home, sides.away]) {
+      s.players.sort((a, b) => b.minutesPlayed - a.minutesPlayed || a.name.localeCompare(b.name));
+      const ratings: number[] = [];
+      for (const pl of s.players) {
+        for (const [k, val] of Object.entries(pl.rawStats as Record<string, unknown>)) {
+          const n = Number(val);
+          if (!Number.isFinite(n)) continue;
+          if (k === "rating") ratings.push(n);
+          if (NON_ADDITIVE.test(k)) continue;
+          s.totals[k] = +((s.totals[k] ?? 0) + n).toFixed(2);
+        }
+      }
+      s.ratingAvg = ratings.length ? +(ratings.reduce((a, b) => a + b, 0) / ratings.length).toFixed(2) : null;
+      if (s.totals.totalPasses) s.totals.accuratePassesPct = Math.round(((s.totals.accuratePasses ?? 0) / s.totals.totalPasses) * 100);
+    }
+    return {
+      match: m,
+      competition: m.league,
+      home: { name: home?.name ?? "?", ...sides.home },
+      away: { name: away?.name ?? "?", ...sides.away },
+    };
+  },
+});
+
+/** Programa un partido futuro (sin marcador) para un equipo. */
+export const scheduleMatch = mutation({
+  args: {
+    teamId: v.id("teams"),
+    opponentTeamId: v.id("teams"),
+    isHome: v.boolean(),
+    date: v.string(),
+    competition: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.teamId === args.opponentTeamId) throw new Error("El rival debe ser otro equipo");
+    const team = await ctx.db.get(args.teamId);
+    if (!team) throw new Error("Equipo no encontrado");
+    const homeTeamId = args.isHome ? args.teamId : args.opponentTeamId;
+    const awayTeamId = args.isHome ? args.opponentTeamId : args.teamId;
+    const existing = await findTeamMatch(ctx.db, homeTeamId, awayTeamId, args.date);
+    if (existing) return existing._id;
+    return await ctx.db.insert("matches", {
+      homeTeamId,
+      awayTeamId,
+      date: args.date,
+      league: args.competition || homeCompetition(team),
+    });
+  },
+});
+
+/** Próximos partidos (desde `fromDate`, sin marcador) de un equipo. */
+export const upcomingMatches = query({
+  args: { teamId: v.id("teams"), fromDate: v.string() },
+  handler: async (ctx, { teamId, fromDate }) => {
+    const home = await ctx.db
+      .query("matches")
+      .withIndex("by_home_and_date", (q) => q.eq("homeTeamId", teamId).gte("date", fromDate))
+      .collect();
+    const away = await ctx.db
+      .query("matches")
+      .withIndex("by_away_and_date", (q) => q.eq("awayTeamId", teamId).gte("date", fromDate))
+      .collect();
+    const rows = [...home, ...away]
+      .filter((m) => m.homeGoals === undefined)
+      .sort((a, b) => (a.date < b.date ? -1 : 1))
+      .slice(0, 10);
+    const out = [];
+    for (const m of rows) {
+      const isHome = m.homeTeamId === teamId;
+      const opponentId = isHome ? m.awayTeamId : m.homeTeamId;
+      out.push({
+        _id: m._id,
+        date: m.date,
+        isHome,
+        opponentId,
+        opponent: (await ctx.db.get(opponentId))?.name ?? "?",
+        competition: m.league,
+      });
+    }
+    return out;
   },
 });

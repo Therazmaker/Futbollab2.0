@@ -11,7 +11,12 @@
 import type * as legacy from "../legacy.js";
 import type * as lib_engine from "../lib/engine.js";
 import type * as lib_leagueTable from "../lib/leagueTable.js";
+import type * as lib_noLeague from "../lib/noLeague.js";
 import type * as lib_playerModel from "../lib/playerModel.js";
+import type * as lib_ratingModel from "../lib/ratingModel.js";
+import type * as lib_ratingStore from "../lib/ratingStore.js";
+import type * as lib_season from "../lib/season.js";
+import type * as lib_teamMatches from "../lib/teamMatches.js";
 import type * as lib_teamRatings from "../lib/teamRatings.js";
 import type * as players from "../players.js";
 import type * as predictions from "../predictions.js";
@@ -27,7 +32,12 @@ declare const fullApi: ApiFromModules<{
   legacy: typeof legacy;
   "lib/engine": typeof lib_engine;
   "lib/leagueTable": typeof lib_leagueTable;
+  "lib/noLeague": typeof lib_noLeague;
   "lib/playerModel": typeof lib_playerModel;
+  "lib/ratingModel": typeof lib_ratingModel;
+  "lib/ratingStore": typeof lib_ratingStore;
+  "lib/season": typeof lib_season;
+  "lib/teamMatches": typeof lib_teamMatches;
   "lib/teamRatings": typeof lib_teamRatings;
   players: typeof players;
   predictions: typeof predictions;

@@ -5,6 +5,7 @@ import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { useSyncTelemetry } from "@/lib/offline-sync";
+import { currentSeason } from "../../convex/lib/season";
 
 interface LeaguesExplorerProps {
   onSelectTeam: (teamId: Id<"teams">) => void;
@@ -27,18 +28,22 @@ interface TeamCard {
   form: string[];
   badgeUrl?: string;
   competitions: string[];
-  // UCL specifics
-  uclRank?: number;
-  uclPoints?: number;
-  uclPlayed?: number;
-  uclWins?: number;
-  uclDraws?: number;
-  uclLosses?: number;
-  uclGoalsFor?: number;
-  uclGoalsAgainst?: number;
-  uclGoalDifference?: number;
-  uclForm?: string[];
-  uclPhase?: "direct_round_16" | "qualification_playoff" | "eliminated";
+    // UCL specifics
+    uclRank?: number;
+    uclPoints?: number;
+    uclPlayed?: number;
+    uclWins?: number;
+    uclDraws?: number;
+    uclLosses?: number;
+    uclGoalsFor?: number;
+    uclGoalsAgainst?: number;
+    uclGoalDifference?: number;
+    uclForm?: string[];
+    uclPhase?: "direct_round_16" | "qualification_playoff" | "eliminated";
+    season?: string;
+    noLeague?: boolean;
+    competitionSeason?: string;
+    lastSeason?: { season: string; rank: number; points: number; played: number } | null;
 }
 
 const signed = (n: number) => (n > 0 ? `+${n}` : `${n}`);
@@ -67,6 +72,24 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
   const legacyStatus = useQuery(api.legacy.legacyStatus);
   const importLegacy = useAction(api.legacy.importLegacyData);
   const [importState, setImportState] = useState<string | null>(null);
+  const seasonStatus = useQuery(api.legacy.seasonStatus);
+  const recomputeSeason = useMutation(api.legacy.recomputeSeason);
+  const [seasonState, setSeasonState] = useState<string | null>(null);
+  const unlinkedLogs = useQuery(api.players.unlinkedLogsCount);
+  const linkLogs = useMutation(api.players.linkUnlinkedLogs);
+  const [linkState, setLinkState] = useState<string | null>(null);
+  const runLinkLogs = async () => {
+    setLinkState("Vinculando…");
+    try {
+      const r = await linkLogs({});
+      setLinkState(
+        `${r.linked} partidos vinculados a su partido de equipo.` +
+          (r.pending ? ` ${r.pending} sin rival reconocible: edítalos y elige el rival de la lista.` : "")
+      );
+    } catch (err: any) {
+      setLinkState(`Error: ${err?.message ?? err}`);
+    }
+  };
 
   const runLegacyImport = async () => {
     setImportState("Importando histórico… (1–2 min)");
@@ -111,6 +134,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
   const [teamShortName, setTeamShortName] = useState("");
   const [teamDomesticLeague, setTeamDomesticLeague] = useState("seriea");
   const [teamLinkUcl, setTeamLinkUcl] = useState(true);
+  const [teamIntlComp, setTeamIntlComp] = useState("ucl");
+  const [createError, setCreateError] = useState<string | null>(null);
+  const noLeague = teamDomesticLeague === "intl";
   const [teamFormation, setTeamFormation] = useState("3-5-2");
 
   // League selector list
@@ -162,10 +188,10 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
       primeira_liga: "Primeira Liga",
       eredivisie: "Eredivisie",
       ucl: "Champions League",
+      intl: "Sin liga",
     };
-
     const isUcl = selectedLeague === "ucl";
-
+    const compLabel: Record<string, string> = { ucl: "UCL", uel: "UEL", uecl: "UECL" };
     return (convexTeams ?? []).map((t: any) => {
       const played = isUcl && t.uclPlayed !== undefined ? t.uclPlayed : t.played ?? 0;
       const rank = isUcl && t.uclRank !== undefined ? t.uclRank : t.rank ?? null;
@@ -178,7 +204,10 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
         name: t.name,
         shortName: t.shortName || t.name.slice(0, 3).toUpperCase(),
         leagueCode: t.league,
-        leagueName: labels[t.league?.toLowerCase()] ?? t.league,
+        leagueName:
+          t.league === "intl"
+            ? `Solo ${(t.competitions ?? []).map((c: string) => compLabel[c] ?? c.toUpperCase()).join("/")} ${t.competitionSeason ?? ""}`.trim()
+            : labels[t.league?.toLowerCase()] ?? t.league,
         rank,
         points,
         played,
@@ -201,6 +230,10 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
         uclGoalDifference: t.uclGoalDifference,
         uclForm: t.uclForm,
         uclPhase: t.uclPhase ?? (t.uclRank ? (t.uclRank <= 8 ? "direct_round_16" : t.uclRank <= 24 ? "qualification_playoff" : "eliminated") : undefined),
+        season: t.season,
+        noLeague: t.noLeague,
+        competitionSeason: t.competitionSeason,
+        lastSeason: t.lastSeason,
       };
     });
   }, [convexTeams, selectedLeague]);
@@ -234,7 +267,12 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
         if (sortBy === "name") return a.name.localeCompare(b.name);
         if (sortBy === "attack") return (b.attack ?? 0) - (a.attack ?? 0);
         if (sortBy === "defense") return (a.defense ?? 9) - (b.defense ?? 9);
-        return b.points - a.points || b.goalDifference - a.goalDifference || a.name.localeCompare(b.name);
+        return (
+          b.points - a.points ||
+          b.goalDifference - a.goalDifference ||
+          (a.lastSeason?.rank ?? 99) - (b.lastSeason?.rank ?? 99) ||
+          a.name.localeCompare(b.name)
+        );
       });
   }, [displayClubs, selectedLeague, searchQuery, sortBy, uclFilter]);
 
@@ -291,9 +329,11 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
     e.preventDefault();
     if (!teamName.trim()) return;
     setIsSubmitting(true);
+    setCreateError(null);
     try {
-      const comps = [teamDomesticLeague.toLowerCase()];
-      if (teamLinkUcl && !comps.includes("ucl")) {
+      // Sin liga: solo la competición internacional elegida (esta temporada)
+      const comps = noLeague ? [teamIntlComp] : [teamDomesticLeague.toLowerCase()];
+      if (!noLeague && teamLinkUcl && !comps.includes("ucl")) {
         comps.push("ucl");
       }
 
@@ -308,8 +348,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
       setIsAddTeamOpen(false);
       setTeamName("");
       setTeamShortName("");
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error creating club:", err);
+      setCreateError(err?.message ?? String(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -508,6 +549,50 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
 
   return (
     <div className="flex flex-col w-full gap-space-md">
+      {/* Cambio de temporada: la tabla solo cuenta la temporada actual */}
+      {((seasonStatus?.staleLeagues.length ?? 0) > 0 || seasonState) && (
+        <div className="p-2.5 rounded-xl border border-secondary/40 bg-secondary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
+          <span className="text-on-surface">
+            {seasonState ??
+              `Las tablas aún mezclan temporadas. Actualízalas a la ${seasonStatus?.season}: el histórico queda solo para entrenar los modelos.`}
+          </span>
+          {(seasonStatus?.staleLeagues.length ?? 0) > 0 && seasonState !== "Actualizando…" && (
+            <button
+              onClick={async () => {
+                setSeasonState("Actualizando…");
+                try {
+                  const r = await recomputeSeason({});
+                  setSeasonState(`Tablas de la temporada ${r.season} listas (${r.leagues} ligas). Fuerza de equipos y modelo de nota re-entrenados con ${r.matches} partidos.`);
+                } catch (err: any) {
+                  setSeasonState(`Error: ${err?.message ?? err}`);
+                }
+              }}
+              className="shrink-0 px-2.5 py-1 rounded bg-secondary text-black font-bold text-[10px] hover:opacity-90"
+            >
+              Actualizar
+            </button>
+          )}
+        </div>
+      )}
+
+      {/* Partidos de jugadores anteriores a los partidos de equipo */}
+      {((unlinkedLogs ?? 0) > 0 || linkState) && (
+        <div className="p-2.5 rounded-xl border border-primary/40 bg-primary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
+          <span className="text-on-surface">
+            {linkState ??
+              `${unlinkedLogs} partidos de jugadores no están en el perfil de su equipo. Vincúlalos por rival y fecha.`}
+          </span>
+          {(unlinkedLogs ?? 0) > 0 && linkState !== "Vinculando…" && (
+            <button
+              onClick={runLinkLogs}
+              className="shrink-0 px-2.5 py-1 rounded bg-primary text-on-primary font-bold text-[10px] hover:opacity-90"
+            >
+              Vincular
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Histórico del FutbolLab viejo */}
       {legacyStatus && legacyStatus.needsImport && (
         <div className="p-2.5 rounded-xl border border-secondary/40 bg-secondary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
@@ -582,7 +667,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
             {leaguesList.length} Registradas
           </span>
         </div>
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 w-full no-scrollbar">
+        <div className="flex flex-wrap items-center gap-2 pb-1 w-full">
           {leaguesList.map((lg) => {
             const isSelected = selectedLeague === lg.code;
             return (
@@ -978,8 +1063,8 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
 
       {/* Modal: Crear Liga o Torneo */}
       {isAddLeagueOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-surface-container-low border border-secondary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl relative">
+        <div className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain flex justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-low border border-secondary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl my-auto relative">
             <div className="flex items-center justify-between pb-3 border-b border-surface-container-high">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-secondary text-[22px]">public</span>
@@ -1058,7 +1143,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                 </label>
               </div>
 
-              <div className="mt-3 pt-3 border-t border-surface-container-high flex items-center justify-end gap-2">
+              <div className="mt-3 pt-3 pb-1 border-t border-surface-container-high flex items-center justify-end gap-2 sticky bottom-0 bg-surface-container-low z-10">
                 <button
                   type="button"
                   onClick={() => setIsAddLeagueOpen(false)}
@@ -1081,8 +1166,8 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
 
       {/* Modal: Agregar Club y Vincular Competiciones */}
       {isAddTeamOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
-          <div className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl relative">
+        <div className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain flex justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl my-auto relative">
             <div className="flex items-center justify-between pb-3 border-b border-surface-container-high">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary text-[22px]">shield</span>
@@ -1148,6 +1233,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                     <option value="ligue1">🇫🇷 Ligue 1</option>
                     <option value="primeira_liga">🇵🇹 Primeira Liga</option>
                     <option value="eredivisie">🇳🇱 Eredivisie</option>
+                    <option value="intl">🌍 Ninguna (solo competición europea)</option>
                   </select>
                 </div>
                 <div>
@@ -1163,6 +1249,26 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                 </div>
               </div>
 
+              {noLeague ? (
+                <div className="p-3 rounded-xl bg-cyan-950/40 border border-cyan-800/50 mt-1 flex flex-col gap-2">
+                  <label className="block text-[10px] font-mono text-cyan-300 uppercase">Inscrito solo en</label>
+                  <select
+                    value={teamIntlComp}
+                    onChange={(e) => setTeamIntlComp(e.target.value)}
+                    className="w-full h-9 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  >
+                    <option value="ucl">🏆 Champions League</option>
+                    <option value="uel">🏆 Europa League</option>
+                    <option value="uecl">🏆 Conference League</option>
+                  </select>
+                  <p className="text-[10px] text-cyan-200/70 font-mono">
+                    No se registra su liga. Aparece en esta competición solo durante la temporada actual; la próxima
+                    puedes volver a inscribirlo con "Vincular". Sin partidos de liga no tiene fuerza calculada: en el
+                    simulador y en la nota esperada cuenta como un equipo medio.
+                  </p>
+                </div>
+              ) : (
+              <>
               {/* Champions League Linking Checkbox */}
               <div className="p-3 rounded-xl bg-cyan-950/40 border border-cyan-800/50 mt-1">
                 <label className="flex items-center gap-2.5 cursor-pointer text-xs font-mono">
@@ -1182,12 +1288,15 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                   </div>
                 </label>
               </div>
+              </>
+              )}
 
               <p className="font-mono text-[10px] text-on-surface-variant">
                 Puntos, forma y fuerza se calculan solos con los resultados que registres en su perfil.
               </p>
+              {createError && <p className="font-mono text-[11px] text-error">{createError}</p>}
 
-              <div className="mt-3 pt-3 border-t border-surface-container-high flex items-center justify-end gap-2">
+              <div className="mt-3 pt-3 pb-1 border-t border-surface-container-high flex items-center justify-end gap-2 sticky bottom-0 bg-surface-container-low z-10">
                 <button
                   type="button"
                   onClick={() => setIsAddTeamOpen(false)}
