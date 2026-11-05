@@ -4,6 +4,7 @@ import type { Id } from "./_generated/dataModel";
 import { recomputeLeague } from "./lib/leagueTable";
 import { findTeamMatch } from "./lib/teamMatches";
 import { refreshRatingModel } from "./lib/ratingStore";
+import { currentSeason, seasonOf } from "./lib/season";
 
 /**
  * Returns all registered leagues and continental tournaments.
@@ -309,6 +310,7 @@ export const getTeamProfile = query({
       result: "W" | "D" | "L" | null;
       competition: string;
       playersLogged: number;
+      season: string;
     };
     const results: ResultRow[] = [];
     for (const m of all) {
@@ -330,6 +332,7 @@ export const getTeamProfile = query({
         result: (gf === null || ga === null ? null : gf > ga ? "W" : gf === ga ? "D" : "L") as ResultRow["result"],
         competition: m.league,
         playersLogged: logs.length,
+        season: seasonOf(m.date),
       });
     }
     const split = (all: ResultRow[]) => {
@@ -376,6 +379,18 @@ export const getTeamProfile = query({
       .query("teams")
       .withIndex("by_league", (q) => q.eq("league", team.league))
       .collect();
+    // Tabla de la temporada anterior (referencia; el histórico solo entrena modelos)
+    const lastTable = leagueTeams
+      .filter((t) => t.lastSeason)
+      .sort((a, b) => a.lastSeason!.rank - b.lastSeason!.rank)
+      .map((t) => ({
+        _id: t._id,
+        name: t.name,
+        rank: t.lastSeason!.rank,
+        points: t.lastSeason!.points,
+        played: t.lastSeason!.played,
+        goalDifference: t.lastSeason!.goalsFor - t.lastSeason!.goalsAgainst,
+      }));
     const table = leagueTeams
       .filter((t) => t.rank)
       .sort((a, b) => (a.rank ?? 99) - (b.rank ?? 99))
@@ -391,14 +406,18 @@ export const getTeamProfile = query({
     return {
       team,
       league: league ?? null,
-      // Récord de LIGA (igual que los puntos); la lista `results` incluye todas las competiciones
+      season: team.season ?? currentSeason(),
+      // Récord de LIGA de la TEMPORADA ACTUAL (igual que los puntos); `results` incluye todo
       record: (() => {
-        const league = results.filter((r) => r.competition === team.league);
+        const season = team.season ?? currentSeason();
+        const league = results.filter((r) => r.competition === team.league && r.season === season);
         return { total: split(league), home: split(league.filter((r) => r.isHome)), away: split(league.filter((r) => !r.isHome)) };
       })(),
       results,
       squad,
       table,
+      lastTable,
+      lastSeason: lastTable.length ? team.lastSeason?.season ?? null : null,
     };
   },
 });
