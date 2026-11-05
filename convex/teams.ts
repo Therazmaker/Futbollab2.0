@@ -63,8 +63,24 @@ export const getTeams = query({
     }
 
     const code = args.league.toLowerCase();
-    // Los equipos "solo Champions" se ven en su competición solo en su temporada
-    return all.filter((t) => activeIn(t, code));
+    const filtered = all.filter((t: any) => {
+      const isDomestic = t.league?.toLowerCase() === code;
+      const isLinkedToCompetition = t.competitions?.some(
+        (c: string) => c.toLowerCase() === code
+      );
+      const hasUclRank = code === "ucl" && t.uclRank !== undefined;
+      return isDomestic || isLinkedToCompetition || hasUclRank || (typeof activeIn === 'function' ? activeIn(t, code) : false);
+    });
+
+    if (code === "ucl") {
+      return filtered.sort((a: any, b: any) => {
+        const ra = a.uclRank ?? 999;
+        const rb = b.uclRank ?? 999;
+        return ra - rb || (b.uclPoints ?? 0) - (a.uclPoints ?? 0);
+      });
+    }
+
+    return filtered;
   },
 });
 
@@ -538,6 +554,804 @@ export const deleteMatchResult = mutation({
     await recomputeLeague(ctx.db, m.league);
     await refreshRatingModel(ctx.db);
     return matchId;
+  },
+});
+
+
+
+export interface UCLTeamSeed {
+  rank: number;
+  name: string;
+  aliases?: string[];
+  shortName: string;
+  league: string;
+  played: number;
+  wins: number;
+  draws: number;
+  losses: number;
+  goalsFor: number;
+  goalsAgainst: number;
+  goalDifference: number;
+  points: number;
+  form: string[];
+  phase: "direct_round_16" | "qualification_playoff" | "eliminated";
+  crestUrl?: string;
+}
+
+export const UCL_ROUND_4_DATA: UCLTeamSeed[] = [
+  // 1-8: Direct Round of 16 (Octavos de Final Directo)
+  {
+    rank: 1,
+    name: "Liverpool",
+    aliases: ["Liverpool FC"],
+    shortName: "LIV",
+    league: "premier",
+    played: 4,
+    wins: 4,
+    draws: 0,
+    losses: 0,
+    goalsFor: 10,
+    goalsAgainst: 1,
+    goalDifference: 9,
+    points: 12,
+    form: ["W", "W", "W", "W"],
+    phase: "direct_round_16",
+    crestUrl: "https://images.unsplash.com/photo-1508098682722-e99c43a406b2?auto=format&fit=crop&w=256&q=80",
+  },
+  {
+    rank: 2,
+    name: "Sporting CP",
+    aliases: ["Sporting de Portugal", "Sporting Lisbon"],
+    shortName: "SCP",
+    league: "primeira_liga",
+    played: 4,
+    wins: 3,
+    draws: 1,
+    losses: 0,
+    goalsFor: 9,
+    goalsAgainst: 2,
+    goalDifference: 7,
+    points: 10,
+    form: ["W", "D", "W", "W"],
+    phase: "direct_round_16",
+  },
+  {
+    rank: 3,
+    name: "AS Mónaco",
+    aliases: ["Monaco", "AS Monaco"],
+    shortName: "ASM",
+    league: "ligue1",
+    played: 4,
+    wins: 3,
+    draws: 1,
+    losses: 0,
+    goalsFor: 10,
+    goalsAgainst: 4,
+    goalDifference: 6,
+    points: 10,
+    form: ["W", "D", "W", "W"],
+    phase: "direct_round_16",
+  },
+  {
+    rank: 4,
+    name: "Stade Brestois",
+    aliases: ["Brest", "Stade Brestois 29"],
+    shortName: "BRE",
+    league: "ligue1",
+    played: 4,
+    wins: 3,
+    draws: 1,
+    losses: 0,
+    goalsFor: 9,
+    goalsAgainst: 3,
+    goalDifference: 6,
+    points: 10,
+    form: ["W", "W", "D", "W"],
+    phase: "direct_round_16",
+  },
+  {
+    rank: 5,
+    name: "Inter de Milán",
+    aliases: ["Inter", "Inter Milan", "FC Internazionale"],
+    shortName: "INT",
+    league: "seriea",
+    played: 4,
+    wins: 3,
+    draws: 1,
+    losses: 0,
+    goalsFor: 6,
+    goalsAgainst: 0,
+    goalDifference: 6,
+    points: 10,
+    form: ["D", "W", "W", "W"],
+    phase: "direct_round_16",
+    crestUrl:
+      "https://lh3.googleusercontent.com/aida-public/AB6AXuCCZxX_RKG9Kw3V_AeffYvAEQZ2O-5SNDJjJEqhkjWP8GPcs1IU8folt_fcjW990glWUrRs9flIwRjiTzynkHsXm5RqkDcE4EQLrOGrNucBcf3IJ9qRXStGoFVJJTa7B5T4xcQhC33v621mQumluyW0ASW341nwt8t57tCU32NG0YQ4gnG3Mlm00Wgo5wvOl3cNDCVAI_Xc8UyMmliSxBJkglldb8klQJ1tOUvVjNnO",
+  },
+  {
+    rank: 6,
+    name: "FC Barcelona",
+    aliases: ["Barcelona", "Barça"],
+    shortName: "BAR",
+    league: "laliga",
+    played: 4,
+    wins: 3,
+    draws: 0,
+    losses: 1,
+    goalsFor: 15,
+    goalsAgainst: 5,
+    goalDifference: 10,
+    points: 9,
+    form: ["L", "W", "W", "W"],
+    phase: "direct_round_16",
+    crestUrl:
+      "https://lh3.googleusercontent.com/aida-public/AB6AXuAKJYvbPUeSnZf54oZrzLQMUQ6QZxo1JxZUX-oO7C1xUN28V7PVBNxt3nlcAOvnE5Rw8A0LTkY0ODrvOoTpP8hZA3_V38oE9Z43AMvv7fSRxAzSf0ka2hjBqfqLRQcfkB3J0czmS-_oD2qk1joeD7lX38uEdLw901OLid8UbL2_slu__TgMo_JstpqJoxWi7xp_6yVo5CHUC0zN0MaRp0WwuS9CjedFv0ixAJvDFnrU",
+  },
+  {
+    rank: 7,
+    name: "Borussia Dortmund",
+    aliases: ["Dortmund", "BVB"],
+    shortName: "BVB",
+    league: "bundesliga",
+    played: 4,
+    wins: 3,
+    draws: 0,
+    losses: 1,
+    goalsFor: 13,
+    goalsAgainst: 6,
+    goalDifference: 7,
+    points: 9,
+    form: ["W", "W", "L", "W"],
+    phase: "direct_round_16",
+  },
+  {
+    rank: 8,
+    name: "Aston Villa",
+    aliases: ["Villa"],
+    shortName: "AVL",
+    league: "premier",
+    played: 4,
+    wins: 3,
+    draws: 0,
+    losses: 1,
+    goalsFor: 6,
+    goalsAgainst: 1,
+    goalDifference: 5,
+    points: 9,
+    form: ["W", "W", "W", "L"],
+    phase: "direct_round_16",
+  },
+
+  // 9-24: Qualification Playoffs (Dieciseisavos de Final)
+  {
+    rank: 9,
+    name: "Atalanta",
+    aliases: ["Atalanta BC"],
+    shortName: "ATA",
+    league: "seriea",
+    played: 4,
+    wins: 2,
+    draws: 2,
+    losses: 0,
+    goalsFor: 5,
+    goalsAgainst: 0,
+    goalDifference: 5,
+    points: 8,
+    form: ["D", "W", "D", "W"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 10,
+    name: "Manchester City",
+    aliases: ["Man City", "City"],
+    shortName: "MCI",
+    league: "premier",
+    played: 4,
+    wins: 2,
+    draws: 1,
+    losses: 1,
+    goalsFor: 10,
+    goalsAgainst: 4,
+    goalDifference: 6,
+    points: 7,
+    form: ["D", "W", "W", "L"],
+    phase: "qualification_playoff",
+    crestUrl:
+      "https://lh3.googleusercontent.com/aida-public/AB6AXuB0A5-GaExMX0cNCouFyrxKzk5ScShdPQ6A26VEwd6Ni2YtaAp4jUVnSupHxD6m65qdlGGjKrgaIGmta2dx_ncybtv7O-dUDosyF9Qp3VWq3De15Y-MWZUsYgvgtcVVc098gP9C1lLBAwRl4poSTs8cdUlqfZsD4Vpuv-gwbS3DwSdylHf3Kho3fm-KkfaPF3ABN-vb-FsUo-__tFXY5jJMYlnSVa50NF6wixwlI71E",
+  },
+  {
+    rank: 11,
+    name: "Juventus",
+    aliases: ["Juventus FC", "Juve"],
+    shortName: "JUV",
+    league: "seriea",
+    played: 4,
+    wins: 2,
+    draws: 1,
+    losses: 1,
+    goalsFor: 7,
+    goalsAgainst: 5,
+    goalDifference: 2,
+    points: 7,
+    form: ["W", "W", "L", "D"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 12,
+    name: "Arsenal",
+    aliases: ["Arsenal FC"],
+    shortName: "ARS",
+    league: "premier",
+    played: 4,
+    wins: 2,
+    draws: 1,
+    losses: 1,
+    goalsFor: 3,
+    goalsAgainst: 1,
+    goalDifference: 2,
+    points: 7,
+    form: ["D", "W", "W", "L"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 13,
+    name: "Bayer Leverkusen",
+    aliases: ["Leverkusen", "Bayer 04 Leverkusen"],
+    shortName: "B04",
+    league: "bundesliga",
+    played: 4,
+    wins: 2,
+    draws: 1,
+    losses: 1,
+    goalsFor: 6,
+    goalsAgainst: 5,
+    goalDifference: 1,
+    points: 7,
+    form: ["W", "W", "D", "L"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 14,
+    name: "Lille",
+    aliases: ["Lille OSC", "LOSC Lille"],
+    shortName: "LIL",
+    league: "ligue1",
+    played: 4,
+    wins: 2,
+    draws: 1,
+    losses: 1,
+    goalsFor: 5,
+    goalsAgainst: 4,
+    goalDifference: 1,
+    points: 7,
+    form: ["L", "W", "W", "D"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 15,
+    name: "Celtic",
+    aliases: ["Celtic FC"],
+    shortName: "CEL",
+    league: "scottish_premiership",
+    played: 4,
+    wins: 2,
+    draws: 1,
+    losses: 1,
+    goalsFor: 9,
+    goalsAgainst: 9,
+    goalDifference: 0,
+    points: 7,
+    form: ["W", "L", "D", "W"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 16,
+    name: "Dinamo Zagreb",
+    aliases: ["GNK Dinamo Zagreb"],
+    shortName: "DZG",
+    league: "hnl",
+    played: 4,
+    wins: 2,
+    draws: 1,
+    losses: 1,
+    goalsFor: 10,
+    goalsAgainst: 12,
+    goalDifference: -2,
+    points: 7,
+    form: ["L", "D", "W", "W"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 17,
+    name: "Bayern Múnich",
+    aliases: ["Bayern Munich", "FC Bayern München", "Bayern"],
+    shortName: "BAY",
+    league: "bundesliga",
+    played: 4,
+    wins: 2,
+    draws: 0,
+    losses: 2,
+    goalsFor: 13,
+    goalsAgainst: 7,
+    goalDifference: 6,
+    points: 6,
+    form: ["W", "L", "L", "W"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 18,
+    name: "Real Madrid CF",
+    aliases: ["Real Madrid", "Madrid"],
+    shortName: "RMD",
+    league: "laliga",
+    played: 4,
+    wins: 2,
+    draws: 0,
+    losses: 2,
+    goalsFor: 9,
+    goalsAgainst: 7,
+    goalDifference: 2,
+    points: 6,
+    form: ["W", "L", "W", "L"],
+    phase: "qualification_playoff",
+    crestUrl:
+      "https://lh3.googleusercontent.com/aida-public/AB6AXuDIfxcvoBCPvtYy-GIQmSp-Dow-fMvM-g40ZpzX4LW3EprnYvecexSz2jZ1hVGp28kmIVJkIHlBM8OvL0j4qY9Cs-0CFUC6tQwDHoNE2IO7l6B71Slde3MdVfdsLdy4XJkQk7XfmRYoDdnLXb5m2gNvNOS5nxVqDMcu-xA0AzEU2_zM5a_jlavqxMZ5EsSn1iQHslWNjVLOP1Zm1OjeO5XGNT9eCQNvBNY1Qln8xFrU",
+  },
+  {
+    rank: 19,
+    name: "Benfica",
+    aliases: ["SL Benfica"],
+    shortName: "SLB",
+    league: "primeira_liga",
+    played: 4,
+    wins: 2,
+    draws: 0,
+    losses: 2,
+    goalsFor: 7,
+    goalsAgainst: 5,
+    goalDifference: 2,
+    points: 6,
+    form: ["W", "W", "L", "L"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 20,
+    name: "AC Milan",
+    aliases: ["Milan"],
+    shortName: "ACM",
+    league: "seriea",
+    played: 4,
+    wins: 2,
+    draws: 0,
+    losses: 2,
+    goalsFor: 7,
+    goalsAgainst: 6,
+    goalDifference: 1,
+    points: 6,
+    form: ["L", "L", "W", "W"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 21,
+    name: "Feyenoord",
+    aliases: ["Feyenoord Rotterdam"],
+    shortName: "FEY",
+    league: "eredivisie",
+    played: 4,
+    wins: 2,
+    draws: 0,
+    losses: 2,
+    goalsFor: 7,
+    goalsAgainst: 10,
+    goalDifference: -3,
+    points: 6,
+    form: ["L", "W", "W", "L"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 22,
+    name: "Club Brugge",
+    aliases: ["Brujas", "Club Brugge KV"],
+    shortName: "CLU",
+    league: "pro_league",
+    played: 4,
+    wins: 2,
+    draws: 0,
+    losses: 2,
+    goalsFor: 3,
+    goalsAgainst: 6,
+    goalDifference: -3,
+    points: 6,
+    form: ["L", "W", "L", "W"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 23,
+    name: "Atlético de Madrid",
+    aliases: ["Atletico Madrid", "Atlético Madrid", "Atleti"],
+    shortName: "ATM",
+    league: "laliga",
+    played: 4,
+    wins: 2,
+    draws: 0,
+    losses: 2,
+    goalsFor: 5,
+    goalsAgainst: 9,
+    goalDifference: -4,
+    points: 6,
+    form: ["W", "L", "L", "W"],
+    phase: "qualification_playoff",
+  },
+  {
+    rank: 24,
+    name: "PSV Eindhoven",
+    aliases: ["PSV"],
+    shortName: "PSV",
+    league: "eredivisie",
+    played: 4,
+    wins: 1,
+    draws: 2,
+    losses: 1,
+    goalsFor: 7,
+    goalsAgainst: 5,
+    goalDifference: 2,
+    points: 5,
+    form: ["L", "D", "D", "W"],
+    phase: "qualification_playoff",
+  },
+
+  // 25-36: Eliminated Zone (Zona de Eliminación)
+  {
+    rank: 25,
+    name: "Paris Saint-Germain",
+    aliases: ["PSG"],
+    shortName: "PSG",
+    league: "ligue1",
+    played: 4,
+    wins: 1,
+    draws: 1,
+    losses: 2,
+    goalsFor: 3,
+    goalsAgainst: 5,
+    goalDifference: -2,
+    points: 4,
+    form: ["W", "L", "D", "L"],
+    phase: "eliminated",
+  },
+  {
+    rank: 26,
+    name: "Sparta Praga",
+    aliases: ["Sparta Prague", "AC Sparta Praha"],
+    shortName: "SPA",
+    league: "czech_liga",
+    played: 4,
+    wins: 1,
+    draws: 1,
+    losses: 2,
+    goalsFor: 5,
+    goalsAgainst: 8,
+    goalDifference: -3,
+    points: 4,
+    form: ["W", "D", "L", "L"],
+    phase: "eliminated",
+  },
+  {
+    rank: 27,
+    name: "VfB Stuttgart",
+    aliases: ["Stuttgart"],
+    shortName: "VFB",
+    league: "bundesliga",
+    played: 4,
+    wins: 1,
+    draws: 1,
+    losses: 2,
+    goalsFor: 3,
+    goalsAgainst: 6,
+    goalDifference: -3,
+    points: 4,
+    form: ["L", "D", "W", "L"],
+    phase: "eliminated",
+  },
+  {
+    rank: 28,
+    name: "Shakhtar Donetsk",
+    aliases: ["Shakhtar", "FC Shakhtar Donetsk"],
+    shortName: "SHK",
+    league: "premier_liga",
+    played: 4,
+    wins: 1,
+    draws: 1,
+    losses: 2,
+    goalsFor: 2,
+    goalsAgainst: 5,
+    goalDifference: -3,
+    points: 4,
+    form: ["D", "L", "L", "W"],
+    phase: "eliminated",
+  },
+  {
+    rank: 29,
+    name: "Girona FC",
+    aliases: ["Girona"],
+    shortName: "GIR",
+    league: "laliga",
+    played: 4,
+    wins: 1,
+    draws: 0,
+    losses: 3,
+    goalsFor: 4,
+    goalsAgainst: 8,
+    goalDifference: -4,
+    points: 3,
+    form: ["L", "L", "W", "L"],
+    phase: "eliminated",
+  },
+  {
+    rank: 30,
+    name: "FC Salzburg",
+    aliases: ["Red Bull Salzburg", "Salzburg"],
+    shortName: "RBS",
+    league: "austrian_bundesliga",
+    played: 4,
+    wins: 1,
+    draws: 0,
+    losses: 3,
+    goalsFor: 3,
+    goalsAgainst: 10,
+    goalDifference: -7,
+    points: 3,
+    form: ["L", "L", "L", "W"],
+    phase: "eliminated",
+  },
+  {
+    rank: 31,
+    name: "Bologna",
+    aliases: ["Bologna FC 1909"],
+    shortName: "BOS",
+    league: "seriea",
+    played: 4,
+    wins: 0,
+    draws: 1,
+    losses: 3,
+    goalsFor: 0,
+    goalsAgainst: 5,
+    goalDifference: -5,
+    points: 1,
+    form: ["D", "L", "L", "L"],
+    phase: "eliminated",
+  },
+  {
+    rank: 32,
+    name: "RB Leipzig",
+    aliases: ["Leipzig"],
+    shortName: "RBL",
+    league: "bundesliga",
+    played: 4,
+    wins: 0,
+    draws: 0,
+    losses: 4,
+    goalsFor: 4,
+    goalsAgainst: 9,
+    goalDifference: -5,
+    points: 0,
+    form: ["L", "L", "L", "L"],
+    phase: "eliminated",
+  },
+  {
+    rank: 33,
+    name: "Sturm Graz",
+    aliases: ["SK Sturm Graz"],
+    shortName: "STU",
+    league: "austrian_bundesliga",
+    played: 4,
+    wins: 0,
+    draws: 0,
+    losses: 4,
+    goalsFor: 1,
+    goalsAgainst: 6,
+    goalDifference: -5,
+    points: 0,
+    form: ["L", "L", "L", "L"],
+    phase: "eliminated",
+  },
+  {
+    rank: 34,
+    name: "BSC Young Boys",
+    aliases: ["Young Boys"],
+    shortName: "YBO",
+    league: "super_league",
+    played: 4,
+    wins: 0,
+    draws: 0,
+    losses: 4,
+    goalsFor: 1,
+    goalsAgainst: 11,
+    goalDifference: -10,
+    points: 0,
+    form: ["L", "L", "L", "L"],
+    phase: "eliminated",
+  },
+  {
+    rank: 35,
+    name: "Estrella Roja",
+    aliases: ["Red Star Belgrade", "FK Crvena zvezda"],
+    shortName: "RSB",
+    league: "superliga_srb",
+    played: 4,
+    wins: 0,
+    draws: 0,
+    losses: 4,
+    goalsFor: 4,
+    goalsAgainst: 16,
+    goalDifference: -12,
+    points: 0,
+    form: ["L", "L", "L", "L"],
+    phase: "eliminated",
+  },
+  {
+    rank: 36,
+    name: "Slovan Bratislava",
+    aliases: ["SK Slovan Bratislava"],
+    shortName: "SLO",
+    league: "super_liga_svk",
+    played: 4,
+    wins: 0,
+    draws: 0,
+    losses: 4,
+    goalsFor: 2,
+    goalsAgainst: 15,
+    goalDifference: -13,
+    points: 0,
+    form: ["L", "L", "L", "L"],
+    phase: "eliminated",
+  },
+];
+
+/**
+ * Returns structured UEFA Champions League League Phase standings (Round 4)
+ * split cleanly into 3 official phases:
+ * 1. Direct Round of 16 (Top 8)
+ * 2. Qualification Playoffs (Positions 9-24)
+ * 3. Eliminated Zone (Positions 25-36)
+ */
+export const getChampionsLeagueStandings = query({
+  args: {},
+  handler: async (ctx) => {
+    const allTeams = await ctx.db.query("teams").collect();
+    const uclTeams = allTeams.filter((t: any) => {
+      return (
+        t.league?.toLowerCase() === "ucl" ||
+        t.competitions?.some((c: string) => c.toLowerCase() === "ucl") ||
+        t.uclRank !== undefined
+      );
+    });
+
+    // If Convex already has seeded UCL teams with uclRank, use them:
+    const sorted = [...uclTeams].sort((a: any, b: any) => {
+      const rankA = a.uclRank ?? 999;
+      const rankB = b.uclRank ?? 999;
+      return rankA - rankB;
+    });
+
+    const directRound16 = sorted.filter((t: any) => t.uclPhase === "direct_round_16" || (t.uclRank && t.uclRank <= 8));
+    const qualificationPlayoffs = sorted.filter(
+      (t: any) => t.uclPhase === "qualification_playoff" || (t.uclRank && t.uclRank >= 9 && t.uclRank <= 24)
+    );
+    const eliminated = sorted.filter((t: any) => t.uclPhase === "eliminated" || (t.uclRank && t.uclRank >= 25));
+
+    return {
+      round: 4,
+      totalRounds: 8,
+      totalTeams: sorted.length,
+      isSeeded: sorted.some((t: any) => t.uclRank !== undefined),
+      all: sorted,
+      directRound16,
+      qualificationPlayoffs,
+      eliminated,
+    };
+  },
+});
+
+/**
+ * Seeds or synchronizes the 36 Champions League clubs for Round 4.
+ * Uses zero-duplication logic: matching existing teams by name/alias,
+ * adding "ucl" to competitions, and setting their official UCL table metrics.
+ */
+export const seedChampionsLeagueRound4 = mutation({
+  args: {},
+  handler: async (ctx) => {
+    // 1. Ensure UCL exists in leagues
+    const uclLeague = await ctx.db
+      .query("leagues")
+      .withIndex("by_code", (q: any) => q.eq("code", "ucl"))
+      .first();
+
+    if (!uclLeague) {
+      await ctx.db.insert("leagues", {
+        code: "ucl",
+        name: "Champions League",
+        country: "Europa",
+        isTournament: true,
+      });
+    }
+
+    const allTeams = await ctx.db.query("teams").collect();
+
+    let updatedCount = 0;
+    let createdCount = 0;
+
+    for (const seed of UCL_ROUND_4_DATA) {
+      // Find matching existing team without duplicating
+      const searchNames = [seed.name.toLowerCase(), ...(seed.aliases || []).map((a) => a.toLowerCase())];
+
+      const existing = allTeams.find((t: any) => {
+        const teamNameLower = t.name.toLowerCase().trim();
+        if (seed.name === "Bayer Leverkusen" && teamNameLower.includes("bayern")) return false;
+        if (seed.name === "Bayern Múnich" && (teamNameLower.includes("leverkusen") || !teamNameLower.includes("bayern"))) return false;
+
+        const exactMatch = searchNames.some((sn) => teamNameLower === sn.trim());
+        if (exactMatch) return true;
+
+        if (t.shortName && t.shortName.toLowerCase() === seed.shortName.toLowerCase()) return true;
+
+        return searchNames.some((sn) => {
+          if (sn === "bayer" || sn === "bayern") return teamNameLower === sn;
+          return teamNameLower.includes(sn) || sn.includes(teamNameLower);
+        });
+      });
+
+      if (existing) {
+        // Link to UCL without duplicating domestic league!
+        const comps = new Set<string>(existing.competitions || [existing.league]);
+        comps.add("ucl");
+
+        await ctx.db.patch(existing._id, {
+          competitions: Array.from(comps),
+          uclRank: seed.rank,
+          uclPoints: seed.points,
+          uclPlayed: seed.played,
+          uclWins: seed.wins,
+          uclDraws: seed.draws,
+          uclLosses: seed.losses,
+          uclGoalsFor: seed.goalsFor,
+          uclGoalsAgainst: seed.goalsAgainst,
+          uclGoalDifference: seed.goalDifference,
+          uclForm: seed.form,
+          uclPhase: seed.phase,
+          crestUrl: existing.crestUrl || seed.crestUrl,
+        });
+        updatedCount++;
+      } else {
+        // Insert new team
+        await ctx.db.insert("teams", {
+          name: seed.name,
+          shortName: seed.shortName,
+          league: seed.league,
+          competitions: [seed.league, "ucl"],
+          crestUrl: seed.crestUrl,
+          formation: "4-3-3",
+          uclRank: seed.rank,
+          uclPoints: seed.points,
+          uclPlayed: seed.played,
+          uclWins: seed.wins,
+          uclDraws: seed.draws,
+          uclLosses: seed.losses,
+          uclGoalsFor: seed.goalsFor,
+          uclGoalsAgainst: seed.goalsAgainst,
+          uclGoalDifference: seed.goalDifference,
+          uclForm: seed.form,
+          uclPhase: seed.phase,
+        });
+        createdCount++;
+      }
+    }
+
+    return {
+      success: true,
+      updatedCount,
+      createdCount,
+      total: UCL_ROUND_4_DATA.length,
+    };
   },
 });
 
