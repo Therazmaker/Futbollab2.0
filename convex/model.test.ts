@@ -114,7 +114,7 @@ describe("Convex: registro, informe e importación", () => {
     const after = await t.query(api.predictions.getModelReport, { playerId });
     expect(after!.points.length).toBe(4);
     const weights = await t.run((ctx) => ctx.db.query("playerWeights").collect());
-    expect(weights.map((w) => w.featureName).sort()).toEqual(["is_away", "opponent_defense"]);
+    expect(weights.map((w) => w.featureName).sort()).toEqual(["is_away", "opponent_defense", "post_injury"]);
 
     const fc = await t.mutation(api.predictions.calculateAndPredict, { playerId, opponent: "Sevilla", isAway: false });
     expect(fc.predictedMetrics.confidence).toBeLessThan(95);
@@ -596,5 +596,80 @@ describe("Convex: editar partido de equipo", () => {
     await t.mutation(api.teams.updateMatch, { matchId: r.teamMatchId!, homeGoals: null, awayGoals: null });
     expect((await t.run((ctx) => ctx.db.get(r.teamMatchId!)))!.homeGoals).toBeUndefined();
     await expect(t.mutation(api.teams.updateMatch, { matchId: r.teamMatchId!, homeGoals: 1 })).rejects.toThrow(/dos equipos/);
+  }, 120_000);
+});
+
+import { availabilityOn, postInjuryFlags } from "./lib/injuries";
+
+describe("lesiones", () => {
+  test("reglas: vuelta de lesión = 2 primeros partidos; disponibilidad", () => {
+    const dates = ["2026-09-01", "2026-09-08", "2026-09-29", "2026-10-06", "2026-10-13"];
+    const inj = [{ startDate: "2026-09-08", endDate: "2026-09-29" }];
+    expect(postInjuryFlags(dates, inj)).toEqual([false, false, true, true, false]);
+    const open = [{ startDate: "2026-10-13", expectedReturn: "2026-11-01" }];
+    expect(availabilityOn("2026-10-20", open, dates).status).toBe("injured");
+    expect(availabilityOn("2026-11-02", open, dates).status).toBe("returning");
+    expect(availabilityOn("2026-11-02", [], dates).status).toBe("available");
+  });
+
+  test("el modelo de nota aprende la vuelta de lesión y no castiga el partido de la lesión", () => {
+    const r = rng(17);
+    const g = () => Math.sqrt(-2 * Math.log(r())) * Math.cos(2 * Math.PI * r());
+    const rows: RatingRow[] = [];
+    for (let p = 0; p < 40; p++) {
+      const level = 6.9 + 0.3 * g();
+      for (let k = 0; k < 16; k++) {
+        const postInjury = r() < 0.15;
+        rows.push({ playerId: `p${p}`, rating: +(level - 0.4 * (postInjury ? 1 : 0) + 0.5 * g()).toFixed(1), isAway: false, minutes: 90, postInjury, order: k, total: 16 });
+      }
+    }
+    const fit = fitRatingModel(rows);
+    expect(fit.beta.postInjury).toBeLessThan(-0.2);
+    // Un 5.0 en el partido en que se lesionó apenas mueve su nivel
+    const base = Array.from({ length: 6 }, () => ({ rating: 7.2, isAway: false, minutes: 90 }));
+    const asInjury = forecastRating(fit, [...base, { rating: 5.0, isAway: false, minutes: 20, injuredOff: true }], { isAway: false });
+    const asNormal = forecastRating(fit, [...base, { rating: 5.0, isAway: false, minutes: 90 }], { isAway: false });
+    expect(asInjury.level).toBeGreaterThan(asNormal.level + 0.1);
+  });
+
+  test("Convex: salir lesionado → no disponible → vuelve → disponible", async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(api.teams.seedInitialCompetitionsAndTeams, {});
+    const team = (await t.run((ctx) => ctx.db.query("teams").first()))!;
+    const playerId = await t.mutation(api.players.createPlayer, { teamId: team._id, name: "Frágil", position: "FW" });
+    const play = (mmdd: string, extra: Record<string, unknown> = {}) =>
+      t.mutation(api.predictions.recordMatchAndCalibrate, {
+        playerId, matchDate: inSeason(mmdd), opponent: "Rival", isAway: false, minutesPlayed: 90,
+        rawStats: { totalShots: 2, rating: 7.1 }, ...extra,
+      });
+    await play("09-01");
+    await play("09-08", { minutesPlayed: 25, injuredOff: true, expectedReturn: "2099-01-01", injuryNote: "tobillo" });
+
+    let prof = await t.query(api.players.getPlayerProfile, { playerId });
+    expect(prof!.availability.status).toBe("injured");
+    expect(prof!.injuries[0].note).toBe("tobillo");
+    const squad = await t.query(api.teams.getTeamProfile, { teamId: team._id });
+    expect(squad!.squad.find((p) => p._id === playerId)!.availability.status).toBe("injured");
+
+    const whileInjured = await t.query(api.predictions.previewForecast, { playerId, isAway: false, matchDate: inSeason("09-15") });
+    expect(whileInjured!.availability.status).toBe("injured");
+    expect(whileInjured!.minutes).toBeLessThanOrEqual(60);
+    expect(whileInjured!.rating.contributions.some((c) => c.feature === "postInjury")).toBe(true);
+
+    // Vuelve a jugar: la lesión se cierra y está "volviendo" hasta 2 partidos
+    await play("09-29");
+    prof = await t.query(api.players.getPlayerProfile, { playerId });
+    expect(prof!.injuries[0].endDate).toBe(inSeason("09-29"));
+    const returning = await t.query(api.predictions.previewForecast, { playerId, isAway: false, matchDate: inSeason("10-01") });
+    expect(returning!.availability.status).toBe("returning");
+    await play("10-06");
+    const ok = await t.query(api.predictions.previewForecast, { playerId, isAway: false, matchDate: inSeason("10-10") });
+    expect(ok!.availability.status).toBe("available");
+
+    // Desmarcar la lesión del partido borra la lesión
+    const injuredLog = prof!.matchLogs.find((l: any) => l.injuredOff)!;
+    await t.mutation(api.players.updateMatchLog, { matchLogId: injuredLog._id, injuredOff: false });
+    prof = await t.query(api.players.getPlayerProfile, { playerId });
+    expect(prof!.injuries.length).toBe(0);
   }, 120_000);
 });

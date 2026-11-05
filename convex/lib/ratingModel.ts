@@ -14,13 +14,14 @@
  * Puro (sin Convex) para usarlo en queries, mutations y tests.
  */
 
-export const RATING_FEATURES = ["home", "strengthDiff", "shortMinutes"] as const;
+export const RATING_FEATURES = ["home", "strengthDiff", "shortMinutes", "postInjury"] as const;
 export type RatingFeature = (typeof RATING_FEATURES)[number];
 
 export const RATING_FEATURE_LABELS: Record<RatingFeature, string> = {
   home: "Jugar en casa",
   strengthDiff: "Diferencia de fuerza con el rival",
   shortMinutes: "Jugar menos de 45'",
+  postInjury: "Vuelta de lesión",
 };
 
 /** Prior de cada efecto (media y desviación) en puntos de nota. */
@@ -28,6 +29,7 @@ export const RATING_PRIORS: Record<RatingFeature, { mean: number; sd: number }> 
   home: { mean: 0.08, sd: 0.1 },
   strengthDiff: { mean: 0.35, sd: 0.25 }, // por unidad de ln-fuerza
   shortMinutes: { mean: -0.2, sd: 0.2 },
+  postInjury: { mean: -0.15, sd: 0.15 },
 };
 export const RATING_DEFAULTS = { populationMean: 6.85, sigma: 0.62, n0: 3, halfLife: 12 };
 
@@ -41,8 +43,8 @@ export interface RatingParams {
 }
 
 export const DEFAULT_RATING_PARAMS: RatingParams = {
-  beta: { home: RATING_PRIORS.home.mean, strengthDiff: RATING_PRIORS.strengthDiff.mean, shortMinutes: RATING_PRIORS.shortMinutes.mean },
-  betaSd: { home: RATING_PRIORS.home.sd, strengthDiff: RATING_PRIORS.strengthDiff.sd, shortMinutes: RATING_PRIORS.shortMinutes.sd },
+  beta: Object.fromEntries(RATING_FEATURES.map((f) => [f, RATING_PRIORS[f].mean])) as Record<RatingFeature, number>,
+  betaSd: Object.fromEntries(RATING_FEATURES.map((f) => [f, RATING_PRIORS[f].sd])) as Record<RatingFeature, number>,
   sigma: RATING_DEFAULTS.sigma,
   populationMean: RATING_DEFAULTS.populationMean,
   matches: 0,
@@ -64,7 +66,14 @@ export interface RatingContext {
   minutes?: number;
   ownStrength?: number | null;
   opponentStrength?: number | null;
+  /** Primeros partidos tras una lesión */
+  postInjury?: boolean;
+  /** Salió lesionado: su nota de ese partido pesa poco (no es rendimiento normal) */
+  injuredOff?: boolean;
 }
+
+/** Peso de un partido con nota: los que acabaron en lesión cuentan poco. */
+const INJURED_OFF_WEIGHT = 0.3;
 
 export function ratingFeatures(c: RatingContext): Record<RatingFeature, number> {
   // Si solo conocemos a uno de los dos equipos, el otro se toma como medio (0)
@@ -73,7 +82,9 @@ export function ratingFeatures(c: RatingContext): Record<RatingFeature, number> 
   return {
     home: c.isAway ? 0 : 1,
     strengthDiff: own - opp,
-    shortMinutes: c.minutes !== undefined && c.minutes > 0 && c.minutes < 45 ? 1 : 0,
+    // Salir lesionado pronto no es "jugar poco" por decisión técnica
+    shortMinutes: !c.injuredOff && c.minutes !== undefined && c.minutes > 0 && c.minutes < 45 ? 1 : 0,
+    postInjury: c.postInjury ? 1 : 0,
   };
 }
 
@@ -84,8 +95,8 @@ export interface RatingRow extends RatingContext {
   total: number; // nº de partidos con nota del jugador
 }
 
-const weightOf = (r: Pick<RatingRow, "order" | "total">) =>
-  Math.pow(0.5, (r.total - 1 - r.order) / RATING_DEFAULTS.halfLife);
+const weightOf = (r: Pick<RatingRow, "order" | "total" | "injuredOff">) =>
+  Math.pow(0.5, (r.total - 1 - r.order) / RATING_DEFAULTS.halfLife) * (r.injuredOff ? INJURED_OFF_WEIGHT : 1);
 
 /** Ajuste global: niveles de jugador + β compartidos (alternando, 10 vueltas). */
 export function fitRatingModel(rows: RatingRow[]): RatingParams {
@@ -197,7 +208,7 @@ export function forecastRating(params: RatingParams, history: PlayerRatingLog[],
   let num = 0;
   let den = 0;
   rated.forEach((h, i) => {
-    const wt = Math.pow(0.5, (n - 1 - i) / RATING_DEFAULTS.halfLife);
+    const wt = Math.pow(0.5, (n - 1 - i) / RATING_DEFAULTS.halfLife) * (h.injuredOff ? INJURED_OFF_WEIGHT : 1);
     const x = ratingFeatures(h);
     num += wt * (h.rating - RATING_FEATURES.reduce((a, f) => a + params.beta[f] * x[f], 0));
     den += wt;

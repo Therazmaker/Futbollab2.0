@@ -6,6 +6,7 @@ import { findOrCreateTeamMatch } from "./lib/teamMatches";
 import { forecastRating, PlayerRatingLog, RATING_FEATURE_LABELS, RATING_FEATURES } from "./lib/ratingModel";
 import { loadRatingParams, refreshRatingModel } from "./lib/ratingStore";
 import type { ModelLog } from "./lib/engine";
+import { availabilityOn } from "./lib/injuries";
 
 /** Partidos del motor → partidos con nota para el modelo de nota. */
 function ratingHistory(logs: ModelLog[]): PlayerRatingLog[] {
@@ -16,6 +17,8 @@ function ratingHistory(logs: ModelLog[]): PlayerRatingLog[] {
       minutes: Number(l.minutesPlayed),
       ownStrength: l.ownStrength ?? null,
       opponentStrength: l.opponentStrength ?? null,
+      postInjury: !!l.postInjury,
+      injuredOff: !!l.injuredOff,
     }))
     .filter((h) => Number.isFinite(h.rating) && h.rating > 0 && h.rating <= 10);
 }
@@ -123,6 +126,10 @@ export const recordMatchAndCalibrate = mutation({
     // Marcador desde el punto de vista del equipo del jugador (opcional)
     teamGoals: v.optional(v.number()),
     opponentGoals: v.optional(v.number()),
+    // Salió lesionado: se abre una lesión con vuelta prevista opcional
+    injuredOff: v.optional(v.boolean()),
+    expectedReturn: v.optional(v.string()),
+    injuryNote: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     if (!(args.minutesPlayed > 0)) throw new Error("minutesPlayed debe ser > 0");
@@ -184,7 +191,26 @@ export const recordMatchAndCalibrate = mutation({
       contextFeatures: args.contextFeatures,
       rawStats: args.rawStats,
       matchId,
+      injuredOff: args.injuredOff || undefined,
     });
+
+    // Si estaba lesionado y juega, la lesión termina ese día
+    const openInjuries = await ctx.db
+      .query("injuries")
+      .withIndex("by_player", (q) => q.eq("playerId", args.playerId))
+      .collect();
+    for (const inj of openInjuries) {
+      if (!inj.endDate && inj.startDate < matchDate) await ctx.db.patch(inj._id, { endDate: matchDate });
+    }
+    if (args.injuredOff) {
+      await ctx.db.insert("injuries", {
+        playerId: args.playerId,
+        startDate: matchDate,
+        expectedReturn: args.expectedReturn || undefined,
+        note: args.injuryNote || undefined,
+        fromLogId: matchLogId,
+      });
+    }
 
     const synced = await syncPlayerWeights(ctx.db, args.playerId);
     if (!synced) throw new Error("Jugador no encontrado");
@@ -246,6 +272,8 @@ export const getModelReport = query({
         minutes: Number(log.minutesPlayed),
         ownStrength: log.ownStrength,
         opponentStrength: log.opponentStrength,
+        postInjury: log.postInjury,
+        injuredOff: log.injuredOff,
       });
       (p.stats as any).rating = { predicted: rf.mean, sd: rf.sd, actual, naive: rf.mean, noiseFloor: rf.sd * 0.8 };
     }
@@ -311,24 +339,41 @@ export const previewForecast = query({
     opponentTeamId: v.optional(v.id("teams")),
     isAway: v.boolean(),
     minutes: v.optional(v.number()),
+    matchDate: v.optional(v.string()), // fecha del partido (por defecto, hoy)
   },
   handler: async (ctx, args) => {
     const input = await loadPlayerModelInput(ctx.db, args.playerId);
     if (!input) return null;
     const state = fitProfile(input.logs, input.priorInput);
+    const date = args.matchDate || new Date().toISOString().slice(0, 10);
+    const availability = availabilityOn(
+      date,
+      input.injuries,
+      input.logs.filter((l) => Number(l.minutesPlayed) > 0).map((l) => l.matchDate)
+    );
+    // Lesionado o recién vuelto: se pronostica como "vuelta de lesión"
+    const postInjury = availability.status !== "available";
     const opponent = args.opponentTeamId ? await ctx.db.get(args.opponentTeamId) : null;
     const opponentStrength = await input.strengthOf(args.opponentTeamId);
     const opponentDefense = await input.defenseOf(args.opponentTeamId);
-    const minutes = args.minutes && args.minutes > 0 ? args.minutes : state.expectedMinutes;
-    const fc = forecast(state, { isAway: args.isAway, opponentDefense }, minutes);
+    const minutes =
+      args.minutes && args.minutes > 0
+        ? args.minutes
+        : postInjury
+        ? Math.min(state.expectedMinutes, 60) // tras una lesión suele jugar menos
+        : state.expectedMinutes;
+    const fc = forecast(state, { isAway: args.isAway, opponentDefense, postInjury }, minutes);
     const params = await loadRatingParams(ctx.db);
     const rf = forecastRating(params, ratingHistory(input.logs), {
       isAway: args.isAway,
       minutes,
       ownStrength: input.ownStrength,
       opponentStrength,
+      postInjury,
     });
     return {
+      availability,
+      matchDate: date,
       opponent: opponent?.name ?? null,
       isAway: args.isAway,
       minutes: Math.round(minutes),

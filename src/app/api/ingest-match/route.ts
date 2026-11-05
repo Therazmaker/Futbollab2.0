@@ -213,6 +213,9 @@ export async function POST(req: NextRequest) {
       matchId: teamMatchId,
       teamGoals,
       opponentGoals,
+      injuredOff: body.injuredOff === true || undefined,
+      expectedReturn: typeof body.expectedReturn === "string" && body.expectedReturn ? body.expectedReturn : undefined,
+      injuryNote: typeof body.injuryNote === "string" && body.injuryNote ? body.injuryNote : undefined,
     });
 
     // Solo se pronostica el próximo partido si nos dicen cuál es

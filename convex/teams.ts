@@ -6,6 +6,7 @@ import { findTeamMatch } from "./lib/teamMatches";
 import { refreshRatingModel } from "./lib/ratingStore";
 import { currentSeason, seasonOf } from "./lib/season";
 import { activeIn, homeCompetition, isNoLeague, NO_LEAGUE } from "./lib/noLeague";
+import { availabilityOn } from "./lib/injuries";
 
 /**
  * Returns all registered leagues and continental tournaments.
@@ -382,6 +383,14 @@ export const getTeamProfile = query({
         seasonStats: p.seasonStats ?? null,
         loggedMatches: logs.length,
         lastMatchDate: logs.reduce((acc, l) => (l.matchDate > acc ? l.matchDate : acc), ""),
+        availability: availabilityOn(
+          new Date().toISOString().slice(0, 10),
+          await ctx.db
+            .query("injuries")
+            .withIndex("by_player", (q) => q.eq("playerId", p._id))
+            .collect(),
+          logs.filter((l) => l.minutesPlayed > 0).map((l) => l.matchDate).sort()
+        ),
       });
     }
     squad.sort(
