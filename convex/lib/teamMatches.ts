@@ -1,6 +1,7 @@
 import type { GenericDatabaseReader, GenericDatabaseWriter } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { recomputeLeague } from "./leagueTable";
+import { homeCompetition } from "./noLeague";
 
 type Db = GenericDatabaseWriter<DataModel>;
 type Reader = GenericDatabaseReader<DataModel>;
@@ -76,7 +77,7 @@ export async function findOrCreateTeamMatch(
     }
     return existing._id;
   }
-  const league = args.competition || team.league;
+  const league = args.competition || homeCompetition(team);
   const id = await db.insert("matches", { league, date: args.date, homeTeamId, awayTeamId, homeGoals, awayGoals });
   if (hasScore) await recomputeLeague(db, league);
   return id;

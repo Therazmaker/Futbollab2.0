@@ -523,3 +523,42 @@ describe("temporadas", () => {
     expect(status.staleLeagues).toEqual([]);
   }, 120_000);
 });
+
+import { activeIn } from "./lib/noLeague";
+
+describe("equipos solo de Champions", () => {
+  test("se registra sin liga, solo en la UCL de esta temporada", async () => {
+    const t = convexTest(schema, modules);
+    await t.action(api.legacy.importLegacyData, {});
+    const arsenal = (await t.run((ctx) => ctx.db.query("teams").collect())).find((x) => x.name === "Arsenal")!;
+
+    await expect(t.mutation(api.teams.createTeam, { name: "Sin nada", league: "intl" })).rejects.toThrow(/competición/);
+    const id = await t.mutation(api.teams.createTeam, { name: "Club Brugge", league: "intl", competitions: ["ucl"] });
+    const club = (await t.run((ctx) => ctx.db.get(id)))!;
+    expect(club.competitions).toEqual(["ucl"]);
+    expect(club.competitionSeason).toBe(currentSeason());
+
+    const ucl = await t.query(api.teams.getTeams, { league: "ucl" });
+    expect(ucl.some((x) => x._id === id)).toBe(true);
+    const premier = await t.query(api.teams.getTeams, { league: "premier" });
+    expect(premier.some((x) => x._id === id)).toBe(false);
+    // La temporada siguiente ya no aparece en la UCL (hasta volver a inscribirlo)
+    expect(activeIn(club, "ucl", "2099-00")).toBe(false);
+
+    // Su partido de Champions va a la UCL, no a la Premier
+    const before = (await t.run((ctx) => ctx.db.get(arsenal._id)))!.points ?? 0;
+    const matchId = await t.mutation(api.teams.addMatchResult, {
+      homeTeamId: id, awayTeamId: arsenal._id, homeGoals: 1, awayGoals: 0, date: inSeason("10-22"),
+    });
+    expect((await t.run((ctx) => ctx.db.get(matchId)))!.league).toBe("ucl");
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points ?? 0).toBe(before);
+    const profile = await t.query(api.teams.getTeamProfile, { teamId: id });
+    expect(profile!.record.total.wins).toBe(1);
+    expect(profile!.table.length).toBe(0);
+
+    // Vincular de nuevo lo re-inscribe en la temporada actual
+    await t.run((ctx) => ctx.db.patch(id, { competitionSeason: "2020-21" }));
+    await t.mutation(api.teams.linkTeamToCompetition, { teamId: id, competitionCode: "ucl" });
+    expect((await t.run((ctx) => ctx.db.get(id)))!.competitionSeason).toBe(currentSeason());
+  }, 120_000);
+});
