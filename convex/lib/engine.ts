@@ -67,6 +67,8 @@ export interface FeaturePrior {
 export const FEATURE_PRIORS: Record<string, FeaturePrior> = {
   is_away: { mean: Math.log(0.9), sd: 0.1, label: "Visitante" },
   opponent_defense: { mean: 0.6, sd: 0.3, label: "Defensa del rival" },
+  // Primeros partidos tras una lesión: algo menos de producción ofensiva
+  post_injury: { mean: Math.log(0.9), sd: 0.12, label: "Vuelta de lesión" },
 };
 const GENERIC_FEATURE_PRIOR: FeaturePrior = { mean: 0, sd: 0.15, label: "" };
 export function featurePrior(name: string): FeaturePrior {
@@ -86,6 +88,10 @@ export interface ModelLog {
   /** Fuerza (ln ataque − ln defensa) del rival y del propio equipo, para la nota. */
   opponentStrength?: number | null;
   ownStrength?: number | null;
+  /** Salió lesionado en este partido (sus minutos no reflejan una suplencia). */
+  injuredOff?: boolean;
+  /** Es de los primeros partidos tras una lesión. */
+  postInjury?: boolean;
 }
 
 export interface PlayerPriorInput {
@@ -126,14 +132,15 @@ function readRating(raw: any): number | null {
 }
 
 /** Vector de contexto de un partido (las claves ausentes valen 0). */
-export function featureVector(log: Pick<ModelLog, "isAway" | "contextFeatures" | "opponentDefense">) {
+export function featureVector(log: Pick<ModelLog, "isAway" | "contextFeatures" | "opponentDefense" | "postInjury">) {
   const x: Record<string, number> = {};
   if (log.isAway) x.is_away = 1;
+  if (log.postInjury) x.post_injury = 1;
   if (log.opponentDefense && log.opponentDefense > 0) {
     x.opponent_defense = Math.log(log.opponentDefense);
   }
   for (const f of log.contextFeatures ?? []) {
-    if (f && f !== "is_away" && f !== "home_pitch_bias" && f !== "opponent_defense") x[f] = 1;
+    if (f && f !== "is_away" && f !== "home_pitch_bias" && f !== "opponent_defense" && f !== "post_injury") x[f] = 1;
   }
   return x;
 }
@@ -337,7 +344,7 @@ export interface MatchForecast {
 
 export function forecast(
   state: FittedState,
-  ctx: Pick<ModelLog, "isAway" | "contextFeatures" | "opponentDefense">,
+  ctx: Pick<ModelLog, "isAway" | "contextFeatures" | "opponentDefense" | "postInjury">,
   minutes?: number
 ): MatchForecast {
   const mins = minutes && minutes > 0 ? minutes : state.expectedMinutes;

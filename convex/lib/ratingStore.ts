@@ -1,6 +1,7 @@
 import type { GenericDatabaseReader, GenericDatabaseWriter } from "convex/server";
 import type { DataModel } from "../_generated/dataModel";
 import { DEFAULT_RATING_PARAMS, fitRatingModel, RatingParams, RatingRow, teamStrength } from "./ratingModel";
+import { postInjuryFlags } from "./injuries";
 
 type Reader = GenericDatabaseReader<DataModel>;
 type Writer = GenericDatabaseWriter<DataModel>;
@@ -12,7 +13,15 @@ export async function loadRatingParams(db: Reader): Promise<RatingParams> {
     .query("modelParams")
     .withIndex("by_name", (q) => q.eq("name", NAME))
     .first();
-  return (doc?.params as RatingParams) ?? DEFAULT_RATING_PARAMS;
+  const stored = doc?.params as RatingParams | undefined;
+  if (!stored) return DEFAULT_RATING_PARAMS;
+  // Parámetros guardados por una versión anterior pueden no tener los efectos nuevos
+  return {
+    ...DEFAULT_RATING_PARAMS,
+    ...stored,
+    beta: { ...DEFAULT_RATING_PARAMS.beta, ...stored.beta },
+    betaSd: { ...DEFAULT_RATING_PARAMS.betaSd, ...stored.betaSd },
+  };
 }
 
 /**
@@ -21,13 +30,32 @@ export async function loadRatingParams(db: Reader): Promise<RatingParams> {
  * cuando cambian los resultados (cambia la fuerza de los equipos).
  */
 export async function refreshRatingModel(db: Writer) {
-  const [logs, players, teams] = await Promise.all([
+  const [logs, players, teams, injuries] = await Promise.all([
     db.query("playerMatchLogs").collect(),
     db.query("players").collect(),
     db.query("teams").collect(),
+    db.query("injuries").collect(),
   ]);
+  const injuriesOf = new Map<string, typeof injuries>();
+  for (const inj of injuries) {
+    if (!injuriesOf.has(inj.playerId)) injuriesOf.set(inj.playerId, []);
+    injuriesOf.get(inj.playerId)!.push(inj);
+  }
   const teamOf = new Map(players.map((p) => [p._id as string, p.teamId as string]));
   const strength = new Map(teams.map((t) => [t._id as string, teamStrength(t)]));
+  // Vuelta de lesión: se cuenta sobre TODOS los partidos jugados de cada jugador
+  const postInjuryById = new Map<string, boolean>();
+  const playedByPlayer = new Map<string, typeof logs>();
+  for (const l of logs) {
+    if (!(l.minutesPlayed > 0)) continue;
+    if (!playedByPlayer.has(l.playerId)) playedByPlayer.set(l.playerId, []);
+    playedByPlayer.get(l.playerId)!.push(l);
+  }
+  playedByPlayer.forEach((list, playerId) => {
+    list.sort((a, b) => (a.matchDate < b.matchDate ? -1 : a.matchDate > b.matchDate ? 1 : a._creationTime - b._creationTime));
+    const flags = postInjuryFlags(list.map((l) => l.matchDate), injuriesOf.get(playerId) ?? []);
+    list.forEach((l, i) => postInjuryById.set(l._id, flags[i]));
+  });
   const byPlayer = new Map<string, typeof logs>();
   for (const l of logs) {
     const r = Number(l.rawStats?.rating);
@@ -46,6 +74,8 @@ export async function refreshRatingModel(db: Writer) {
         minutes: l.minutesPlayed,
         ownStrength: strength.get(teamOf.get(playerId) ?? "") ?? null,
         opponentStrength: l.opponentTeamId ? strength.get(l.opponentTeamId) ?? null : null,
+        postInjury: postInjuryById.get(l._id) ?? false,
+        injuredOff: !!l.injuredOff,
         order: i,
         total: list.length,
       })

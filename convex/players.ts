@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import { syncPlayerWeights } from "./lib/playerModel";
 import { deleteIfOrphan, linkLogToTeamMatch } from "./lib/teamMatches";
 import { refreshRatingModel } from "./lib/ratingStore";
+import { availabilityOn } from "./lib/injuries";
 
 /**
  * Retrieves full player profile: identity, team, match history (descending),
@@ -53,12 +54,26 @@ export const getPlayerProfile = query({
     predictions.sort((a: any, b: any) => b.appliedAt - a.appliedAt);
     const latestPrediction = predictions[0] || null;
 
+    const injuries = await ctx.db
+      .query("injuries")
+      .withIndex("by_player", (q: any) => q.eq("playerId", player!._id))
+      .collect();
+    injuries.sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
+    const today = new Date().toISOString().slice(0, 10);
+    const availability = availabilityOn(
+      today,
+      injuries,
+      matchLogs.filter((l: any) => l.minutesPlayed > 0).map((l: any) => l.matchDate).sort()
+    );
+
     return {
       player,
       team,
       matchLogs,
       weights,
       latestPrediction,
+      injuries,
+      availability,
     };
   },
 });
@@ -100,6 +115,7 @@ export const updateMatchLog = mutation({
     // null = quitar el vínculo con el equipo rival (rival escrito a mano)
     opponentTeamId: v.optional(v.union(v.id("teams"), v.null())),
     competition: v.optional(v.string()),
+    injuredOff: v.optional(v.boolean()),
     rawStats: v.optional(v.any()),
   },
   handler: async (ctx, args) => {
@@ -118,6 +134,24 @@ export const updateMatchLog = mutation({
     if (args.contextFeatures !== undefined) patch.contextFeatures = args.contextFeatures;
     if (args.opponentTeamId !== undefined) patch.opponentTeamId = args.opponentTeamId ?? undefined;
     if (args.competition !== undefined) patch.competition = args.competition;
+    if (args.injuredOff !== undefined) {
+      patch.injuredOff = args.injuredOff || undefined;
+      // La lesión asociada a este partido se crea o se borra con la marca
+      const linked = (
+        await ctx.db
+          .query("injuries")
+          .withIndex("by_player", (q) => q.eq("playerId", existing.playerId))
+          .collect()
+      ).filter((i) => i.fromLogId === args.matchLogId);
+      if (args.injuredOff && !linked.length) {
+        await ctx.db.insert("injuries", {
+          playerId: existing.playerId,
+          startDate: args.matchDate ?? existing.matchDate,
+          fromLogId: args.matchLogId,
+        });
+      }
+      if (!args.injuredOff) for (const i of linked) await ctx.db.delete(i._id);
+    }
 
     await ctx.db.patch(args.matchLogId, patch);
     // Si cambió algo que identifica el partido, se re-vincula al partido del equipo
@@ -148,6 +182,14 @@ export const deleteMatchLog = mutation({
 
     await ctx.db.delete(args.matchLogId);
     await deleteIfOrphan(ctx.db, existing.matchId);
+    // La lesión que nació en este partido desaparece con él
+    const fromThis = (
+      await ctx.db
+        .query("injuries")
+        .withIndex("by_player", (q) => q.eq("playerId", existing.playerId))
+        .collect()
+    ).filter((i) => i.fromLogId === args.matchLogId);
+    for (const i of fromThis) await ctx.db.delete(i._id);
     await syncPlayerWeights(ctx.db, existing.playerId);
     await refreshRatingModel(ctx.db);
     return { success: true, deletedId: args.matchLogId };
@@ -364,5 +406,64 @@ export const unlinkedLogsCount = query({
   handler: async (ctx) => {
     const logs = await ctx.db.query("playerMatchLogs").collect();
     return logs.filter((l) => !l.matchId).length;
+  },
+});
+
+/** Registra una lesión sin partido (p. ej. en un entrenamiento). */
+export const reportInjury = mutation({
+  args: {
+    playerId: v.id("players"),
+    startDate: v.string(),
+    expectedReturn: v.optional(v.string()),
+    note: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (!(await ctx.db.get(args.playerId))) throw new Error("Jugador no encontrado");
+    const id = await ctx.db.insert("injuries", {
+      playerId: args.playerId,
+      startDate: args.startDate,
+      expectedReturn: args.expectedReturn || undefined,
+      note: args.note || undefined,
+    });
+    await refreshRatingModel(ctx.db);
+    return id;
+  },
+});
+
+/** Edita una lesión (vuelta prevista, nota, fechas) o la da de alta (endDate). */
+export const updateInjury = mutation({
+  args: {
+    injuryId: v.id("injuries"),
+    startDate: v.optional(v.string()),
+    expectedReturn: v.optional(v.union(v.string(), v.null())),
+    endDate: v.optional(v.union(v.string(), v.null())),
+    note: v.optional(v.union(v.string(), v.null())),
+  },
+  handler: async (ctx, args) => {
+    const inj = await ctx.db.get(args.injuryId);
+    if (!inj) throw new Error("Lesión no encontrada");
+    const patch: Record<string, unknown> = {};
+    if (args.startDate !== undefined) patch.startDate = args.startDate;
+    if (args.expectedReturn !== undefined) patch.expectedReturn = args.expectedReturn || undefined;
+    if (args.endDate !== undefined) patch.endDate = args.endDate || undefined;
+    if (args.note !== undefined) patch.note = args.note || undefined;
+    await ctx.db.patch(args.injuryId, patch);
+    await refreshRatingModel(ctx.db);
+    return args.injuryId;
+  },
+});
+
+export const deleteInjury = mutation({
+  args: { injuryId: v.id("injuries") },
+  handler: async (ctx, { injuryId }) => {
+    const inj = await ctx.db.get(injuryId);
+    if (!inj) return null;
+    await ctx.db.delete(injuryId);
+    if (inj.fromLogId) {
+      const log = await ctx.db.get(inj.fromLogId);
+      if (log?.injuredOff) await ctx.db.patch(log._id, { injuredOff: undefined });
+    }
+    await refreshRatingModel(ctx.db);
+    return injuryId;
   },
 });

@@ -125,10 +125,21 @@ export default defineSchema({
     contextFeatures: v.optional(v.array(v.string())), // p.ej. ["opponent_low_block"]
     rawStats: v.any(), // Flexible container for Sofascore/FotMob OCR ingested metrics (50+ fields)
     matchId: v.optional(v.id("matches")), // partido del equipo al que pertenece
+    injuredOff: v.optional(v.boolean()), // salió lesionado en este partido
   })
     .index("by_player", ["playerId"])
     .index("by_player_and_date", ["playerId", "matchDate"])
     .index("by_match", ["matchId"]),
+
+  // Lesiones de jugadores (la abierta = sin endDate)
+  injuries: defineTable({
+    playerId: v.id("players"),
+    startDate: v.string(), // YYYY-MM-DD
+    expectedReturn: v.optional(v.string()),
+    endDate: v.optional(v.string()), // vuelve a jugar o se marca recuperado
+    note: v.optional(v.string()),
+    fromLogId: v.optional(v.id("playerMatchLogs")), // partido en que se lesionó
+  }).index("by_player", ["playerId"]),
 
   // Parámetros globales aprendidos con todos los jugadores (p. ej. el modelo de nota)
   modelParams: defineTable({

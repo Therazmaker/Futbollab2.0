@@ -424,6 +424,20 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
                     </div>
                   </div>
                   <div className="flex items-center gap-1.5 shrink-0">
+                    {p.availability?.status === "injured" && (
+                      <span
+                        className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-error/15 text-error border border-error/40 flex items-center gap-0.5"
+                        title={p.availability.expectedReturn ? `Vuelta prevista ${p.availability.expectedReturn}` : "Lesionado"}
+                      >
+                        <span className="material-symbols-outlined text-[11px]">healing</span>
+                        {p.availability.expectedReturn ? p.availability.expectedReturn.slice(5) : "baja"}
+                      </span>
+                    )}
+                    {p.availability?.status === "returning" && (
+                      <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/40">
+                        vuelve
+                      </span>
+                    )}
                     {p.loggedMatches > 0 && (
                       <span className="font-mono text-[9px] px-1.5 py-0.5 rounded bg-primary/15 text-primary border border-primary/30">
                         {p.loggedMatches} partidos

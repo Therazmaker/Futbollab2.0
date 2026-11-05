@@ -1,6 +1,7 @@
 import type { GenericDatabaseReader, GenericDatabaseWriter } from "convex/server";
 import type { DataModel, Id } from "../_generated/dataModel";
 import { teamStrength } from "./ratingModel";
+import { postInjuryFlags } from "./injuries";
 import {
   FEATURE_PRIORS,
   fitProfile,
@@ -34,9 +35,21 @@ export async function loadPlayerModelInput(db: Reader, playerId: Id<"players">) 
   const defenseOf = async (teamId?: Id<"teams">) => (await teamInfo(teamId)).defense;
   const strengthOf = async (teamId?: Id<"teams">) => (await teamInfo(teamId)).strength;
   const ownStrength = await strengthOf(player.teamId);
+  const injuries = await db
+    .query("injuries")
+    .withIndex("by_player", (q) => q.eq("playerId", playerId))
+    .collect();
+  // Los flags de vuelta de lesión se calculan sobre los partidos jugados (minutos > 0)
+  const playedDates = logs.filter((l) => l.minutesPlayed > 0).map((l) => l.matchDate);
+  const playedFlags = postInjuryFlags(playedDates, injuries);
+  const flagByIndex = new Map<number, boolean>();
+  let k = 0;
+  logs.forEach((l, i) => {
+    if (l.minutesPlayed > 0) flagByIndex.set(i, playedFlags[k++]);
+  });
 
   const modelLogs: ModelLog[] = [];
-  for (const l of logs) {
+  for (const [i, l] of logs.entries()) {
     modelLogs.push({
       id: l._id,
       matchDate: l.matchDate,
@@ -48,13 +61,15 @@ export async function loadPlayerModelInput(db: Reader, playerId: Id<"players">) 
       opponentDefense: await defenseOf(l.opponentTeamId),
       opponentStrength: await strengthOf(l.opponentTeamId),
       ownStrength,
+      injuredOff: !!l.injuredOff,
+      postInjury: flagByIndex.get(i) ?? false,
     });
   }
   const priorInput: PlayerPriorInput = {
     position: player.position,
     seasonStats: player.seasonStats ?? null,
   };
-  return { player, logs: modelLogs, priorInput, defenseOf, strengthOf, ownStrength };
+  return { player, logs: modelLogs, priorInput, defenseOf, strengthOf, ownStrength, injuries };
 }
 
 /**

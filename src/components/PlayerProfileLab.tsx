@@ -94,6 +94,27 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
   const [selectedTeamMatch, setSelectedTeamMatch] = useState<any | null>(null);
   const [teamGoals, setTeamGoals] = useState<string>("");
   const [opponentGoals, setOpponentGoals] = useState<string>("");
+  // Lesión en el partido que se registra
+  const [injuredOff, setInjuredOff] = useState(false);
+  const [expectedReturn, setExpectedReturn] = useState("");
+  const [injuryNote, setInjuryNote] = useState("");
+  // Ficha de lesiones
+  const reportInjuryMutation = useMutation(api.players.reportInjury);
+  const updateInjuryMutation = useMutation(api.players.updateInjury);
+  const deleteInjuryMutation = useMutation(api.players.deleteInjury);
+  const [injuryModal, setInjuryModal] = useState(false);
+  const [injuryForm, setInjuryForm] = useState({ startDate: "", expectedReturn: "", note: "" });
+  const [injuryError, setInjuryError] = useState<string | null>(null);
+  const runInjury = async (fn: () => Promise<unknown>) => {
+    setInjuryError(null);
+    try {
+      await fn();
+      setInjuryModal(false);
+    } catch (err: any) {
+      setInjuryError(err?.message ?? String(err));
+    }
+  };
+  const [nextMatchDate, setNextMatchDate] = useState<string>("");
   const [pastedStats, setPastedStats] = useState<Record<string, number> | null>(null);
   const [pasteInfo, setPasteInfo] = useState<string | null>(null);
 
@@ -147,6 +168,8 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
   const activePlayer = profileData?.player;
   const isDemoPlayer = !!activePlayer && !(activePlayer as any).legacyId && activePlayer.name === INITIAL_PLAYER.name;
   const activeTeam = profileData?.team;
+  const availability: any = (profileData as any)?.availability ?? null;
+  const openInjury: any = ((profileData as any)?.injuries ?? []).find((i: any) => !i.endDate) ?? null;
   const teamRecentMatches =
     useQuery(
       api.teams.recentMatches,
@@ -198,6 +221,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
           opponentTeamId: (nextOpponentTeamId || undefined) as any,
           isAway: nextIsAway,
           minutes: nextMinutes ? Number(nextMinutes) : undefined,
+          matchDate: nextMatchDate || undefined,
         }
       : "skip"
   );
@@ -297,6 +321,9 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
           matchId: selectedTeamMatch?._id,
           teamGoals: teamGoals === "" ? undefined : Number(teamGoals),
           opponentGoals: opponentGoals === "" ? undefined : Number(opponentGoals),
+          injuredOff,
+          expectedReturn: injuredOff ? expectedReturn : undefined,
+          injuryNote: injuredOff ? injuryNote : undefined,
         }),
       });
 
@@ -321,6 +348,9 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
         setSelectedTeamMatch(null);
         setTeamGoals("");
         setOpponentGoals("");
+        setInjuredOff(false);
+        setExpectedReturn("");
+        setInjuryNote("");
         setActualRating("");
       } else {
         setLastCalibrationNotice(`No se registró: ${data.error}`);
@@ -354,6 +384,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
         matchDate: editingLog.matchDate,
         isAway: editingLog.isAway,
         minutesPlayed: editingLog.minutesPlayed,
+        injuredOff: !!editingLog.injuredOff,
         tacticalRole: editingLog.tacticalRole,
         competition: editingLog.competition,
         opponentTeamId: editingLog.opponentTeamId ?? null,
@@ -510,6 +541,34 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                     {activePlayer?.position || player.position}
                     <span className="material-symbols-outlined text-[12px]">edit</span>
                   </button>
+                  {activePlayer && (
+                    <button
+                      onClick={() => {
+                        setInjuryError(null);
+                        setInjuryForm({
+                          startDate: today,
+                          expectedReturn: openInjury?.expectedReturn ?? "",
+                          note: openInjury?.note ?? "",
+                        });
+                        setInjuryModal(true);
+                      }}
+                      title="Lesiones"
+                      className={`font-mono text-[10px] px-2 py-0.5 rounded font-semibold border flex items-center gap-1 ${
+                        availability?.status === "injured"
+                          ? "bg-error/15 text-error border-error/40"
+                          : availability?.status === "returning"
+                          ? "bg-amber-500/15 text-amber-300 border-amber-500/40"
+                          : "bg-surface-container text-on-surface-variant border-surface-container-high"
+                      }`}
+                    >
+                      <span className="material-symbols-outlined text-[12px]">healing</span>
+                      {availability?.status === "injured"
+                        ? `Lesionado${availability.expectedReturn ? ` · vuelve ${availability.expectedReturn}` : ""}`
+                        : availability?.status === "returning"
+                        ? `Vuelta de lesión (${availability.matchesBack}/2)`
+                        : "Disponible"}
+                    </button>
+                  )}
                   <span className="text-on-surface-variant text-xs font-sans">
                     {(activePlayer as any)?.age
                       ? `${(activePlayer as any).age} años`
@@ -616,6 +675,8 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                       ? "visitante"
                       : w.featureName === "opponent_defense"
                       ? "defensa rival"
+                      : w.featureName === "post_injury"
+                      ? "vuelta de lesión"
                       : w.featureName.replace(/_/g, " ")}
                   </span>
                   <div className="flex items-baseline justify-between mt-1">
@@ -895,6 +956,11 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                 >
                   {log.isAway ? "A" : "H"}
                 </span>
+                {log.injuredOff && (
+                  <span className="material-symbols-outlined text-[14px] text-error shrink-0" title="Salió lesionado">
+                    healing
+                  </span>
+                )}
                 <div className="truncate">
                   <div className="flex items-center gap-1.5">
                     <p className="font-semibold text-xs text-on-surface truncate group-hover:text-primary transition-colors">
@@ -979,6 +1045,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                     setNextOpponentTeamId(m.opponentId);
                     setNextOpponent(m.opponent);
                     setNextIsAway(!m.isHome);
+                    setNextMatchDate(m.date);
                   }}
                   className={`shrink-0 px-2.5 py-1.5 rounded-lg font-mono text-[10px] text-left border ${
                     active ? "bg-primary text-on-primary border-primary font-bold" : "bg-surface-container text-on-surface border-surface-container-high"
@@ -1013,6 +1080,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
             onChange={(id, found) => {
               setNextOpponentTeamId(id);
               setNextOpponent(found?.name ?? "");
+              setNextMatchDate("");
             }}
           />
           <div className="flex items-center gap-3 font-mono text-xs">
@@ -1038,6 +1106,20 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
 
         {preview && (
           <div className="mt-3 flex flex-col gap-2">
+            {preview.availability.status === "injured" && (
+              <div className="rounded-lg border border-error/50 bg-error/10 p-2 font-mono text-[11px] text-error">
+                Lesionado desde {preview.availability.since}
+                {preview.availability.expectedReturn
+                  ? `, vuelta prevista ${preview.availability.expectedReturn}: no llega a este partido (${preview.matchDate}).`
+                  : ": sin fecha de vuelta, probablemente no juega."}{" "}
+                Si jugara, esto es lo esperable (vuelta de lesión, menos minutos).
+              </div>
+            )}
+            {preview.availability.status === "returning" && (
+              <div className="rounded-lg border border-amber-500/50 bg-amber-500/10 p-2 font-mono text-[11px] text-amber-300">
+                Vuelve de lesión ({preview.availability.matchesBack} de 2 partidos): se esperan menos minutos y algo menos de rendimiento.
+              </div>
+            )}
             {/* Nota esperada */}
             <div className="rounded-xl bg-surface-container p-3 border border-primary/30">
               <div className="flex items-end justify-between">
@@ -1115,6 +1197,144 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
           </div>
         )}
       </div>
+
+      {/* Modal: lesión del jugador */}
+      {injuryModal && activePlayer && (
+        <div className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain flex justify-center bg-black/80 backdrop-blur-sm p-4">
+          <div className="bg-surface-container-low border border-error/40 rounded-2xl w-full max-w-md p-5 shadow-2xl my-auto flex flex-col gap-3">
+            <div className="flex items-center justify-between pb-3 border-b border-surface-container-high">
+              <h3 className="font-bold text-base text-on-surface flex items-center gap-2">
+                <span className="material-symbols-outlined text-error text-[20px]">healing</span>
+                Lesiones de {activePlayer.name}
+              </h3>
+              <button onClick={() => setInjuryModal(false)} className="w-8 h-8 rounded-lg bg-surface-container text-on-surface-variant hover:text-on-surface">
+                ✕
+              </button>
+            </div>
+
+            {openInjury ? (
+              <div className="flex flex-col gap-2 font-mono text-xs">
+                <p className="text-error font-bold">Lesionado desde {openInjury.startDate}</p>
+                <label className="text-[10px] text-on-surface-variant uppercase">
+                  Vuelta prevista
+                  <input
+                    type="date"
+                    value={injuryForm.expectedReturn}
+                    onChange={(e) => setInjuryForm({ ...injuryForm, expectedReturn: e.target.value })}
+                    className="w-full h-9 px-2 mt-0.5 rounded-lg bg-surface-container text-on-surface border border-surface-container-high"
+                  />
+                </label>
+                <input
+                  value={injuryForm.note}
+                  onChange={(e) => setInjuryForm({ ...injuryForm, note: e.target.value })}
+                  placeholder="Nota (p. ej. isquiotibiales)"
+                  className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface border border-surface-container-high"
+                />
+                <div className="flex flex-wrap gap-2 justify-end">
+                  <button
+                    onClick={() =>
+                      runInjury(() =>
+                        updateInjuryMutation({
+                          injuryId: openInjury._id,
+                          expectedReturn: injuryForm.expectedReturn || null,
+                          note: injuryForm.note || null,
+                        })
+                      )
+                    }
+                    className="px-3 h-8 rounded-lg bg-surface-container-high text-secondary border border-secondary/30"
+                  >
+                    Guardar cambios
+                  </button>
+                  <button
+                    onClick={() => runInjury(() => updateInjuryMutation({ injuryId: openInjury._id, endDate: today }))}
+                    className="px-3 h-8 rounded-lg bg-primary text-on-primary font-bold"
+                  >
+                    Dar de alta hoy
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2 font-mono text-xs">
+                <p className="text-on-surface-variant text-[11px]">
+                  Para lesiones fuera de un partido (entrenamiento…). Si se lesionó jugando, márcalo al registrar el
+                  partido con "Salió lesionado".
+                </p>
+                <div className="grid grid-cols-2 gap-2">
+                  <label className="text-[10px] text-on-surface-variant uppercase">
+                    Desde
+                    <input
+                      type="date"
+                      value={injuryForm.startDate}
+                      onChange={(e) => setInjuryForm({ ...injuryForm, startDate: e.target.value })}
+                      className="w-full h-9 px-2 mt-0.5 rounded-lg bg-surface-container text-on-surface border border-surface-container-high"
+                    />
+                  </label>
+                  <label className="text-[10px] text-on-surface-variant uppercase">
+                    Vuelta prevista
+                    <input
+                      type="date"
+                      value={injuryForm.expectedReturn}
+                      onChange={(e) => setInjuryForm({ ...injuryForm, expectedReturn: e.target.value })}
+                      className="w-full h-9 px-2 mt-0.5 rounded-lg bg-surface-container text-on-surface border border-surface-container-high"
+                    />
+                  </label>
+                </div>
+                <input
+                  value={injuryForm.note}
+                  onChange={(e) => setInjuryForm({ ...injuryForm, note: e.target.value })}
+                  placeholder="Nota (opcional)"
+                  className="w-full h-9 px-3 rounded-lg bg-surface-container text-on-surface border border-surface-container-high"
+                />
+                <div className="flex justify-end">
+                  <button
+                    onClick={() =>
+                      runInjury(() =>
+                        reportInjuryMutation({
+                          playerId: activePlayer._id,
+                          startDate: injuryForm.startDate || today,
+                          expectedReturn: injuryForm.expectedReturn || undefined,
+                          note: injuryForm.note || undefined,
+                        })
+                      )
+                    }
+                    className="px-4 h-8 rounded-lg bg-error text-black font-bold"
+                  >
+                    Registrar lesión
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {injuryError && <p className="font-mono text-[11px] text-error">{injuryError}</p>}
+
+            {(profileData?.injuries ?? []).length > 0 && (
+              <div className="pt-2 border-t border-surface-container-high">
+                <p className="font-mono text-[10px] uppercase text-on-surface-variant mb-1">Historial</p>
+                <div className="flex flex-col divide-y divide-surface-container-high/40 font-mono text-[11px]">
+                  {(profileData?.injuries ?? []).map((i: any) => (
+                    <div key={i._id} className="flex items-center justify-between py-1.5">
+                      <span className="text-on-surface">
+                        {i.startDate} → {i.endDate ?? (i.expectedReturn ? `prev. ${i.expectedReturn}` : "abierta")}
+                        {i.note ? <span className="text-on-surface-variant"> · {i.note}</span> : null}
+                        {i.fromLogId ? <span className="text-on-surface-variant"> · en partido</span> : null}
+                      </span>
+                      <button
+                        onClick={() => {
+                          if (window.confirm("¿Borrar esta lesión del historial?")) runInjury(() => deleteInjuryMutation({ injuryId: i._id }));
+                        }}
+                        className="text-on-surface-variant hover:text-error"
+                        aria-label="Borrar lesión"
+                      >
+                        <span className="material-symbols-outlined text-[14px]">delete</span>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Modal: editar ficha del jugador */}
       {editingPlayer && activePlayer && (
@@ -1302,6 +1522,16 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                   </select>
                 </div>
               </div>
+
+              <label className="flex items-center gap-2 font-mono text-[11px] text-on-surface cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={!!editingLog.injuredOff}
+                  onChange={(e) => setEditingLog({ ...editingLog, injuredOff: e.target.checked })}
+                />
+                <span className="material-symbols-outlined text-[14px] text-error">healing</span>
+                Salió lesionado en este partido
+              </label>
 
               <div>
                 <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
@@ -1543,6 +1773,44 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                   <p className="font-mono text-[9px] text-tertiary">
                     Elige el rival de la lista para que el partido quede también en el perfil del equipo.
                   </p>
+                )}
+              </div>
+
+              {/* Lesión en este partido */}
+              <div className={`rounded-lg border p-2.5 flex flex-col gap-1.5 ${injuredOff ? "border-error/50 bg-error/5" : "border-surface-container-high"}`}>
+                <label className="flex items-center gap-2 font-mono text-[11px] text-on-surface cursor-pointer">
+                  <input type="checkbox" checked={injuredOff} onChange={(e) => setInjuredOff(e.target.checked)} />
+                  <span className="material-symbols-outlined text-[14px] text-error">healing</span>
+                  Salió lesionado
+                </label>
+                {injuredOff && (
+                  <>
+                    <div className="grid grid-cols-2 gap-2">
+                      <label className="font-mono text-[10px] text-on-surface-variant uppercase">
+                        Vuelta prevista (opcional)
+                        <input
+                          type="date"
+                          value={expectedReturn}
+                          onChange={(e) => setExpectedReturn(e.target.value)}
+                          className="w-full h-8 px-2 mt-0.5 rounded bg-surface-container text-on-surface border border-surface-container-high"
+                        />
+                      </label>
+                      <label className="font-mono text-[10px] text-on-surface-variant uppercase">
+                        Nota
+                        <input
+                          value={injuryNote}
+                          onChange={(e) => setInjuryNote(e.target.value)}
+                          placeholder="p. ej. tobillo"
+                          className="w-full h-8 px-2 mt-0.5 rounded bg-surface-container text-on-surface border border-surface-container-high"
+                        />
+                      </label>
+                    </div>
+                    <p className="font-mono text-[9px] text-on-surface-variant">
+                      Sus minutos de hoy no cuentan como suplencia ni su nota como mal partido. Quedará como lesionado
+                      hasta la vuelta prevista o hasta que registres su siguiente partido; los 2 primeros partidos al
+                      volver llevan el efecto "vuelta de lesión".
+                    </p>
+                  </>
                 )}
               </div>
 
