@@ -344,7 +344,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
             {leaguesList.length} Registradas
           </span>
         </div>
-        <div className="flex items-center gap-2 overflow-x-auto pb-1 w-full no-scrollbar">
+        <div className="flex flex-wrap items-center gap-2 pb-1 w-full">
           {leaguesList.map((lg) => {
             const isSelected = selectedLeague === lg.code;
             return (
@@ -390,8 +390,8 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
         </div>
 
         {/* Quick Sorting Chips */}
-        <div className="flex items-center justify-between gap-1 overflow-x-auto no-scrollbar">
-          <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center justify-between gap-1">
+          <div className="flex flex-wrap items-center gap-1">
             <span className="font-mono text-[10px] text-on-surface-variant uppercase mr-1">Ordenar:</span>
             {(["points", "attack", "defense", "name"] as const).map((s) => (
               <button
