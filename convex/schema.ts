@@ -34,6 +34,8 @@ export default defineSchema({
     // Calculado a partir de los partidos reales (tabla `matches`)
     legacyId: v.optional(v.string()),
     season: v.optional(v.string()), // temporada a la que corresponden rank/points/played…
+    // Equipo sin liga (league = "intl"): temporada en la que está inscrito en su competición
+    competitionSeason: v.optional(v.string()),
     played: v.optional(v.number()),
     wins: v.optional(v.number()),
     draws: v.optional(v.number()),

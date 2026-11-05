@@ -5,6 +5,7 @@ import { recomputeLeague } from "./lib/leagueTable";
 import { findTeamMatch } from "./lib/teamMatches";
 import { refreshRatingModel } from "./lib/ratingStore";
 import { currentSeason, seasonOf } from "./lib/season";
+import { activeIn, homeCompetition, isNoLeague, NO_LEAGUE } from "./lib/noLeague";
 
 /**
  * Returns all registered leagues and continental tournaments.
@@ -62,13 +63,8 @@ export const getTeams = query({
     }
 
     const code = args.league.toLowerCase();
-    return all.filter((t: any) => {
-      const isDomestic = t.league?.toLowerCase() === code;
-      const isLinkedToCompetition = t.competitions?.some(
-        (c: string) => c.toLowerCase() === code
-      );
-      return isDomestic || isLinkedToCompetition;
-    });
+    // Los equipos "solo Champions" se ven en su competición solo en su temporada
+    return all.filter((t) => activeIn(t, code));
   },
 });
 
@@ -80,7 +76,7 @@ export const createTeam = mutation({
   args: {
     name: v.string(),
     shortName: v.optional(v.string()),
-    league: v.string(), // Domestic league code, e.g. "seriea"
+    league: v.string(), // Liga doméstica ("seriea"…) o "intl" = sin liga, solo competición internacional
     competitions: v.optional(v.array(v.string())), // e.g. ["seriea", "ucl"]
     crestUrl: v.optional(v.string()),
     rank: v.optional(v.number()),
@@ -95,19 +91,21 @@ export const createTeam = mutation({
     predAccuracy: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    // Ensure domestic league is included in competitions list
+    const league = args.league.toLowerCase();
     const comps = new Set<string>();
-    comps.add(args.league.toLowerCase());
-    if (args.competitions) {
-      args.competitions.forEach((c) => comps.add(c.toLowerCase()));
+    if (league !== NO_LEAGUE) comps.add(league);
+    (args.competitions ?? []).forEach((c) => c.toLowerCase() !== NO_LEAGUE && comps.add(c.toLowerCase()));
+    if (league === NO_LEAGUE && comps.size === 0) {
+      throw new Error("Un equipo sin liga tiene que estar inscrito en alguna competición (p. ej. la Champions).");
     }
 
     // Solo se guarda lo que el usuario dio: tabla, forma y fuerza salen de los resultados
     return await ctx.db.insert("teams", {
       name: args.name,
       shortName: args.shortName || args.name.slice(0, 3).toUpperCase(),
-      league: args.league.toLowerCase(),
+      league,
       competitions: Array.from(comps),
+      competitionSeason: league === NO_LEAGUE ? currentSeason() : undefined,
       crestUrl: args.crestUrl,
       formation: args.formation,
     });
@@ -131,7 +129,9 @@ export const linkTeamToCompetition = mutation({
     comps.add(args.competitionCode.toLowerCase());
 
     await ctx.db.patch(args.teamId, {
-      competitions: Array.from(comps),
+      competitions: Array.from(comps).filter((c) => c !== NO_LEAGUE),
+      // Un equipo sin liga se (re)inscribe para la temporada actual
+      ...(isNoLeague(team) ? { competitionSeason: currentSeason() } : {}),
     });
 
     return { success: true, competitions: Array.from(comps) };
@@ -410,7 +410,10 @@ export const getTeamProfile = query({
       // Récord de LIGA de la TEMPORADA ACTUAL (igual que los puntos); `results` incluye todo
       record: (() => {
         const season = team.season ?? currentSeason();
-        const league = results.filter((r) => r.competition === team.league && r.season === season);
+        const comp = homeCompetition(team);
+        // Equipo sin liga: su récord es el de su competición (p. ej. UCL) en la temporada actual
+        const recSeason = isNoLeague(team) ? currentSeason() : season;
+        const league = results.filter((r) => r.competition === comp && r.season === recSeason);
         return { total: split(league), home: split(league.filter((r) => r.isHome)), away: split(league.filter((r) => !r.isHome)) };
       })(),
       results,
@@ -505,7 +508,7 @@ export const addMatchResult = mutation({
       await refreshRatingModel(ctx.db);
       return existing._id;
     }
-    const league = args.competition || home.league;
+    const league = args.competition || homeCompetition(home);
     const id = await ctx.db.insert("matches", {
       homeTeamId: args.homeTeamId,
       awayTeamId: args.awayTeamId,
@@ -670,7 +673,7 @@ export const scheduleMatch = mutation({
       homeTeamId,
       awayTeamId,
       date: args.date,
-      league: args.competition || team.league,
+      league: args.competition || homeCompetition(team),
     });
   },
 });

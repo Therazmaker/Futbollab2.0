@@ -5,6 +5,7 @@ import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { useSyncTelemetry } from "@/lib/offline-sync";
+import { currentSeason } from "../../convex/lib/season";
 
 interface LeaguesExplorerProps {
   onSelectTeam: (teamId: Id<"teams">) => void;
@@ -28,6 +29,8 @@ interface TeamCard {
   badgeUrl?: string;
   competitions: string[];
   season?: string;
+  noLeague?: boolean;
+  competitionSeason?: string;
   lastSeason?: { season: string; rank: number; points: number; played: number } | null;
 }
 
@@ -96,6 +99,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
   const [teamShortName, setTeamShortName] = useState("");
   const [teamDomesticLeague, setTeamDomesticLeague] = useState("seriea");
   const [teamLinkUcl, setTeamLinkUcl] = useState(true);
+  const [teamIntlComp, setTeamIntlComp] = useState("ucl");
+  const [createError, setCreateError] = useState<string | null>(null);
+  const noLeague = teamDomesticLeague === "intl";
   const [teamFormation, setTeamFormation] = useState("3-5-2");
 
   // League selector list
@@ -145,7 +151,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
       bundesliga: "Bundesliga",
       ligue1: "Ligue 1",
       ucl: "Champions League",
+      intl: "Sin liga",
     };
+    const compLabel: Record<string, string> = { ucl: "UCL", uel: "UEL", uecl: "UECL" };
     return (convexTeams ?? []).map((t: any) => {
       const played = t.played ?? 0;
       return {
@@ -153,7 +161,10 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
         name: t.name,
         shortName: t.shortName || t.name.slice(0, 3).toUpperCase(),
         leagueCode: t.league,
-        leagueName: labels[t.league?.toLowerCase()] ?? t.league,
+        leagueName:
+          t.league === "intl"
+            ? `Solo ${(t.competitions ?? []).map((c: string) => compLabel[c] ?? c.toUpperCase()).join("/")} ${t.competitionSeason ?? ""}`.trim()
+            : labels[t.league?.toLowerCase()] ?? t.league,
         rank: t.rank ?? null,
         points: t.points ?? 0,
         played,
@@ -165,6 +176,8 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
         form: t.played ? t.form ?? [] : [],
         badgeUrl: t.crestUrl,
         competitions: t.competitions || [t.league],
+        noLeague: t.league === "intl",
+        competitionSeason: t.competitionSeason,
         season: t.season,
         lastSeason: t.lastSeason ?? null,
       };
@@ -223,9 +236,11 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
     e.preventDefault();
     if (!teamName.trim()) return;
     setIsSubmitting(true);
+    setCreateError(null);
     try {
-      const comps = [teamDomesticLeague.toLowerCase()];
-      if (teamLinkUcl && !comps.includes("ucl")) {
+      // Sin liga: solo la competición internacional elegida (esta temporada)
+      const comps = noLeague ? [teamIntlComp] : [teamDomesticLeague.toLowerCase()];
+      if (!noLeague && teamLinkUcl && !comps.includes("ucl")) {
         comps.push("ucl");
       }
 
@@ -240,8 +255,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
       setIsAddTeamOpen(false);
       setTeamName("");
       setTeamShortName("");
-    } catch (err) {
+    } catch (err: any) {
       console.error("Error creating club:", err);
+      setCreateError(err?.message ?? String(err));
     } finally {
       setIsSubmitting(false);
     }
@@ -474,7 +490,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
           </div>
         ) : (
           filteredClubs.map((club) => {
-            const playsUcl = club.competitions?.includes("ucl");
+            // Un equipo sin liga solo "juega" la UCL en la temporada en que está inscrito
+            const playsUcl =
+              club.competitions?.includes("ucl") && (!club.noLeague || club.competitionSeason === currentSeason());
             return (
               <div
                 key={club.id}
@@ -521,7 +539,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                             <span>DG {signed(club.goalDifference)}</span>
                           </>
                         ) : (
-                          <span>Sin partidos de liga {club.season ?? "esta temporada"}</span>
+                          <span>
+                            {club.noLeague ? "Sin partidos registrados" : `Sin partidos de liga ${club.season ?? "esta temporada"}`}
+                          </span>
                         )}
                       </div>
                     </div>
@@ -766,6 +786,8 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                     <option value="laliga">🇪🇸 LaLiga</option>
                     <option value="premier">🇬🇧 Premier League</option>
                     <option value="bundesliga">🇩🇪 Bundesliga</option>
+                    <option value="ligue1">🇫🇷 Ligue 1</option>
+                    <option value="intl">🌍 Ninguna (solo competición europea)</option>
                   </select>
                 </div>
                 <div>
@@ -781,6 +803,26 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                 </div>
               </div>
 
+              {noLeague ? (
+                <div className="p-3 rounded-xl bg-cyan-950/40 border border-cyan-800/50 mt-1 flex flex-col gap-2">
+                  <label className="block text-[10px] font-mono text-cyan-300 uppercase">Inscrito solo en</label>
+                  <select
+                    value={teamIntlComp}
+                    onChange={(e) => setTeamIntlComp(e.target.value)}
+                    className="w-full h-9 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
+                  >
+                    <option value="ucl">🏆 Champions League</option>
+                    <option value="uel">🏆 Europa League</option>
+                    <option value="uecl">🏆 Conference League</option>
+                  </select>
+                  <p className="text-[10px] text-cyan-200/70 font-mono">
+                    No se registra su liga. Aparece en esta competición solo durante la temporada actual; la próxima
+                    puedes volver a inscribirlo con "Vincular". Sin partidos de liga no tiene fuerza calculada: en el
+                    simulador y en la nota esperada cuenta como un equipo medio.
+                  </p>
+                </div>
+              ) : (
+              <>
               {/* Champions League Linking Checkbox */}
               <div className="p-3 rounded-xl bg-cyan-950/40 border border-cyan-800/50 mt-1">
                 <label className="flex items-center gap-2.5 cursor-pointer text-xs font-mono">
@@ -800,10 +842,13 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                   </div>
                 </label>
               </div>
+              </>
+              )}
 
               <p className="font-mono text-[10px] text-on-surface-variant">
                 Puntos, forma y fuerza se calculan solos con los resultados que registres en su perfil.
               </p>
+              {createError && <p className="font-mono text-[11px] text-error">{createError}</p>}
 
               <div className="mt-3 pt-3 pb-1 border-t border-surface-container-high flex items-center justify-end gap-2 sticky bottom-0 bg-surface-container-low z-10">
                 <button

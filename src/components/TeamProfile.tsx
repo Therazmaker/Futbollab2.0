@@ -149,7 +149,13 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
 
   const { team, record, results: allResults, squad } = data;
   const season = data.season;
-  const leagueName = LEAGUE_LABEL[team.league] ?? data.league?.name ?? team.league;
+  const noLeague = team.league === "intl";
+  const ownComp = noLeague ? (team.competitions ?? []).find((c) => c !== "intl") ?? "ucl" : team.league;
+  const leagueName = noLeague
+    ? `Solo ${LEAGUE_LABEL[ownComp] ?? ownComp.toUpperCase()}`
+    : LEAGUE_LABEL[team.league] ?? data.league?.name ?? team.league;
+  // Sin liga no hay tabla: los puntos se cuentan con sus partidos de la competición
+  const points = noLeague ? record.total.wins * 3 + record.total.draws : team.points ?? 0;
   const seasonResults = allResults.filter((r) => r.season === season);
   const results = resultsScope === "season" ? seasonResults : allResults;
   const visibleResults = showAllResults ? results : results.slice(0, 8);
@@ -250,7 +256,7 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
         </div>
 
         <p className="mt-3 font-mono text-[10px] uppercase text-on-surface-variant">
-          Temporada {season} · liga
+          Temporada {season} · {noLeague ? `${LEAGUE_LABEL[ownComp] ?? ownComp.toUpperCase()} (sin liga doméstica)` : "liga"}
           {team.lastSeason && (
             <span className="normal-case">
               {" "}
@@ -260,7 +266,7 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
         </p>
         <div className="grid grid-cols-4 gap-2 mt-1 font-mono text-center">
           {[
-            ["Pts", team.points ?? 0],
+            ["Pts", points],
             ["PJ", record.total.played],
             ["G-E-P", `${record.total.wins}-${record.total.draws}-${record.total.losses}`],
             ["Goles", `${record.total.goalsFor}:${record.total.goalsAgainst}`],
