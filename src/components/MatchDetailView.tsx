@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { parseMatchStats } from "@/lib/parse-match-stats";
 import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
+import { RivalPicker } from "./RivalPicker";
 
 interface MatchDetailViewProps {
   matchLog: any;
@@ -296,26 +297,16 @@ export function MatchDetailView({ matchLog, playerName, playerNumber, prediction
                 </option>
               ))}
             </select>
-            <select
+            <RivalPicker
+              teams={teams as any[]}
               value={opponentTeamId}
-              onChange={(e) => {
-                setOpponentTeamId(e.target.value);
-                const found = (teams as any[]).find((t: any) => t._id === e.target.value);
+              competition={competition || undefined}
+              placeholder="— Rival sin vincular —"
+              onChange={(id, found) => {
+                setOpponentTeamId(id);
                 if (found) setOpponent(found.name);
               }}
-              className={input}
-              aria-label="Equipo rival"
-            >
-              <option value="">— Rival sin vincular —</option>
-              {(teams as any[])
-                .slice()
-                .sort((a: any, b: any) => a.name.localeCompare(b.name))
-                .map((t: any) => (
-                  <option key={t._id} value={t._id}>
-                    {t.name}
-                  </option>
-                ))}
-            </select>
+            />
           </div>
           <div className="grid grid-cols-3 gap-2">
             <input type="date" value={matchDate} onChange={(e) => setMatchDate(e.target.value)} className={input} required />

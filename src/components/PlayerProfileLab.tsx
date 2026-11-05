@@ -7,6 +7,7 @@ import { INITIAL_PLAYER, PlayerData } from "@/data/mock-data";
 import { BrainTargetRadar, PredictionMetricPoint } from "./BrainTargetRadar";
 import { LearningCurve } from "./LearningCurve";
 import { HScroll } from "./HScroll";
+import { RivalPicker } from "./RivalPicker";
 import { parseMatchStats } from "@/lib/parse-match-stats";
 import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -151,6 +152,12 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
       api.teams.recentMatches,
       isModalOpen && activeTeam ? { teamId: activeTeam._id, playerId: activePlayer?._id, limit: 12 } : "skip"
     ) ?? [];
+
+  const playerScopes = activeTeam
+    ? Array.from(
+        new Set([...(activeTeam.league === "intl" ? [] : [activeTeam.league]), ...(activeTeam.competitions ?? []).filter((c: string) => c !== "intl")])
+      )
+    : [];
 
   const pickTeamMatch = (m: any | null) => {
     setSelectedTeamMatch(m);
@@ -996,27 +1003,18 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
         )}
 
         <div className="grid grid-cols-2 gap-2">
-          <select
+          <RivalPicker
+            teams={registeredTeams as any[]}
+            excludeId={activeTeam?._id}
             value={nextOpponentTeamId}
-            onChange={(e) => {
-              setNextOpponentTeamId(e.target.value);
-              setNextOpponent(teamName(e.target.value));
+            scopes={playerScopes}
+            placeholder="— Rival (sin rival = equipo medio) —"
+            className="col-span-2"
+            onChange={(id, found) => {
+              setNextOpponentTeamId(id);
+              setNextOpponent(found?.name ?? "");
             }}
-            className="col-span-2 h-9 px-2.5 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
-          >
-            <option value="">— Rival (sin rival = equipo medio) —</option>
-            {(registeredTeams as any[])
-              .filter((tm: any) => tm._id !== activeTeam?._id)
-              .sort(
-                (x: any, y: any) =>
-                  Number(y.league === activeTeam?.league) - Number(x.league === activeTeam?.league) || x.name.localeCompare(y.name)
-              )
-              .map((tm: any) => (
-                <option key={tm._id} value={tm._id}>
-                  {tm.name} ({tm.league?.toUpperCase()})
-                </option>
-              ))}
-          </select>
+          />
           <div className="flex items-center gap-3 font-mono text-xs">
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input type="radio" checked={!nextIsAway} onChange={() => setNextIsAway(false)} className="accent-primary" />
@@ -1309,25 +1307,17 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                 <label className="block text-[10px] font-mono text-on-surface-variant uppercase mb-1">
                   Equipo rival (usa su fuerza defensiva)
                 </label>
-                <select
+                <RivalPicker
+                  teams={registeredTeams as any[]}
+                  excludeId={activeTeam?._id}
                   value={editingLog.opponentTeamId ?? ""}
-                  onChange={(e) => {
-                    const id = e.target.value || null;
-                    const found = (registeredTeams as any[]).find((t: any) => t._id === id);
-                    setEditingLog({ ...editingLog, opponentTeamId: id, opponent: found ? found.name : editingLog.opponent });
-                  }}
-                  className="w-full h-9 px-2 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high"
-                >
-                  <option value="">— Sin vincular (solo el nombre) —</option>
-                  {(registeredTeams as any[])
-                    .filter((tm: any) => tm._id !== activeTeam?._id)
-                    .sort((x: any, y: any) => x.name.localeCompare(y.name))
-                    .map((tm: any) => (
-                      <option key={tm._id} value={tm._id}>
-                        {tm.name} ({tm.league?.toUpperCase()})
-                      </option>
-                    ))}
-                </select>
+                  competition={editingLog.competition || undefined}
+                  scopes={playerScopes}
+                  placeholder="— Sin vincular (solo el nombre) —"
+                  onChange={(id, found) =>
+                    setEditingLog({ ...editingLog, opponentTeamId: id || null, opponent: found ? found.name : editingLog.opponent })
+                  }
+                />
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -1644,33 +1634,18 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <select
+                  <RivalPicker
+                    teams={registeredTeams as any[]}
+                    excludeId={activeTeam?._id}
                     value={selectedOpponentTeamId}
                     disabled={!!selectedTeamMatch}
-                    onChange={(e) => {
-                      const id = e.target.value;
+                    competition={matchCompetition}
+                    placeholder="— Club existente (o escribe abajo) —"
+                    onChange={(id, found) => {
                       setSelectedOpponentTeamId(id);
-                      if (id) {
-                        const found = (registeredTeams as any[]).find((t: any) => t._id === id);
-                        if (found) setMatchOpponent(found.name);
-                      }
+                      if (found) setMatchOpponent(found.name);
                     }}
-                    className="w-full h-9 px-2.5 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
-                  >
-                    <option value="">-- Seleccionar club existente o escribir manual --</option>
-                    {(registeredTeams as any[])
-                      .filter((tm: any) => tm._id !== activeTeam?._id)
-                      .sort(
-                        (x: any, y: any) =>
-                          Number(y.league === activeTeam?.league) - Number(x.league === activeTeam?.league) ||
-                          x.name.localeCompare(y.name)
-                      )
-                      .map((tm: any) => (
-                        <option key={tm._id} value={tm._id}>
-                          {tm.name} ({tm.league?.toUpperCase()})
-                        </option>
-                      ))}
-                  </select>
+                  />
 
                   <input
                     type="text"

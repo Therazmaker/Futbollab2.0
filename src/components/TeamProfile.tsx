@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { TeamMatchSheet } from "./TeamMatchSheet";
+import { RivalPicker } from "./RivalPicker";
 import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
 
 interface TeamProfileProps {
@@ -105,15 +106,28 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
   const [playerModal, setPlayerModal] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [res, setRes] = useState({ rival: "", isHome: true, gf: "", ga: "", date: new Date().toISOString().split("T")[0] });
+  const [res, setRes] = useState({
+    rival: "",
+    isHome: true,
+    gf: "",
+    ga: "",
+    date: new Date().toISOString().split("T")[0],
+    competition: "",
+  });
   const [np, setNp] = useState({ name: "", position: "MF", number: "", age: "" });
 
-  const rivals = useMemo(() => {
-    const league = data?.team.league;
-    return (allTeams as any[])
-      .filter((t) => t._id !== teamId)
-      .sort((a, b) => Number(b.league === league) - Number(a.league === league) || a.name.localeCompare(b.name));
-  }, [allTeams, data?.team.league, teamId]);
+
+  // Competiciones del equipo (su liga primero) para filtrar rivales
+  const teamScopes = useMemo(() => {
+    const t = data?.team;
+    if (!t) return [] as string[];
+    const own = t.league === "intl" ? [] : [t.league];
+    return Array.from(new Set([...own, ...(t.competitions ?? []).filter((c) => c !== "intl")]));
+  }, [data?.team]);
+  const competitionOptions = useMemo(
+    () => [...teamScopes, ...COMPETITIONS.map((c) => c.code).filter((c) => !teamScopes.includes(c))],
+    [teamScopes]
+  );
 
   const simulation = useQuery(
     api.teams.predictMatch,
@@ -178,6 +192,7 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
         homeGoals: res.isHome ? gf : ga,
         awayGoals: res.isHome ? ga : gf,
         date: res.date,
+        competition: res.competition || teamScopes[0],
       });
       setResultModal(false);
       setRes({ ...res, gf: "", ga: "" });
@@ -313,14 +328,15 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
           Simular partido
         </span>
         <div className="grid grid-cols-3 gap-2">
-          <select value={simRival} onChange={(e) => setSimRival(e.target.value)} className={`${input} col-span-2`}>
-            <option value="">— Elige rival —</option>
-            {rivals.map((t: any) => (
-              <option key={t._id} value={t._id}>
-                {t.name} {t.league !== team.league ? `(${LEAGUE_LABEL[t.league] ?? t.league})` : ""}
-              </option>
-            ))}
-          </select>
+          <RivalPicker
+            teams={allTeams as any[]}
+            excludeId={teamId}
+            value={simRival}
+            onChange={(id) => setSimRival(id)}
+            scopes={teamScopes}
+            placeholder="— Elige rival —"
+            className="col-span-2"
+          />
           <select value={simAway ? "a" : "h"} onChange={(e) => setSimAway(e.target.value === "a")} className={input}>
             <option value="h">En casa</option>
             <option value="a">Fuera</option>
@@ -433,7 +449,7 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
           <button
             onClick={() => {
               setError(null);
-              setSched({ rival: "", isHome: true, date: "", competition: team.league });
+              setSched({ rival: "", isHome: true, date: "", competition: teamScopes[0] ?? team.league });
               setScheduleModal(true);
             }}
             className="px-2.5 py-1 rounded-lg bg-surface-container-high text-primary font-mono text-[11px] border border-primary/30"
@@ -443,6 +459,7 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
           <button
             onClick={() => {
               setError(null);
+              setRes((r) => ({ ...r, rival: "", competition: teamScopes[0] ?? "" }));
               setResultModal(true);
             }}
             className="px-2.5 py-1 rounded-lg bg-surface-container-high text-secondary font-mono text-[11px] border border-secondary/30"
@@ -606,14 +623,28 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
       {resultModal && (
         <Modal title={`Resultado de ${team.name}`} onClose={() => setResultModal(false)}>
           <form onSubmit={submitResult} className="flex flex-col gap-2">
-            <select value={res.rival} onChange={(e) => setRes({ ...res, rival: e.target.value })} className={input} required>
-              <option value="">— Rival —</option>
-              {rivals.map((t: any) => (
-                <option key={t._id} value={t._id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
+            <label className="font-mono text-[10px] text-on-surface-variant uppercase">
+              Competición del partido
+              <select
+                value={res.competition || teamScopes[0] || ""}
+                onChange={(e) => setRes({ ...res, competition: e.target.value, rival: "" })}
+                className={input}
+              >
+                {competitionOptions.map((c) => (
+                  <option key={c} value={c}>
+                    {competitionLabel(c) || c}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <RivalPicker
+              teams={allTeams as any[]}
+              excludeId={teamId}
+              value={res.rival}
+              onChange={(id) => setRes({ ...res, rival: id })}
+              competition={res.competition || teamScopes[0]}
+              required
+            />
             <div className="grid grid-cols-2 gap-2">
               <select value={res.isHome ? "h" : "a"} onChange={(e) => setRes({ ...res, isHome: e.target.value === "h" })} className={input}>
                 <option value="h">{team.name} en casa</option>
@@ -631,7 +662,11 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
                 <input type="number" min="0" value={res.ga} onChange={(e) => setRes({ ...res, ga: e.target.value })} className={input} required />
               </label>
             </div>
-            <p className="font-mono text-[10px] text-on-surface-variant">Al guardar se recalculan la tabla y la fuerza de toda la liga.</p>
+            <p className="font-mono text-[10px] text-on-surface-variant">
+              {(res.competition || teamScopes[0]) === team.league
+                ? "Partido de liga: al guardar se recalculan la tabla y la fuerza de toda la liga."
+                : "Partido de copa/europeo: sale en el perfil de los dos equipos, pero no cuenta para la tabla de liga."}
+            </p>
             {error && <p className="font-mono text-[11px] text-error">{error}</p>}
             <ModalActions busy={busy} label="Guardar resultado" onCancel={() => setResultModal(false)} />
           </form>
@@ -664,14 +699,26 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
             }}
             className="flex flex-col gap-2"
           >
-            <select value={sched.rival} onChange={(e) => setSched({ ...sched, rival: e.target.value })} className={input} required>
-              <option value="">— Rival —</option>
-              {rivals.map((t: any) => (
-                <option key={t._id} value={t._id}>
-                  {t.name}
+            <select
+              value={sched.competition}
+              onChange={(e) => setSched({ ...sched, competition: e.target.value, rival: "" })}
+              className={input}
+              aria-label="Competición"
+            >
+              {competitionOptions.map((c) => (
+                <option key={c} value={c}>
+                  {competitionLabel(c) || c}
                 </option>
               ))}
             </select>
+            <RivalPicker
+              teams={allTeams as any[]}
+              excludeId={teamId}
+              value={sched.rival}
+              onChange={(id) => setSched({ ...sched, rival: id })}
+              competition={sched.competition}
+              required
+            />
             <div className="grid grid-cols-2 gap-2">
               <select value={sched.isHome ? "h" : "a"} onChange={(e) => setSched({ ...sched, isHome: e.target.value === "h" })} className={input}>
                 <option value="h">{team.name} en casa</option>
@@ -679,13 +726,6 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
               </select>
               <input type="date" value={sched.date} onChange={(e) => setSched({ ...sched, date: e.target.value })} className={input} required />
             </div>
-            <select value={sched.competition} onChange={(e) => setSched({ ...sched, competition: e.target.value })} className={input}>
-              {COMPETITIONS.map((c) => (
-                <option key={c.code} value={c.code}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
             <p className="font-mono text-[10px] text-on-surface-variant">
               Aparecerá en el perfil de cada jugador del equipo en "Próximo partido", con su nota esperada contra este rival.
               Después del partido, sus jugadores lo eligen al registrar y le pones el marcador.
