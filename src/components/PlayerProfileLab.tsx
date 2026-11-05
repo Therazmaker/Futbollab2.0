@@ -179,7 +179,21 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
   const selIdx = radarIndex ?? points.length - 1;
   const selectedPoint: any = points[selIdx] ?? null;
 
-  const currentPredictiveForm = forecastMetrics?.predictiveForm ?? profile?.rating ?? "—";
+  const today = new Date().toISOString().split("T")[0];
+  const upcoming =
+    useQuery(api.teams.upcomingMatches, activeTeam ? { teamId: activeTeam._id, fromDate: today } : "skip") ?? [];
+  const preview = useQuery(
+    api.predictions.previewForecast,
+    activePlayer
+      ? {
+          playerId: activePlayer._id,
+          opponentTeamId: (nextOpponentTeamId || undefined) as any,
+          isAway: nextIsAway,
+          minutes: nextMinutes ? Number(nextMinutes) : undefined,
+        }
+      : "skip"
+  );
+  const currentPredictiveForm = preview ? fmt(preview.rating.mean) : forecastMetrics?.predictiveForm ?? "—";
   const currentConfidence =
     forecastMetrics?.confidence ?? (selectedPoint ? Math.round(selectedPoint.dataShare * 100) : 0);
   const awayEffect = profile?.effects.find((e: any) => e.feature === "is_away");
@@ -511,7 +525,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
               </button>
 
               <button
-                onClick={runPredictiveSimulation}
+                onClick={() => document.getElementById("next-match")?.scrollIntoView({ behavior: "smooth" })}
                 disabled={isSimulating}
                 className="flex items-center gap-1 bg-surface-container-high hover:bg-surface-bright text-secondary hover:text-primary font-mono text-[11px] px-2.5 py-1.5 rounded transition-transform active:scale-95 shadow-sm border border-secondary/30"
               >
@@ -522,7 +536,7 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                 >
                   {isSimulating ? "progress_activity" : "psychology"}
                 </span>
-                <span>{isSimulating ? "CALC..." : "SIMULATE"}</span>
+                <span>PRÓXIMO</span>
               </button>
             </div>
           </div>
@@ -935,15 +949,50 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
         </div>
       </div>
 
-      {/* Pronóstico del próximo partido (distribución, no un número suelto) */}
-      <div className="bg-surface-container-low rounded-xl p-space-md border border-surface-container-high/60">
-        <div className="flex items-center justify-between mb-3">
+      {/* Próximo partido: nota esperada y stats, EN VIVO según rival / casa-fuera / minutos */}
+      <div id="next-match" className="bg-surface-container-low rounded-xl p-space-md border border-surface-container-high/60 scroll-mt-32">
+        <div className="flex items-center justify-between mb-2">
           <span className="font-mono text-xs uppercase text-primary font-bold flex items-center gap-1.5">
             <span className="material-symbols-outlined text-[16px]">online_prediction</span>
             <span>Próximo partido</span>
           </span>
-          <span className="font-mono text-[10px] text-on-surface-variant">intervalo 80%</span>
+          <span className="font-mono text-[10px] text-on-surface-variant">se recalcula al cambiar el rival</span>
         </div>
+
+        {/* Partidos programados del equipo */}
+        {(upcoming as any[]).length > 0 ? (
+          <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1 mb-2">
+            {(upcoming as any[]).map((m: any) => {
+              const active = nextOpponentTeamId === m.opponentId && nextIsAway === !m.isHome;
+              return (
+                <button
+                  key={m._id}
+                  onClick={() => {
+                    setNextOpponentTeamId(m.opponentId);
+                    setNextOpponent(m.opponent);
+                    setNextIsAway(!m.isHome);
+                  }}
+                  className={`shrink-0 px-2.5 py-1.5 rounded-lg font-mono text-[10px] text-left border ${
+                    active ? "bg-primary text-on-primary border-primary font-bold" : "bg-surface-container text-on-surface border-surface-container-high"
+                  }`}
+                >
+                  <span className="block">{m.date}</span>
+                  {m.isHome ? "vs" : "en"} {m.opponent} · {competitionLabel(m.competition)}
+                </button>
+              );
+            })}
+          </div>
+        ) : (
+          <p className="font-mono text-[10px] text-on-surface-variant mb-2">
+            Sin partidos programados.{" "}
+            {activeTeam && (
+              <button onClick={() => onOpenTeam(activeTeam._id)} className="text-secondary underline">
+                Prográmalos en el perfil de {activeTeam.name}
+              </button>
+            )}{" "}
+            o elige el rival abajo.
+          </p>
+        )}
 
         <div className="grid grid-cols-2 gap-2">
           <select
@@ -954,13 +1003,18 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
             }}
             className="col-span-2 h-9 px-2.5 rounded-lg bg-surface-container text-on-surface font-mono text-xs border border-surface-container-high focus:outline-none focus:border-primary"
           >
-            <option value="">-- Rival (si está en la base se usa su fuerza defensiva) --</option>
-            {(registeredTeams as any[]).map((tm: any) => (
-              <option key={tm._id} value={tm._id}>
-                {tm.name} ({tm.league?.toUpperCase()}
-                {tm.defenseRating ? ` · def ${Number(tm.defenseRating).toFixed(2)}` : ""})
-              </option>
-            ))}
+            <option value="">— Rival (sin rival = equipo medio) —</option>
+            {(registeredTeams as any[])
+              .filter((tm: any) => tm._id !== activeTeam?._id)
+              .sort(
+                (x: any, y: any) =>
+                  Number(y.league === activeTeam?.league) - Number(x.league === activeTeam?.league) || x.name.localeCompare(y.name)
+              )
+              .map((tm: any) => (
+                <option key={tm._id} value={tm._id}>
+                  {tm.name} ({tm.league?.toUpperCase()})
+                </option>
+              ))}
           </select>
           <div className="flex items-center gap-3 font-mono text-xs">
             <label className="flex items-center gap-1.5 cursor-pointer">
@@ -983,46 +1037,84 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
           />
         </div>
 
-        {forecastMetrics?.distribution && (
-          <div className="mt-3 flex flex-col gap-1 font-mono text-[11px]">
-            <p className="text-[10px] text-on-surface-variant">
-              vs {forecastMetrics.opponent} ({forecastMetrics.isAway ? "fuera" : "casa"}) · {forecastMetrics.expectedMinutes}' ·
-              contexto ×{fmt(forecastMetrics.contextMultiplier)} · {forecastMetrics.matchesUsed} partidos usados
-            </p>
-            {STAT_ORDER.map((s) => {
-              const d = forecastMetrics.distribution[s.key];
-              if (!d) return null;
-              return (
-                <div key={s.key} className="flex items-center justify-between border-b border-surface-container-high/40 py-1">
-                  <span className="text-on-surface-variant">{s.name}</span>
-                  <span>
-                    <span className="text-primary font-bold">{fmt(d.mean)}</span>
-                    <span className="text-on-surface-variant"> [{fmt(d.low, 1)}–{fmt(d.high, 1)}]</span>
-                    {d.pAtLeast?.["1"] !== undefined && (
-                      <span className="text-secondary">
-                        {" "}
-                        P(≥1) {Math.round(d.pAtLeast["1"] * 100)}% · P(≥2) {Math.round(d.pAtLeast["2"] * 100)}%
-                      </span>
-                    )}
-                  </span>
+        {preview && (
+          <div className="mt-3 flex flex-col gap-2">
+            {/* Nota esperada */}
+            <div className="rounded-xl bg-surface-container p-3 border border-primary/30">
+              <div className="flex items-end justify-between">
+                <div>
+                  <p className="font-mono text-[10px] uppercase text-on-surface-variant">
+                    Nota esperada {preview.opponent ? `vs ${preview.opponent}` : "(rival medio)"} · {preview.isAway ? "fuera" : "casa"} ·{" "}
+                    {preview.minutes}&apos;
+                  </p>
+                  <p className="font-mono text-4xl font-bold text-primary leading-none mt-1">{fmt(preview.rating.mean)}</p>
                 </div>
-              );
-            })}
+                <p className="font-mono text-[11px] text-on-surface-variant text-right">
+                  80%: {fmt(preview.rating.low, 1)} – {fmt(preview.rating.high, 1)}
+                </p>
+              </div>
+              <div className="mt-2 flex flex-col gap-0.5 font-mono text-[10px]">
+                <div className="flex justify-between">
+                  <span className="text-on-surface-variant">
+                    Nivel propio ({preview.rating.ownMatches} notas, {Math.round(preview.rating.dataShare * 100)}% datos propios)
+                  </span>
+                  <span className="text-on-surface">{fmt(preview.rating.level)}</span>
+                </div>
+                {preview.rating.contributions.map((c: any) => (
+                  <div key={c.feature} className="flex justify-between">
+                    <span className="text-on-surface-variant">{c.label}</span>
+                    <span className={c.delta >= 0 ? "text-primary" : "text-tertiary"}>{signed(c.delta)}</span>
+                  </div>
+                ))}
+                {preview.opponent && preview.strength.opponent === null && (
+                  <p className="text-tertiary">
+                    {preview.opponent} no tiene fuerza calculada (faltan sus resultados): se toma como equipo medio.
+                  </p>
+                )}
+                {preview.strength.own === null && (
+                  <p className="text-tertiary">
+                    {activeTeam?.name ?? "Su equipo"} no tiene fuerza calculada: registra resultados con marcador para afinarlo.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Stats esperadas */}
+            <div className="flex flex-col gap-1 font-mono text-[11px]">
+              {STAT_ORDER.map((s) => {
+                const d = (preview.stats as any)[s.key];
+                if (!d) return null;
+                return (
+                  <div key={s.key} className="flex items-center justify-between border-b border-surface-container-high/40 py-1">
+                    <span className="text-on-surface-variant">{s.name}</span>
+                    <span>
+                      <span className="text-primary font-bold">{fmt(d.mean)}</span>
+                      <span className="text-on-surface-variant"> [{fmt(d.low, 1)}–{fmt(d.high, 1)}]</span>
+                      {d.pAtLeast?.["1"] !== undefined && (
+                        <span className="text-secondary">
+                          {" "}
+                          P(≥1) {Math.round(d.pAtLeast["1"] * 100)}% · P(≥2) {Math.round(d.pAtLeast["2"] * 100)}%
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Qué ha aprendido el modelo con todos los jugadores */}
+            <p className="font-mono text-[9px] text-on-surface-variant leading-relaxed">
+              Modelo de nota aprendido con {preview.globalModel.matches} partidos de {preview.globalModel.players} jugadores:{" "}
+              {preview.globalModel.effects
+                .map(
+                  (e: any) =>
+                    `${e.label.toLowerCase()} ${signed(e.value)}${e.feature === "strengthDiff" ? " por unidad" : ""} (±${fmt(e.sd)})`
+                )
+                .join(" · ")}
+              . Ruido de un partido ±{preview.globalModel.sigma}. Cuantos más jugadores registres, más fino.
+            </p>
           </div>
         )}
-
-        <div className="mt-4 pt-3 border-t border-surface-container-high/40 flex items-center justify-between">
-          <p className="font-mono text-[10px] text-on-surface-variant">
-            Media por 90 del perfil × minutos × contexto, con la incertidumbre del perfil.
-          </p>
-          <button
-            onClick={runPredictiveSimulation}
-            disabled={isSimulating || !activePlayer}
-            className="px-3 py-1.5 bg-primary text-on-primary rounded-lg font-mono text-xs font-bold shadow-md hover:opacity-90 active:scale-95 transition-all"
-          >
-            {isSimulating ? "Calculando…" : "Pronosticar"}
-          </button>
-        </div>
       </div>
 
       {/* Modal: editar ficha del jugador */}

@@ -3,6 +3,7 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { recomputeLeague } from "./lib/leagueTable";
 import { findTeamMatch } from "./lib/teamMatches";
+import { refreshRatingModel } from "./lib/ratingStore";
 
 /**
  * Returns all registered leagues and continental tournaments.
@@ -482,6 +483,7 @@ export const addMatchResult = mutation({
     if (existing) {
       await ctx.db.patch(existing._id, { homeGoals: args.homeGoals, awayGoals: args.awayGoals });
       await recomputeLeague(ctx.db, existing.league);
+      await refreshRatingModel(ctx.db);
       return existing._id;
     }
     const league = args.competition || home.league;
@@ -494,6 +496,7 @@ export const addMatchResult = mutation({
       league,
     });
     await recomputeLeague(ctx.db, league);
+    await refreshRatingModel(ctx.db);
     return id;
   },
 });
@@ -511,6 +514,7 @@ export const deleteMatchResult = mutation({
     for (const l of logs) await ctx.db.patch(l._id, { matchId: undefined });
     await ctx.db.delete(matchId);
     await recomputeLeague(ctx.db, m.league);
+    await refreshRatingModel(ctx.db);
     return matchId;
   },
 });
@@ -524,6 +528,7 @@ export const setMatchScore = mutation({
     if (homeGoals < 0 || awayGoals < 0) throw new Error("Goles no válidos");
     await ctx.db.patch(matchId, { homeGoals, awayGoals });
     await recomputeLeague(ctx.db, m.league);
+    await refreshRatingModel(ctx.db);
     return matchId;
   },
 });
@@ -622,5 +627,64 @@ export const getMatchDetail = query({
       home: { name: home?.name ?? "?", ...sides.home },
       away: { name: away?.name ?? "?", ...sides.away },
     };
+  },
+});
+
+/** Programa un partido futuro (sin marcador) para un equipo. */
+export const scheduleMatch = mutation({
+  args: {
+    teamId: v.id("teams"),
+    opponentTeamId: v.id("teams"),
+    isHome: v.boolean(),
+    date: v.string(),
+    competition: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.teamId === args.opponentTeamId) throw new Error("El rival debe ser otro equipo");
+    const team = await ctx.db.get(args.teamId);
+    if (!team) throw new Error("Equipo no encontrado");
+    const homeTeamId = args.isHome ? args.teamId : args.opponentTeamId;
+    const awayTeamId = args.isHome ? args.opponentTeamId : args.teamId;
+    const existing = await findTeamMatch(ctx.db, homeTeamId, awayTeamId, args.date);
+    if (existing) return existing._id;
+    return await ctx.db.insert("matches", {
+      homeTeamId,
+      awayTeamId,
+      date: args.date,
+      league: args.competition || team.league,
+    });
+  },
+});
+
+/** Próximos partidos (desde `fromDate`, sin marcador) de un equipo. */
+export const upcomingMatches = query({
+  args: { teamId: v.id("teams"), fromDate: v.string() },
+  handler: async (ctx, { teamId, fromDate }) => {
+    const home = await ctx.db
+      .query("matches")
+      .withIndex("by_home_and_date", (q) => q.eq("homeTeamId", teamId).gte("date", fromDate))
+      .collect();
+    const away = await ctx.db
+      .query("matches")
+      .withIndex("by_away_and_date", (q) => q.eq("awayTeamId", teamId).gte("date", fromDate))
+      .collect();
+    const rows = [...home, ...away]
+      .filter((m) => m.homeGoals === undefined)
+      .sort((a, b) => (a.date < b.date ? -1 : 1))
+      .slice(0, 10);
+    const out = [];
+    for (const m of rows) {
+      const isHome = m.homeTeamId === teamId;
+      const opponentId = isHome ? m.awayTeamId : m.homeTeamId;
+      out.push({
+        _id: m._id,
+        date: m.date,
+        isHome,
+        opponentId,
+        opponent: (await ctx.db.get(opponentId))?.name ?? "?",
+        competition: m.league,
+      });
+    }
+    return out;
   },
 });

@@ -1,8 +1,24 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { forecast, STATS, STAT_LABELS, summarizeWalkForward } from "./lib/engine";
+import { fitProfile, forecast, STATS, STAT_LABELS, summarizeWalkForward } from "./lib/engine";
 import { buildReport, loadPlayerModelInput, syncPlayerWeights } from "./lib/playerModel";
 import { findOrCreateTeamMatch } from "./lib/teamMatches";
+import { forecastRating, PlayerRatingLog, RATING_FEATURE_LABELS, RATING_FEATURES } from "./lib/ratingModel";
+import { loadRatingParams, refreshRatingModel } from "./lib/ratingStore";
+import type { ModelLog } from "./lib/engine";
+
+/** Partidos del motor → partidos con nota para el modelo de nota. */
+function ratingHistory(logs: ModelLog[]): PlayerRatingLog[] {
+  return logs
+    .map((l) => ({
+      rating: Number(l.rawStats?.rating),
+      isAway: l.isAway,
+      minutes: Number(l.minutesPlayed),
+      ownStrength: l.ownStrength ?? null,
+      opponentStrength: l.opponentStrength ?? null,
+    }))
+    .filter((h) => Number.isFinite(h.rating) && h.rating > 0 && h.rating <= 10);
+}
 
 const round = (x: number, d = 2) => +x.toFixed(d);
 
@@ -27,6 +43,13 @@ export const calculateAndPredict = mutation({
     if (!synced) throw new Error("Jugador no encontrado");
     const { state, input } = synced;
     const opponentDefense = await input.defenseOf(args.opponentTeamId);
+    const ratingParams = await loadRatingParams(ctx.db);
+    const ratingFc = forecastRating(ratingParams, ratingHistory(input.logs), {
+      isAway: args.isAway,
+      minutes: args.expectedMinutes ?? state.expectedMinutes,
+      ownStrength: input.ownStrength,
+      opponentStrength: await input.strengthOf(args.opponentTeamId),
+    });
     const fc = forecast(
       state,
       { isAway: args.isAway, contextFeatures: args.contextFeatures, opponentDefense },
@@ -56,7 +79,8 @@ export const calculateAndPredict = mutation({
       distribution: dist,
       expectedMinutes: Math.round(fc.minutes),
       contextMultiplier: round(fc.multiplier, 3),
-      predictiveForm: round(Math.min(10, Math.max(1, fc.rating))),
+      predictiveForm: round(ratingFc.mean),
+      rating: { mean: round(ratingFc.mean), low: round(ratingFc.low), high: round(ratingFc.high), sd: round(ratingFc.sd) },
       confidence: round(fc.dataShare * 100, 1),
       opponent: args.opponent,
       opponentDefense: opponentDefense ? round(opponentDefense, 3) : null,
@@ -164,6 +188,7 @@ export const recordMatchAndCalibrate = mutation({
 
     const synced = await syncPlayerWeights(ctx.db, args.playerId);
     if (!synced) throw new Error("Jugador no encontrado");
+    await refreshRatingModel(ctx.db);
     const { points } = buildReport(synced.input);
     const point = points.find((p) => p.logId === matchLogId);
 
@@ -207,6 +232,23 @@ export const getModelReport = query({
     const input = await loadPlayerModelInput(ctx.db, playerId);
     if (!input) return null;
     const { points, state } = buildReport(input);
+    const ratingParams = await loadRatingParams(ctx.db);
+    // Nota: misma validación honesta, cada partido con los partidos anteriores
+    const idx = new Map(input.logs.map((l, i) => [l.id, i]));
+    for (const p of points) {
+      const i = idx.get(p.logId);
+      if (i === undefined) continue;
+      const log = input.logs[i];
+      const actual = Number(log.rawStats?.rating);
+      if (!Number.isFinite(actual) || actual <= 0 || actual > 10) continue;
+      const rf = forecastRating(ratingParams, ratingHistory(input.logs.slice(0, i)), {
+        isAway: log.isAway,
+        minutes: Number(log.minutesPlayed),
+        ownStrength: log.ownStrength,
+        opponentStrength: log.opponentStrength,
+      });
+      (p.stats as any).rating = { predicted: rf.mean, sd: rf.sd, actual, naive: rf.mean, noiseFloor: rf.sd * 0.8 };
+    }
     return {
       playerId,
       points: points.map((p) => ({
@@ -253,6 +295,80 @@ export const getModelReport = query({
           dataShare: round(b.dataShare, 3),
           matches: b.matches,
         })),
+      },
+    };
+  },
+});
+
+/**
+ * Pronóstico EN VIVO del próximo partido (query: se recalcula al cambiar rival,
+ * casa/fuera o minutos, sin guardar nada). Devuelve la nota esperada con su
+ * desglose y la distribución de tiros, xG, pases clave y duelos.
+ */
+export const previewForecast = query({
+  args: {
+    playerId: v.id("players"),
+    opponentTeamId: v.optional(v.id("teams")),
+    isAway: v.boolean(),
+    minutes: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const input = await loadPlayerModelInput(ctx.db, args.playerId);
+    if (!input) return null;
+    const state = fitProfile(input.logs, input.priorInput);
+    const opponent = args.opponentTeamId ? await ctx.db.get(args.opponentTeamId) : null;
+    const opponentStrength = await input.strengthOf(args.opponentTeamId);
+    const opponentDefense = await input.defenseOf(args.opponentTeamId);
+    const minutes = args.minutes && args.minutes > 0 ? args.minutes : state.expectedMinutes;
+    const fc = forecast(state, { isAway: args.isAway, opponentDefense }, minutes);
+    const params = await loadRatingParams(ctx.db);
+    const rf = forecastRating(params, ratingHistory(input.logs), {
+      isAway: args.isAway,
+      minutes,
+      ownStrength: input.ownStrength,
+      opponentStrength,
+    });
+    return {
+      opponent: opponent?.name ?? null,
+      isAway: args.isAway,
+      minutes: Math.round(minutes),
+      strength: {
+        own: input.ownStrength === null ? null : round(input.ownStrength, 3),
+        opponent: opponentStrength === null ? null : round(opponentStrength, 3),
+      },
+      rating: {
+        mean: round(rf.mean),
+        low: round(rf.low),
+        high: round(rf.high),
+        sd: round(rf.sd),
+        level: round(rf.level),
+        ownMatches: rf.ownMatches,
+        dataShare: round(rf.dataShare, 3),
+        contributions: rf.contributions.map((c) => ({ ...c, delta: round(c.delta, 3) })),
+      },
+      stats: Object.fromEntries(
+        STATS.map((s) => [
+          s,
+          {
+            mean: round(fc.stats[s].mean),
+            low: round(fc.stats[s].low),
+            high: round(fc.stats[s].high),
+            pAtLeast: Object.fromEntries(Object.entries(fc.stats[s].pAtLeast).map(([k, p]) => [k, round(p, 3)])),
+          },
+        ])
+      ),
+      contextMultiplier: round(fc.multiplier, 3),
+      matchesUsed: state.matches,
+      globalModel: {
+        matches: params.matches,
+        players: params.players,
+        effects: RATING_FEATURES.map((f) => ({
+          feature: f,
+          label: RATING_FEATURE_LABELS[f],
+          value: round(params.beta[f], 3),
+          sd: round(params.betaSd[f], 3),
+        })),
+        sigma: round(params.sigma, 2),
       },
     };
   },

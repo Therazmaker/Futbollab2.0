@@ -1,5 +1,6 @@
 import type { GenericDatabaseReader, GenericDatabaseWriter } from "convex/server";
 import type { DataModel, Id } from "../_generated/dataModel";
+import { teamStrength } from "./ratingModel";
 import {
   FEATURE_PRIORS,
   fitProfile,
@@ -21,15 +22,18 @@ export async function loadPlayerModelInput(db: Reader, playerId: Id<"players">) 
     .collect();
   logs.sort((a, b) => (a.matchDate < b.matchDate ? -1 : a.matchDate > b.matchDate ? 1 : a._creationTime - b._creationTime));
 
-  const defenseCache = new Map<string, number | null>();
-  const defenseOf = async (teamId?: Id<"teams">) => {
-    if (!teamId) return null;
-    if (!defenseCache.has(teamId)) {
+  const teamCache = new Map<string, { defense: number | null; strength: number | null }>();
+  const teamInfo = async (teamId?: Id<"teams">) => {
+    if (!teamId) return { defense: null, strength: null };
+    if (!teamCache.has(teamId)) {
       const team = await db.get(teamId);
-      defenseCache.set(teamId, team?.defenseRating ?? null);
+      teamCache.set(teamId, { defense: team?.defenseRating ?? null, strength: teamStrength(team) });
     }
-    return defenseCache.get(teamId) ?? null;
+    return teamCache.get(teamId)!;
   };
+  const defenseOf = async (teamId?: Id<"teams">) => (await teamInfo(teamId)).defense;
+  const strengthOf = async (teamId?: Id<"teams">) => (await teamInfo(teamId)).strength;
+  const ownStrength = await strengthOf(player.teamId);
 
   const modelLogs: ModelLog[] = [];
   for (const l of logs) {
@@ -42,13 +46,15 @@ export async function loadPlayerModelInput(db: Reader, playerId: Id<"players">) 
       rawStats: l.rawStats,
       contextFeatures: l.contextFeatures,
       opponentDefense: await defenseOf(l.opponentTeamId),
+      opponentStrength: await strengthOf(l.opponentTeamId),
+      ownStrength,
     });
   }
   const priorInput: PlayerPriorInput = {
     position: player.position,
     seasonStats: player.seasonStats ?? null,
   };
-  return { player, logs: modelLogs, priorInput, defenseOf };
+  return { player, logs: modelLogs, priorInput, defenseOf, strengthOf, ownStrength };
 }
 
 /**

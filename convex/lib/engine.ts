@@ -83,6 +83,9 @@ export interface ModelLog {
   contextFeatures?: string[];
   /** Multiplicador defensivo del rival (1 = media de la liga), si se conoce. */
   opponentDefense?: number | null;
+  /** Fuerza (ln ataque − ln defensa) del rival y del propio equipo, para la nota. */
+  opponentStrength?: number | null;
+  ownStrength?: number | null;
 }
 
 export interface PlayerPriorInput {
