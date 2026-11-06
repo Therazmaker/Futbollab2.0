@@ -108,6 +108,8 @@ export default defineSchema({
         axg: v.optional(v.number()),
       })
     ),
+    // Marcador al descanso (football-data)
+    halfTime: v.optional(v.object({ home: v.number(), away: v.number() })),
     // Cuotas medias de cierre del mercado (para medir CLV)
     closingOdds: v.optional(
       v.object({
@@ -254,4 +256,34 @@ export default defineSchema({
     key: v.string(),
     value: v.any(),
   }).index("by_key", ["key"]),
+
+  // Predicciones guardadas ANTES del partido: de la IA o tuyas ("Mi pronóstico").
+  // Se resuelven solas cuando llega el marcador (y el del descanso para los mercados de 1ª parte).
+  radarPicks: defineTable({
+    matchId: v.id("matches"),
+    matchDate: v.string(),
+    competition: v.string(),
+    source: v.string(), // "ai" | "user"
+    market: v.string(), // result | doubleChance | btts | over15 | over25 | cleanSheet | htGoalless | htResult
+    pick: v.string(), // home | draw | away | home_draw | away_draw | home_away | yes | no | none
+    confidence: v.optional(v.number()), // 0–1
+    reasoning: v.optional(v.string()),
+    odds: v.optional(v.number()), // cuota a la que lo cogerías (para ROI/CLV)
+    systemProb: v.optional(v.number()), // probabilidad que el Radar daba a ese pick en ese momento
+    marketProb: v.optional(v.number()), // probabilidad del mercado (tus cuotas sin margen), si la hay
+    model: v.optional(v.string()), // modelo de IA que lo generó
+    createdAt: v.number(),
+  })
+    .index("by_match", ["matchId"])
+    .index("by_source_and_date", ["source", "matchDate"]),
+
+  // "Radar Analysis Editor": la previa/noticias pegadas y lo que la IA sacó de ellas
+  matchPreviews: defineTable({
+    matchId: v.id("matches"),
+    text: v.string(),
+    provider: v.string(),
+    model: v.string(),
+    analysis: v.any(), // ver convex/lib/preview.ts
+    createdAt: v.number(),
+  }).index("by_match", ["matchId"]),
 });

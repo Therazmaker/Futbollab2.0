@@ -28,6 +28,7 @@ type MatchRow = {
   homeGoals: number;
   awayGoals: number;
   stats?: { hs: number; as: number; hst: number; ast: number; hxg?: number; axg?: number };
+  halfTime?: { home: number; away: number };
   closingOdds?: { home: number; draw: number; away: number; over25?: number; under25?: number };
 };
 const ALL_TEAMS: TeamRow[] = [...legacyTeams, ...(fdTeams as TeamRow[])];
@@ -201,6 +202,7 @@ export const importMatchesChunk = internalMutation({
         closingOdds: v.optional(
           v.object({ home: v.number(), draw: v.number(), away: v.number(), over25: v.optional(v.number()), under25: v.optional(v.number()) })
         ),
+        halfTime: v.optional(v.object({ home: v.number(), away: v.number() })),
       })
     ),
   },
@@ -222,10 +224,14 @@ export const importMatchesChunk = internalMutation({
         .first();
       const home = await resolve(m.homeLegacyId);
       const away = await resolve(m.awayLegacyId);
-      const extra = { ...(m.stats ? { stats: m.stats } : {}), ...(m.closingOdds ? { closingOdds: m.closingOdds } : {}) };
+      const extra = {
+        ...(m.stats ? { stats: m.stats } : {}),
+        ...(m.closingOdds ? { closingOdds: m.closingOdds } : {}),
+        ...(m.halfTime ? { halfTime: m.halfTime } : {}),
+      };
       if (exists) {
         // Ya importado: solo se le añaden las estadísticas si le faltan
-        if ((m.stats && !exists.stats) || (m.closingOdds && !exists.closingOdds)) {
+        if ((m.stats && !exists.stats) || (m.closingOdds && !exists.closingOdds) || (m.halfTime && !exists.halfTime)) {
           await ctx.db.patch(exists._id, extra);
           enriched++;
         } else skipped++;

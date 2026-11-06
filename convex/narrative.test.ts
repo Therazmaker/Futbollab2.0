@@ -381,3 +381,91 @@ describe("lectura del partido", () => {
     expect(r.lines.some((l) => l.includes("suele acertar el mercado"))).toBe(true);
   });
 });
+
+import { evaluatePick, probOfPick } from "./lib/picks";
+import { summarizeHistory } from "./lib/pickHistory";
+import { normalizePreview, compareWithData } from "./lib/preview";
+import { normalizeAiPicks } from "./lib/aiPredict";
+
+describe("Entrenamiento / Histórico del Radar (del FutbolLab viejo)", () => {
+  test("resuelve los 8 mercados, incluidos los del descanso", () => {
+    const m = { homeGoals: 2, awayGoals: 1, halfTime: { home: 0, away: 0 } };
+    expect(evaluatePick("result", "home", m)).toBe("won");
+    expect(evaluatePick("doubleChance", "away_draw", m)).toBe("lost");
+    expect(evaluatePick("btts", "yes", m)).toBe("won");
+    expect(evaluatePick("over25", "yes", m)).toBe("won");
+    expect(evaluatePick("cleanSheet", "none", m)).toBe("won");
+    expect(evaluatePick("htGoalless", "yes", m)).toBe("won");
+    expect(evaluatePick("htResult", "draw", m)).toBe("won");
+    expect(evaluatePick("htResult", "draw", { homeGoals: 1, awayGoals: 0 })).toBeNull(); // sin descanso
+    expect(evaluatePick("result", "home", {})).toBeNull();
+    expect(probOfPick({ home: 0.5, draw: 0.3, away: 0.2 }, "doubleChance", "away_draw")).toBeCloseTo(0.5);
+  });
+
+  test("histórico: acierto, ROI, rachas, curva y barras", () => {
+    const row = (i: number, verdict: "won" | "lost", source: "ai" | "user", odds: number | null) => ({
+      id: `r${i}`, matchId: `m${i}`, date: `2026-10-0${i}`, competition: "laliga", home: "A", away: "B", source, market: "result", pick: "home",
+      label: "Gana A", confidence: 0.6, odds, systemProb: 0.5, marketProb: 0.5, closingProb: 0.45, verdict, score: "1-0",
+    });
+    const s = summarizeHistory([row(1, "won", "ai", 2), row(2, "won", "ai", 2), row(3, "lost", "user", 2), row(4, "won", "user", null)]);
+    expect(s).toMatchObject({ total: 4, n: 4, won: 3, staked: 3, profit: 1 });
+    expect(s.streak).toEqual({ current: 1, type: "won", best: 2 });
+    expect(s.curve.map((p) => [p.ai, p.user])).toEqual([[1, 0], [2, 0], [2, -1]]);
+    expect(s.bySource.find((b) => b.key === "ai")!.rate).toBe(1);
+    expect(s.expected).toBeCloseTo(0.5);
+    expect(s.clv!.mean).toBeCloseTo(2 * 0.45 - 1);
+  });
+
+  test("previa e IA: se normaliza lo que devuelva el modelo", () => {
+    const a = normalizePreview({ structured: { absences: "Sin Isco" }, signals: { narrativeFavours: "away", drawSignal: "high", upsetAlert: "x" }, absentPlayers: [{ name: "Isco", team: "home", status: "out" }], summary: "s" });
+    expect(a.signals).toMatchObject({ narrativeFavours: "away", drawSignal: "high", upsetAlert: "low" });
+    expect(a.structured.matchContext).toBe("");
+    expect(compareWithData(a, { home: 0.5, away: 0.25 }).consistency).toBe("low");
+    const p = normalizeAiPicks({ markets: { result: { pick: "draw", confidence: 34, reasoning: "r" }, btts: { pick: "maybe" } }, summary: "x" });
+    expect(p.picks).toEqual([{ market: "result", pick: "draw", confidence: 0.34, reasoning: "r" }]);
+  });
+
+  test("Convex: pronóstico antes del partido → se resuelve solo → histórico", async () => {
+    const t = convexTest(schema, modules);
+    const home = await t.mutation(api.teams.createTeam, { name: "Sevilla", league: "laliga" });
+    const away = await t.mutation(api.teams.createTeam, { name: "Alavés", league: "laliga" });
+    await t.mutation(api.teams.addMatchResult, { homeTeamId: home, awayTeamId: away, homeGoals: 1, awayGoals: 1, date: "2026-09-01" });
+    const matchId = await t.mutation(api.radar.addRadarMatch, { homeTeamId: home, awayTeamId: away, date: "2026-11-06", competition: "laliga" });
+    await t.mutation(api.radar.setOdds, { matchId, home: 1.92, draw: 3.4, away: 4.25 });
+    await expect(t.mutation(api.radarAi.savePicks, { matchId, source: "user", picks: [{ market: "result", pick: "x" }] })).rejects.toThrow(/no válido/);
+    await t.mutation(api.radarAi.savePicks, {
+      matchId,
+      source: "user",
+      picks: [
+        { market: "doubleChance", pick: "away_draw", odds: 1.9, confidence: 0.6 },
+        { market: "result", pick: "draw" },
+        { market: "htGoalless", pick: "yes" },
+      ],
+    });
+    let picks = await t.query(api.radarAi.getPicks, { matchId });
+    expect(picks).toHaveLength(3);
+    const res = picks.find((p) => p.market === "result")!;
+    expect(res.odds).toBe(3.4); // usa la cuota del Radar
+    expect(res.systemProb).toBeGreaterThan(0.1);
+    expect(res.marketProb).toBeGreaterThan(0.2);
+    expect(picks.every((p) => p.verdict === null)).toBe(true);
+    await t.mutation(api.radarAi.savePreview, {
+      matchId, text: "previa", provider: "gemini", model: "m",
+      analysis: { structured: {}, signals: { drawSignal: "high", narrativeFavours: "away" }, absentPlayers: [], summary: "Partido cerrado" },
+    });
+
+    await t.mutation(api.teams.setMatchScore, { matchId, homeGoals: 1, awayGoals: 1 });
+    await t.run((c) => c.db.patch(matchId, { halfTime: { home: 0, away: 0 } }));
+    picks = await t.query(api.radarAi.getPicks, { matchId });
+    expect(picks.map((p) => p.verdict).sort()).toEqual(["won", "won", "won"]);
+    // Después del partido ya no se puede tocar
+    await expect(t.mutation(api.radarAi.savePicks, { matchId, source: "user", picks: [] })).rejects.toThrow(/antes de jugarse/);
+    await expect(t.mutation(api.radarAi.deletePicks, { matchId, source: "user" })).rejects.toThrow(/histórico/);
+
+    const h = await t.query(api.radarAi.getHistory, {});
+    expect(h.summary).toMatchObject({ total: 3, won: 3, pending: 0 });
+    expect(h.summary.roi).toBeGreaterThan(0);
+    expect(h.previewSignals.find((s) => s.key === "draw_high")).toMatchObject({ nActive: 1, rateActive: 1 });
+    expect(h.rows[0].score).toBe("1-1 (0-0)");
+  });
+});

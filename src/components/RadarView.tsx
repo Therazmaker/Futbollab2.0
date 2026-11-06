@@ -8,6 +8,9 @@ import { competitionLabel, COMPETITIONS } from "@/lib/competitions";
 import { RivalPicker } from "./RivalPicker";
 import { RadarTraining } from "./RadarTraining";
 import { TeamNarrativeTrends } from "./NarrativePanel";
+import { RadarAnalysisEditor } from "./RadarAnalysisEditor";
+import { PredictionsSheet } from "./PredictionsSheet";
+import { RadarHistory } from "./RadarHistory";
 
 interface RadarViewProps {
   onOpenTeam: (teamId: Id<"teams">) => void;
@@ -119,6 +122,8 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
   const [editingOdds, setEditingOdds] = useState(false);
   const [editingClose, setEditingClose] = useState(false);
   const [reading, setReading] = useState(false);
+  const [sheet, setSheet] = useState<null | "preview" | "picks">(null);
+  const picks = useQuery(api.radarAi.getPicks, { matchId: m._id }) ?? [];
   const [open, setOpen] = useState(false);
   const P = m.markets.probabilities;
   const outcomes = [
@@ -207,6 +212,35 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
             {reading ? "Ocultar lectura" : "Leer el partido"}
           </button>
         </div>
+      )}
+
+      {/* Análisis previo + predicciones (Radar Analysis Editor / Entrenamiento del FutbolLab viejo) */}
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+        <button onClick={() => setSheet("preview")} className="px-2 h-7 rounded-lg bg-surface-container-high text-secondary border border-secondary/30">
+          📝 Previa
+        </button>
+        <button onClick={() => setSheet("picks")} className="px-2 h-7 rounded-lg bg-surface-container-high text-secondary border border-secondary/30">
+          🧪 Predicciones{picks.length ? ` (${picks.length})` : ""}
+        </button>
+        {picks
+          .filter((p: any) => p.market === "result" || p.market === "doubleChance")
+          .map((p: any) => (
+            <span
+              key={p._id}
+              className={`px-1.5 py-0.5 rounded border ${
+                p.verdict === "won" ? "border-primary/50 text-primary" : p.verdict === "lost" ? "border-error/50 text-error" : "border-surface-container-high text-on-surface-variant"
+              }`}
+            >
+              {p.source === "ai" ? "🤖" : "✋"} {p.label}
+              {p.verdict ? (p.verdict === "won" ? " ✓" : " ✗") : ""}
+            </span>
+          ))}
+      </div>
+      {sheet === "preview" && (
+        <RadarAnalysisEditor matchId={m._id} homeName={m.home.name} awayName={m.away.name} played={!!m.result} onClose={() => setSheet(null)} />
+      )}
+      {sheet === "picks" && (
+        <PredictionsSheet matchId={m._id} homeName={m.home.name} awayName={m.away.name} played={!!m.result} onClose={() => setSheet(null)} />
       )}
 
       {/* Alertas */}
@@ -375,7 +409,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
   const [sort, setSort] = useState<"study" | "date" | "value">("study");
   const [adding, setAdding] = useState(false);
   const [showRules, setShowRules] = useState(false);
-  const [mode, setMode] = useState<"matches" | "training">("matches");
+  const [mode, setMode] = useState<"matches" | "training" | "history">("matches");
   const snapshotRange = useMutation(api.radar.snapshotRange);
 
   const { fromDate, toDate } = useMemo(() => {
@@ -427,6 +461,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
           [
             ["matches", "Partidos"],
             ["training", "Entrenamiento"],
+            ["history", "Histórico"],
           ] as const
         ).map(([k, label]) => (
           <button
@@ -439,7 +474,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
         ))}
       </div>
 
-      {mode === "training" ? (
+      {mode === "training" || mode === "history" ? (
         <>
           <select value={competition} onChange={(e) => setCompetition(e.target.value)} className={input} aria-label="Competición">
             <option value="all">Todas las competiciones</option>
@@ -449,7 +484,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
               </option>
             ))}
           </select>
-          <RadarTraining competition={competition} />
+          {mode === "training" ? <RadarTraining competition={competition} /> : <RadarHistory competition={competition} />}
         </>
       ) : (
       <>

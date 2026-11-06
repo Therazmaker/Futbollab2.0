@@ -24,6 +24,7 @@ export type FdRow = {
   awayGoals: number;
   stats?: { hs: number; as: number; hst: number; ast: number; hxg?: number; axg?: number };
   closingOdds?: { home: number; draw: number; away: number; over25?: number; under25?: number };
+  halfTime?: { home: number; away: number };
 };
 
 /** CSV de football-data → filas listas para importar (puro, para poder probarlo). */
@@ -63,6 +64,8 @@ export function parseFootballDataCsv(text: string, div: string, seasonCode: stri
       const [hxg, axg] = [num("HxG"), num("AxG")];
       if (hxg !== undefined && axg !== undefined && Number.isFinite(hxg) && Number.isFinite(axg)) Object.assign(row.stats, { hxg, axg });
     }
+    const [hth, hta] = [num("HTHG"), num("HTAG")];
+    if (hth !== undefined && hta !== undefined && Number.isFinite(hth) && Number.isFinite(hta)) row.halfTime = { home: hth, away: hta };
     const [ch, cd, ca, o25, u25] = [num("AvgCH"), num("AvgCD"), num("AvgCA"), num("AvgC>2.5"), num("AvgC<2.5")];
     if (ch! > 1 && cd! > 1 && ca! > 1) {
       row.closingOdds = { home: ch!, draw: cd!, away: ca!, ...(o25! > 1 ? { over25: o25! } : {}), ...(u25! > 1 ? { under25: u25! } : {}) };
