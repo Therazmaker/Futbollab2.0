@@ -8,6 +8,8 @@
 
 export interface EvalSnapshot {
   probs: Record<string, number>;
+  modelProbs?: { home: number; draw: number; away: number } | null;
+  source?: string;
   base: Record<string, number> | null;
   baseProbs?: { home: number; draw: number; away: number } | null;
   expectedGoals: { home: number; away: number };
@@ -48,6 +50,7 @@ export const FLAG_EVENTS: Record<string, string> = {
   EMPATE_VIVO: "empate",
   SORPRESA_POSIBLE: "gana el no favorito",
   VALOR: "sale el resultado de la discrepancia",
+  TU_INFO: "sale el resultado que tus correcciones subían",
   FAVORITO_FRAGIL: "el favorito del mercado no gana",
 };
 
@@ -94,7 +97,9 @@ export function evaluate(rows: Array<{ snap: EvalSnapshot; result: EvalResult }>
   // CLV: ¿tu cuota (la de la foto previa) era mejor que la de cierre?
   const clv = { n: 0, sum: 0, sum2: 0, beat: 0 };
   const toward = { n: 0, hits: 0 };
-  const vsClose = { n: 0, llModel: 0, llClose: 0 };
+  const vsClose = { n: 0, llModel: 0, llClose: 0, llFinal: 0 };
+  // ¿Tus correcciones (bajas) mejoran al mercado? Δ log-loss = final − mercado
+  const corr = { n: 0, sum: 0, sum2: 0 };
 
   for (const { snap, result } of rows) {
     if (snap.late) late++;
@@ -149,6 +154,11 @@ export function evaluate(rows: Array<{ snap: EvalSnapshot; result: EvalResult }>
         expected = snap.bestEdge.model;
         market = snap.bestEdge.fair;
         profit = hit ? snap.bestEdge.odds - 1 : -1;
+      } else if (code === "TU_INFO" && snap.bestEdge) {
+        hit = out === snap.bestEdge.outcome;
+        expected = snap.bestEdge.model;
+        market = snap.bestEdge.fair;
+        profit = hit ? snap.bestEdge.odds - 1 : -1;
       } else if (code === "FAVORITO_FRAGIL" && mktFav && snap.fair) {
         hit = out !== mktFav;
         expected = 1 - P[mktFav];
@@ -162,24 +172,36 @@ export function evaluate(rows: Array<{ snap: EvalSnapshot; result: EvalResult }>
       if (market !== null) { f.market += market; f.nMarket++; }
       f.profit += profit;
     }
+    if (snap.fair && snap.source === "market") {
+      const fct = snap.attackFactor ?? { home: 1, away: 1 };
+      if (fct.home < 1 || fct.away < 1) {
+        const d = -Math.log(Math.max(1e-6, P[out])) + Math.log(Math.max(1e-6, snap.fair[out]));
+        corr.n++;
+        corr.sum += d;
+        corr.sum2 += d * d;
+      }
+    }
     // CLV y movimiento de la cuota
     const close = fairOf(result.closingOdds);
     if (close) {
       vsClose.n++;
-      vsClose.llModel += -Math.log(Math.max(1e-6, P[out]));
+      const M = snap.modelProbs ?? P;
+      vsClose.llModel += -Math.log(Math.max(1e-6, M[out]));
+      vsClose.llFinal += -Math.log(Math.max(1e-6, P[out]));
       vsClose.llClose += -Math.log(Math.max(1e-6, close[out]));
       if (snap.fair) {
         // Resultado donde modelo y tu cuota más discrepaban: ¿el cierre se movió hacia el modelo?
+        const M = snap.modelProbs ?? P;
         const k = (["home", "draw", "away"] as const).reduce((a, b) =>
-          Math.abs(P[b] - snap.fair![b]) > Math.abs(P[a] - snap.fair![a]) ? b : a
+          Math.abs(M[b] - snap.fair![b]) > Math.abs(M[a] - snap.fair![a]) ? b : a
         );
         const mv = close[k] - snap.fair[k];
         if (Math.abs(mv) > 0.002) {
           toward.n++;
-          if (Math.sign(mv) === Math.sign(P[k] - snap.fair[k])) toward.hits++;
+          if (Math.sign(mv) === Math.sign(M[k] - snap.fair[k])) toward.hits++;
         }
       }
-      if (snap.flags.includes("VALOR") && snap.bestEdge) {
+      if ((snap.flags.includes("VALOR") || snap.flags.includes("TU_INFO")) && snap.bestEdge) {
         const c = snap.bestEdge.odds * close[snap.bestEdge.outcome] - 1;
         clv.n++;
         clv.sum += c;
@@ -241,7 +263,7 @@ export function evaluate(rows: Array<{ snap: EvalSnapshot; result: EvalResult }>
       ci,
       expected: f.expected / f.n,
       market: f.nMarket ? f.market / f.nMarket : null,
-      roi: code === "VALOR" ? f.profit / f.n : null,
+      roi: code === "VALOR" || code === "TU_INFO" ? f.profit / f.n : null,
     };
   });
   const calibration = buckets
@@ -292,10 +314,28 @@ export function evaluate(rows: Array<{ snap: EvalSnapshot; result: EvalResult }>
     );
   }
 
+  const corrMean = corr.n ? corr.sum / corr.n : 0;
+  const corrSd = corr.n > 1 ? Math.sqrt(Math.max(0, corr.sum2 / corr.n - corrMean * corrMean)) : 0;
+  const corrRow = corr.n
+    ? { n: corr.n, delta: corrMean, ci: { low: corrMean - (1.645 * corrSd) / Math.sqrt(corr.n), high: corrMean + (1.645 * corrSd) / Math.sqrt(corr.n) } }
+    : null;
+  if (corrRow && corrRow.n >= 15) {
+    tips.push(
+      corrRow.ci.high < 0
+        ? `Tus correcciones por bajas mejoran al mercado (log-loss ${corrRow.delta.toFixed(3)} por partido, n=${corrRow.n}): se les puede dar más peso.`
+        : corrRow.ci.low > 0
+        ? `Tus correcciones por bajas empeoran al mercado (+${corrRow.delta.toFixed(3)} por partido, n=${corrRow.n}): el mercado ya las sabía; habría que bajarles el peso.`
+        : `Tus correcciones por bajas aún no se distinguen del mercado (Δ ${corrRow.delta.toFixed(3)}, n=${corrRow.n}).`
+    );
+  }
+
   return {
+    corrections: corrRow,
     clv: clvRow,
     towardModel: toward.n ? { n: toward.n, rate: toward.hits / toward.n, ci: wilson(toward.hits, toward.n) } : null,
-    vsClosing: vsClose.n ? { n: vsClose.n, logLossModel: vsClose.llModel / vsClose.n, logLossClose: vsClose.llClose / vsClose.n } : null,
+    vsClosing: vsClose.n
+      ? { n: vsClose.n, logLossModel: vsClose.llModel / vsClose.n, logLossFinal: vsClose.llFinal / vsClose.n, logLossClose: vsClose.llClose / vsClose.n }
+      : null,
     clvBacktest: CLV_BACKTEST,
     matches: rows.length,
     lateSnapshots: late,

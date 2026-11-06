@@ -327,3 +327,31 @@ describe("CLV", () => {
     expect(radar[0].closingOdds).toMatchObject({ home: 1.6 });
   });
 });
+
+describe("mercado + tus correcciones", () => {
+  test("Entrenamiento mide si las correcciones por bajas mejoran al mercado", () => {
+    const mk = (homeGoals: number, awayGoals: number) => ({
+      snap: {
+        probs: { home: 0.4, draw: 0.28, away: 0.32 },
+        modelProbs: { home: 0.35, draw: 0.28, away: 0.37 },
+        source: "market",
+        base: null,
+        expectedGoals: { home: 1.2, away: 1.2 },
+        attackFactor: { home: 0.85, away: 1 },
+        odds: { home: 2.2, draw: 3.4, away: 3.6 },
+        fair: { home: 0.44, draw: 0.28, away: 0.28 },
+        flags: [] as string[],
+        favorite: "home" as const,
+        players: [],
+        late: false,
+      },
+      result: { homeGoals, awayGoals, playerLogs: [] },
+    });
+    // Ganó el visitante: la corrección (bajar al local) acertó
+    const good = evaluate([mk(0, 1), mk(0, 2)]);
+    expect(good.corrections!.n).toBe(2);
+    expect(good.corrections!.delta).toBeLessThan(0);
+    const bad = evaluate([mk(2, 0)]);
+    expect(bad.corrections!.delta).toBeGreaterThan(0);
+  });
+});
