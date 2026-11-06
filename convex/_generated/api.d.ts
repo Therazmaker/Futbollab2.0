@@ -8,9 +8,11 @@
  * @module
  */
 
+import type * as footballData from "../footballData.js";
 import type * as legacy from "../legacy.js";
 import type * as lib_competitionTable from "../lib/competitionTable.js";
 import type * as lib_engine from "../lib/engine.js";
+import type * as lib_footballData from "../lib/footballData.js";
 import type * as lib_leagueTable from "../lib/leagueTable.js";
 import type * as lib_markets from "../lib/markets.js";
 import type * as lib_narrative from "../lib/narrative.js";
@@ -41,9 +43,11 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  footballData: typeof footballData;
   legacy: typeof legacy;
   "lib/competitionTable": typeof lib_competitionTable;
   "lib/engine": typeof lib_engine;
+  "lib/footballData": typeof lib_footballData;
   "lib/leagueTable": typeof lib_leagueTable;
   "lib/markets": typeof lib_markets;
   "lib/narrative": typeof lib_narrative;

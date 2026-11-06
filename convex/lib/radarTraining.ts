@@ -24,6 +24,8 @@ export interface EvalSnapshot {
 export interface EvalResult {
   homeGoals: number;
   awayGoals: number;
+  /** Cuotas de cierre del mercado (para el CLV) */
+  closingOdds?: { home: number; draw: number; away: number } | null;
   /** Partidos de jugadores de ese partido: goles y tiros reales */
   playerLogs: Array<{ playerId: string; goals: number | null; shots: number | null }>;
 }
@@ -45,7 +47,7 @@ export const FLAG_EVENTS: Record<string, string> = {
   FAVORITO_CLARO: "gana el favorito",
   EMPATE_VIVO: "empate",
   SORPRESA_POSIBLE: "gana el no favorito",
-  VALOR: "sale el resultado con valor",
+  VALOR: "sale el resultado de la discrepancia",
   FAVORITO_FRAGIL: "el favorito del mercado no gana",
 };
 
@@ -58,6 +60,20 @@ export function wilson(hits: number, n: number, z = 1.645) {
   const h = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d;
   return { low: Math.max(0, c - h), high: Math.min(1, c + h) };
 }
+
+/** Cuotas → probabilidades justas (sin margen). */
+function fairOf(o: { home?: number; draw?: number; away?: number } | null | undefined) {
+  if (!o || !(o.home! > 1 && o.draw! > 1 && o.away! > 1)) return null;
+  const i = { home: 1 / o.home!, draw: 1 / o.draw!, away: 1 / o.away! };
+  const t = i.home + i.draw + i.away;
+  return { home: i.home / t, draw: i.draw / t, away: i.away / t };
+}
+
+/**
+ * Referencia del histórico (football-data, 3.920 partidos 2024-08 → 2026-11, modelo
+ * walk-forward contra la cuota media de apertura). Ver PR "CLV".
+ */
+export const CLV_BACKTEST = { n: 1487, clv: -0.056, roi: -0.223, towardModel: 0.493, nToward: 3919 };
 
 const outcomeOf = (h: number, a: number) => (h > a ? "home" : h === a ? "draw" : "away");
 
@@ -75,6 +91,10 @@ export function evaluate(rows: Array<{ snap: EvalSnapshot; result: EvalResult }>
   const absence = { n: 0, errAdj: 0, errBase: 0, goals: 0, adj: 0, base: 0 };
   const players = { score: { n: 0, brier: 0, pred: 0, obs: 0 }, shot1: { n: 0, brier: 0, pred: 0, obs: 0 } };
   let late = 0;
+  // CLV: ¿tu cuota (la de la foto previa) era mejor que la de cierre?
+  const clv = { n: 0, sum: 0, sum2: 0, beat: 0 };
+  const toward = { n: 0, hits: 0 };
+  const vsClose = { n: 0, llModel: 0, llClose: 0 };
 
   for (const { snap, result } of rows) {
     if (snap.late) late++;
@@ -141,6 +161,31 @@ export function evaluate(rows: Array<{ snap: EvalSnapshot; result: EvalResult }>
       f.expected += expected;
       if (market !== null) { f.market += market; f.nMarket++; }
       f.profit += profit;
+    }
+    // CLV y movimiento de la cuota
+    const close = fairOf(result.closingOdds);
+    if (close) {
+      vsClose.n++;
+      vsClose.llModel += -Math.log(Math.max(1e-6, P[out]));
+      vsClose.llClose += -Math.log(Math.max(1e-6, close[out]));
+      if (snap.fair) {
+        // Resultado donde modelo y tu cuota más discrepaban: ¿el cierre se movió hacia el modelo?
+        const k = (["home", "draw", "away"] as const).reduce((a, b) =>
+          Math.abs(P[b] - snap.fair![b]) > Math.abs(P[a] - snap.fair![a]) ? b : a
+        );
+        const mv = close[k] - snap.fair[k];
+        if (Math.abs(mv) > 0.002) {
+          toward.n++;
+          if (Math.sign(mv) === Math.sign(P[k] - snap.fair[k])) toward.hits++;
+        }
+      }
+      if (snap.flags.includes("VALOR") && snap.bestEdge) {
+        const c = snap.bestEdge.odds * close[snap.bestEdge.outcome] - 1;
+        clv.n++;
+        clv.sum += c;
+        clv.sum2 += c * c;
+        if (c > 0) clv.beat++;
+      }
     }
     // Bajas: ¿el ajuste acerca los goles esperados a los reales?
     for (const side of ["home", "away"] as const) {
@@ -227,7 +272,31 @@ export function evaluate(rows: Array<{ snap: EvalSnapshot; result: EvalResult }>
     );
   }
 
+  const clvMean = clv.n ? clv.sum / clv.n : 0;
+  const clvSd = clv.n > 1 ? Math.sqrt(Math.max(0, clv.sum2 / clv.n - clvMean * clvMean)) : 0;
+  const clvRow = clv.n
+    ? {
+        n: clv.n,
+        mean: clvMean,
+        ci: { low: clvMean - (1.645 * clvSd) / Math.sqrt(clv.n), high: clvMean + (1.645 * clvSd) / Math.sqrt(clv.n) },
+        beatRate: clv.beat / clv.n,
+      }
+    : null;
+  if (clvRow && clvRow.n >= 20) {
+    tips.push(
+      clvRow.ci.low > 0
+        ? `Tus apuestas de "discrepancia" le ganan a la cuota de cierre (CLV ${(clvRow.mean * 100).toFixed(1)} %, n=${clvRow.n}): señal de ventaja real.`
+        : clvRow.ci.high < 0
+        ? `Tus apuestas de "discrepancia" pierden contra el cierre (CLV ${(clvRow.mean * 100).toFixed(1)} %, n=${clvRow.n}): el mercado sabe más; no apuestes por estas alertas.`
+        : `CLV de las discrepancias ${(clvRow.mean * 100).toFixed(1)} % (n=${clvRow.n}): todavía no se distingue de cero.`
+    );
+  }
+
   return {
+    clv: clvRow,
+    towardModel: toward.n ? { n: toward.n, rate: toward.hits / toward.n, ci: wilson(toward.hits, toward.n) } : null,
+    vsClosing: vsClose.n ? { n: vsClose.n, logLossModel: vsClose.llModel / vsClose.n, logLossClose: vsClose.llClose / vsClose.n } : null,
+    clvBacktest: CLV_BACKTEST,
     matches: rows.length,
     lateSnapshots: late,
     oneXTwo: n1x2 ? { n: n1x2, logLoss: ll / n1x2, hitRate: hits / n1x2, hitCi: wilson(hits, n1x2) } : null,

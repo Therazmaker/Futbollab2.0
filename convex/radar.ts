@@ -55,6 +55,28 @@ export const setOdds = mutation({
   },
 });
 
+/**
+ * Cuotas de cierre (las de justo antes del partido). Con ellas se mide el CLV:
+ * si tu cuota era mejor que la de cierre, le ganaste al mercado aunque pierdas la apuesta.
+ */
+export const setClosingOdds = mutation({
+  args: { matchId: v.id("matches"), home: v.optional(v.number()), draw: v.optional(v.number()), away: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const m = await ctx.db.get(args.matchId);
+    if (!m) throw new Error("Partido no encontrado");
+    const empty = args.home === undefined && args.draw === undefined && args.away === undefined;
+    if (empty) {
+      await ctx.db.patch(args.matchId, { closingOdds: undefined });
+      return args.matchId;
+    }
+    if (!(args.home! > 1 && args.draw! > 1 && args.away! > 1)) throw new Error("Pon las tres cuotas de cierre (decimales, mayores que 1).");
+    await ctx.db.patch(args.matchId, {
+      closingOdds: { ...(m.closingOdds ?? {}), home: args.home!, draw: args.draw!, away: args.away! },
+    });
+    return args.matchId;
+  },
+});
+
 /** Añade un partido al radar (programado, sin marcador) entre dos equipos cualesquiera. */
 export const addRadarMatch = mutation({
   args: {
@@ -122,6 +144,7 @@ export const getTraining = query({
         result: {
           homeGoals: m.homeGoals,
           awayGoals: m.awayGoals,
+          closingOdds: m.closingOdds ?? null,
           playerLogs: logs.map((l) => ({ playerId: l.playerId as string, goals: num(l.rawStats?.goals), shots: num(l.rawStats?.totalShots ?? l.rawStats?.shots) })),
         },
       });
