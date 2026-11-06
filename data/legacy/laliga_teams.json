@@ -1,0 +1,223 @@
+[
+ {
+  "legacyId": "sp_alaves",
+  "name": "Alavés",
+  "league": "laliga",
+  "aliases": [
+   "Deportivo Alavés"
+  ]
+ },
+ {
+  "legacyId": "sp_almeria",
+  "name": "Almería",
+  "league": "laliga",
+  "aliases": [
+   "UD Almería"
+  ]
+ },
+ {
+  "legacyId": "sp_ath_bilbao",
+  "name": "Athletic Club",
+  "league": "laliga",
+  "aliases": [
+   "Athletic Bilbao",
+   "Athletic",
+   "Ath Bilbao"
+  ]
+ },
+ {
+  "legacyId": "sp_ath_madrid",
+  "name": "Atlético de Madrid",
+  "league": "laliga",
+  "aliases": [
+   "Atlético Madrid",
+   "Atletico",
+   "Atleti",
+   "Ath Madrid"
+  ]
+ },
+ {
+  "legacyId": "sp_barcelona",
+  "name": "Barcelona",
+  "league": "laliga",
+  "aliases": [
+   "FC Barcelona",
+   "Barça",
+   "Barca"
+  ]
+ },
+ {
+  "legacyId": "sp_betis",
+  "name": "Real Betis",
+  "league": "laliga",
+  "aliases": [
+   "Betis"
+  ]
+ },
+ {
+  "legacyId": "sp_cadiz",
+  "name": "Cádiz",
+  "league": "laliga",
+  "aliases": []
+ },
+ {
+  "legacyId": "sp_celta",
+  "name": "Celta de Vigo",
+  "league": "laliga",
+  "aliases": [
+   "Celta",
+   "RC Celta"
+  ]
+ },
+ {
+  "legacyId": "sp_elche",
+  "name": "Elche",
+  "league": "laliga",
+  "aliases": []
+ },
+ {
+  "legacyId": "sp_espanol",
+  "name": "Espanyol",
+  "league": "laliga",
+  "aliases": [
+   "Espanol",
+   "RCD Espanyol"
+  ]
+ },
+ {
+  "legacyId": "sp_getafe",
+  "name": "Getafe",
+  "league": "laliga",
+  "aliases": []
+ },
+ {
+  "legacyId": "sp_girona",
+  "name": "Girona",
+  "league": "laliga",
+  "aliases": []
+ },
+ {
+  "legacyId": "sp_granada",
+  "name": "Granada",
+  "league": "laliga",
+  "aliases": []
+ },
+ {
+  "legacyId": "sp_la_coruna",
+  "name": "Deportivo de La Coruña",
+  "league": "laliga",
+  "aliases": [
+   "Deportivo",
+   "Deportivo La Coruña",
+   "La Coruña",
+   "Depor"
+  ]
+ },
+ {
+  "legacyId": "sp_las_palmas",
+  "name": "Las Palmas",
+  "league": "laliga",
+  "aliases": [
+   "UD Las Palmas"
+  ]
+ },
+ {
+  "legacyId": "sp_leganes",
+  "name": "Leganés",
+  "league": "laliga",
+  "aliases": []
+ },
+ {
+  "legacyId": "sp_levante",
+  "name": "Levante",
+  "league": "laliga",
+  "aliases": []
+ },
+ {
+  "legacyId": "sp_malaga",
+  "name": "Málaga",
+  "league": "laliga",
+  "aliases": []
+ },
+ {
+  "legacyId": "sp_mallorca",
+  "name": "Mallorca",
+  "league": "laliga",
+  "aliases": [
+   "RCD Mallorca"
+  ]
+ },
+ {
+  "legacyId": "sp_osasuna",
+  "name": "Osasuna",
+  "league": "laliga",
+  "aliases": [
+   "CA Osasuna"
+  ]
+ },
+ {
+  "legacyId": "sp_oviedo",
+  "name": "Real Oviedo",
+  "league": "laliga",
+  "aliases": [
+   "Oviedo"
+  ]
+ },
+ {
+  "legacyId": "sp_real_madrid",
+  "name": "Real Madrid",
+  "league": "laliga",
+  "aliases": []
+ },
+ {
+  "legacyId": "sp_santander",
+  "name": "Racing de Santander",
+  "league": "laliga",
+  "aliases": [
+   "Racing Santander",
+   "Racing"
+  ]
+ },
+ {
+  "legacyId": "sp_sevilla",
+  "name": "Sevilla",
+  "league": "laliga",
+  "aliases": []
+ },
+ {
+  "legacyId": "sp_sociedad",
+  "name": "Real Sociedad",
+  "league": "laliga",
+  "aliases": [
+   "Sociedad"
+  ]
+ },
+ {
+  "legacyId": "sp_valencia",
+  "name": "Valencia",
+  "league": "laliga",
+  "aliases": []
+ },
+ {
+  "legacyId": "sp_valladolid",
+  "name": "Real Valladolid",
+  "league": "laliga",
+  "aliases": [
+   "Valladolid"
+  ]
+ },
+ {
+  "legacyId": "sp_vallecano",
+  "name": "Rayo Vallecano",
+  "league": "laliga",
+  "aliases": [
+   "Rayo"
+  ]
+ },
+ {
+  "legacyId": "sp_villarreal",
+  "name": "Villarreal",
+  "league": "laliga",
+  "aliases": []
+ }
+]

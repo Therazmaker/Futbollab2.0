@@ -122,3 +122,27 @@ describe("narraciones", () => {
     await expect(t.mutation(api.narratives.setAiSettings, { claudeModel: "gpt-4" })).rejects.toThrow();
   });
 });
+
+describe("resultados en bloque", () => {
+  test("revisa, guarda, no duplica y avisa de equipos desconocidos", async () => {
+    const t = convexTest(schema, modules);
+    await t.mutation(api.teams.createTeam, { name: "Valencia", league: "laliga" });
+    await t.mutation(api.teams.createTeam, { name: "Real Madrid CF", league: "laliga" });
+    await t.mutation(api.teams.createTeam, { name: "Real Betis", league: "laliga" });
+    const rows = [
+      { date: "2026-11-07", home: "Valencia", away: "Real Madrid", homeGoals: 1, awayGoals: 2 },
+      { date: "2026-11-08", home: "Betis", away: "Sevilla", homeGoals: 2, awayGoals: 2 },
+    ];
+    const pre = await t.mutation(api.results.addResultsBulk, { competition: "laliga", preview: true, rows });
+    expect(pre.recognized).toBe(1);
+    expect(pre.unmatched).toEqual(["Sevilla"]);
+    expect(await t.run((c) => c.db.query("matches").collect())).toHaveLength(0);
+
+    const r1 = await t.mutation(api.results.addResultsBulk, { competition: "laliga", rows });
+    expect(r1.added).toBe(1);
+    const r2 = await t.mutation(api.results.addResultsBulk, { competition: "laliga", rows });
+    expect(r2).toMatchObject({ added: 0, unchanged: 1 });
+    const valencia = (await t.run((c) => c.db.query("teams").collect())).find((x) => x.name === "Valencia")!;
+    expect(valencia.attackRating).toBeGreaterThan(0);
+  });
+});

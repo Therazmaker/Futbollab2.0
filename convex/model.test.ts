@@ -125,7 +125,7 @@ describe("Convex: registro, informe e importación", () => {
     const t = convexTest(schema, modules);
     await t.mutation(api.teams.seedInitialCompetitionsAndTeams, {});
     const r1 = await t.action(api.legacy.importLegacyData, {});
-    expect(r1.matches).toBe(1324);
+    expect(r1.matches).toBe(1324 + 1249); // 4 ligas del FutbolLab viejo + LaLiga (football-data)
     expect(r1.teamsLinked).toBeGreaterThanOrEqual(2); // Manchester City e Inter ya existían
     const r2 = await t.action(api.legacy.importLegacyData, {});
     expect(r2.matches).toBe(0);
@@ -149,7 +149,22 @@ describe("Convex: registro, informe e importación", () => {
     expect(villa.length).toBe(1);
     expect(villa[0].lastSeason!.points).toBeGreaterThan(30);
     expect(teams.filter((x) => x.league === "premier").length).toBe(20);
-  }, 120_000);
+
+    // LaLiga: enlaza con los equipos que ya existían y calcula la temporada actual real
+    const madrids = teams.filter((x) => x.name.startsWith("Real Madrid"));
+    expect(madrids.length).toBe(1); // el "Real Madrid CF" de la semilla se enlaza, no se duplica
+    const madrid = madrids[0];
+    expect(madrid.league).toBe("laliga");
+    expect(madrid.attackRating).toBeGreaterThan(1);
+    const valencia = teams.find((x) => x.name === "Valencia")!;
+    expect(valencia.defenseRating).toBeGreaterThan(0);
+    const laliga = await t.query(api.teams.getTeams, { league: "laliga" });
+    // Los descendidos no salen en la lista de una temporada que ya tiene partidos
+    if (laliga.some((x) => (x.played ?? 0) > 0)) {
+      expect(laliga.every((x) => !x.legacyId || (x.played ?? 0) > 0)).toBe(true);
+      expect(laliga.length).toBeLessThanOrEqual(22);
+    }
+  }, 180_000);
 
   test("repara equipos duplicados de una importación anterior", async () => {
     const t = convexTest(schema, modules);

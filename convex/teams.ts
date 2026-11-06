@@ -76,6 +76,16 @@ export const getTeams = query({
       return isDomestic || isLinkedToCompetition || hasUclRank || (typeof activeIn === 'function' ? activeIn(t, code) : false);
     });
 
+    // Equipos del histórico que ya no están en la liga (descendidos): si la liga ya
+    // tiene partidos esta temporada y ellos no, no salen en la lista (siguen en la base
+    // y en la fuerza de la liga como datos de entrenamiento).
+    if (code !== "ucl") {
+      const active = filtered.some((t: any) => t.league === code && (t.played ?? 0) > 0);
+      if (active) {
+        return filtered.filter((t: any) => !(t.league === code && t.legacyId && !((t.played ?? 0) > 0)));
+      }
+    }
+
     if (code === "ucl") {
       return filtered.sort((a: any, b: any) => {
         const ra = a.uclRank ?? 999;
