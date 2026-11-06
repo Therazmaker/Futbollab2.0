@@ -2,7 +2,7 @@
 
 import React from "react";
 
-export type TabKey = "explorer" | "team" | "player";
+export type TabKey = "explorer" | "radar" | "team" | "player";
 
 interface BottomNavProps {
   activeTab: TabKey;
@@ -16,6 +16,7 @@ export function BottomNav({ activeTab, onSelectTab, teamLabel, playerLabel }: Bo
   const short = (s?: string | null) => (s ? (s.length > 12 ? s.slice(0, 11) + "…" : s) : null);
   const tabs: Array<{ id: TabKey; label: string; icon: string }> = [
     { id: "explorer", label: "Ligas", icon: "sports_soccer" },
+    { id: "radar", label: "Radar", icon: "radar" },
     { id: "team", label: short(teamLabel) ?? "Equipo", icon: "shield" },
     { id: "player", label: short(playerLabel) ?? "Jugador", icon: "psychology" },
   ];

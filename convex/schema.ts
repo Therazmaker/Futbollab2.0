@@ -13,6 +13,8 @@ export default defineSchema({
     goalsPerTeam: v.optional(v.number()),
     matchesPlayed: v.optional(v.number()),
     currentSeason: v.optional(v.string()), // "2026-27"
+    // Frecuencias reales de goles (para +1.5/+2.5/+3.5 y ambos marcan)
+    goalRates: v.optional(v.object({ over15: v.number(), over25: v.number(), over35: v.number(), btts: v.number() })),
   }).index("by_code", ["code"]),
 
   teams: defineTable({
@@ -83,8 +85,18 @@ export default defineSchema({
     awayTeamId: v.id("teams"),
     homeGoals: v.optional(v.number()), // sin marcador todavía = undefined
     awayGoals: v.optional(v.number()),
+    // Cuotas decimales que mete el usuario (Radar): 1-X-2
+    odds: v.optional(
+      v.object({
+        home: v.optional(v.number()),
+        draw: v.optional(v.number()),
+        away: v.optional(v.number()),
+        updatedAt: v.optional(v.number()),
+      })
+    ),
   })
     .index("by_league_and_date", ["league", "date"])
+    .index("by_date", ["date"])
     .index("by_home_and_date", ["homeTeamId", "date"])
     .index("by_away_and_date", ["awayTeamId", "date"])
     .index("by_legacyId", ["legacyId"]),

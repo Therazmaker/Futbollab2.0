@@ -8,6 +8,7 @@ import { refreshRatingModel } from "./lib/ratingStore";
 import { currentSeason, seasonOf } from "./lib/season";
 import { activeIn, homeCompetition, isNoLeague, NO_LEAGUE } from "./lib/noLeague";
 import { availabilityOn } from "./lib/injuries";
+import { computeMarkets } from "./lib/markets";
 
 /**
  * Returns all registered leagues and continental tournaments.
@@ -451,11 +452,6 @@ export const getTeamProfile = query({
   },
 });
 
-function pois(k: number, l: number) {
-  let f = 1;
-  for (let i = 2; i <= k; i++) f *= i;
-  return (Math.exp(-l) * Math.pow(l, k)) / f;
-}
 
 /**
  * Simulación de un partido con el modelo Poisson (Dixon-Coles) de la liga:
@@ -473,39 +469,19 @@ export const predictMatch = query({
       .query("leagues")
       .withIndex("by_code", (q) => q.eq("code", home.league))
       .first();
-    const avg = league?.goalsPerTeam ?? 1.4;
-    const homeAdv = league?.homeAdvantage ?? 1.15;
-    const lh = avg * homeAdv * home.attackRating * away.defenseRating;
-    const la = avg * away.attackRating * home.defenseRating;
-    const rho = -0.1;
-    let pH = 0, pD = 0, pA = 0, over25 = 0, btts = 0, total = 0;
-    const scores: Array<{ home: number; away: number; p: number }> = [];
-    for (let i = 0; i <= 10; i++) {
-      for (let j = 0; j <= 10; j++) {
-        let p = pois(i, lh) * pois(j, la);
-        if (i === 0 && j === 0) p *= 1 - lh * la * rho;
-        else if (i === 0 && j === 1) p *= 1 + lh * rho;
-        else if (i === 1 && j === 0) p *= 1 + la * rho;
-        else if (i === 1 && j === 1) p *= 1 - rho;
-        total += p;
-        if (i > j) pH += p;
-        else if (i === j) pD += p;
-        else pA += p;
-        if (i + j > 2) over25 += p;
-        if (i > 0 && j > 0) btts += p;
-        scores.push({ home: i, away: j, p });
-      }
-    }
-    scores.sort((a, b) => b.p - a.p);
-    const r = (x: number) => +(x / total).toFixed(3);
+    const mk = computeMarkets(home, away, {
+      goalsPerTeam: league?.goalsPerTeam,
+      homeAdvantage: league?.homeAdvantage,
+      goalRates: league?.goalRates,
+    });
     return {
       home: home.name,
       away: away.name,
-      expectedGoals: { home: +lh.toFixed(2), away: +la.toFixed(2) },
-      probabilities: { home: r(pH), draw: r(pD), away: r(pA) },
-      over25: r(over25),
-      btts: r(btts),
-      topScores: scores.slice(0, 5).map((s) => ({ ...s, p: r(s.p) })),
+      expectedGoals: mk.expectedGoals,
+      probabilities: mk.probabilities,
+      over25: mk.over25,
+      btts: mk.btts,
+      topScores: mk.topScores,
       sameLeague: home.league === away.league,
     };
   },

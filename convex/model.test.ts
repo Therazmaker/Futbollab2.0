@@ -722,3 +722,94 @@ describe("Champions: limpieza de datos sembrados", () => {
     expect((await t.query(api.legacy.seasonStatus, {})).staleLeagues).toEqual([]);
   });
 });
+
+import { computeMarkets, fairProbabilities, leagueGoalRates } from "./lib/markets";
+import { analyzeRadarMatch } from "./lib/radar";
+import { fitTeamRatings } from "./lib/teamRatings";
+import legacyMatchesForTest from "../data/legacy/matches.json";
+
+describe("Radar 2.0", () => {
+  test("mercados coherentes y cuotas sin margen", () => {
+    const mk = computeMarkets({ attackRating: 1.3, defenseRating: 0.8 }, { attackRating: 0.9, defenseRating: 1.1 }, { goalsPerTeam: 1.4, homeAdvantage: 1.15 });
+    const s = mk.probabilities.home + mk.probabilities.draw + mk.probabilities.away;
+    expect(s).toBeCloseTo(1, 2);
+    expect(mk.probabilities.home).toBeGreaterThan(mk.probabilities.away);
+    expect(mk.over15).toBeGreaterThan(mk.over25);
+    expect(mk.over25).toBeGreaterThan(mk.over35);
+    const fair = fairProbabilities({ home: 1.8, draw: 3.6, away: 4.5 })!;
+    expect(fair.home + fair.draw + fair.away).toBeCloseTo(1, 6);
+    expect(fair.margin).toBeGreaterThan(0);
+  });
+
+  test("alertas de valor y de favorito frágil", () => {
+    const base = {
+      home: { name: "A", attackRating: 1.3, defenseRating: 0.85 },
+      away: { name: "B", attackRating: 0.95, defenseRating: 1.05 },
+      league: { goalsPerTeam: 1.4, homeAdvantage: 1.15 },
+    };
+    const model = analyzeRadarMatch(base).markets.probabilities;
+    // Mercado que infravalora al local → valor en el local
+    const cheap = analyzeRadarMatch({ ...base, odds: { home: 1 / (model.home - 0.1) / 1.05, draw: 3.5, away: 2.6 } });
+    expect(cheap.flags.some((f) => f.code === "VALOR")).toBe(true);
+    // Mercado que da al visitante muy favorito → favorito frágil
+    const fragile = analyzeRadarMatch({ ...base, odds: { home: 4.5, draw: 3.8, away: 1.6 } });
+    expect(fragile.flags.some((f) => f.code === "FAVORITO_FRAGIL")).toBe(true);
+    const withAbs = analyzeRadarMatch({ ...base, absences: { home: ["X"], away: [] } });
+    expect(withAbs.flags.some((f) => f.code === "BAJAS_LOCAL")).toBe(true);
+    expect(cheap.studyScore).toBeGreaterThanOrEqual(0);
+    expect(cheap.studyScore).toBeLessThanOrEqual(100);
+  });
+
+  test("con el histórico: 1X2 mejora y los goles totales no empeoran frente a la frecuencia de la liga", () => {
+    const rows = (legacyMatchesForTest as any[]).filter((m) => m.league === "premier").sort((a, b) => (a.date < b.date ? -1 : 1));
+    let bH = 0, bHb = 0, bO = 0, bOb = 0, n = 0;
+    for (let i = 120; i < rows.length; i += 3) {
+      const hist = rows.slice(0, i).map((r) => ({ home: r.homeLegacyId, away: r.awayLegacyId, homeGoals: r.homeGoals, awayGoals: r.awayGoals, date: r.date }));
+      const { ratings, homeAdvantage, goalsPerTeam } = fitTeamRatings(hist);
+      const r = rows[i];
+      const h = ratings.get(r.homeLegacyId), a = ratings.get(r.awayLegacyId);
+      if (!h || !a) continue;
+      const mk = computeMarkets(
+        { attackRating: h.attack, defenseRating: h.defense },
+        { attackRating: a.attack, defenseRating: a.defense },
+        { goalsPerTeam, homeAdvantage, goalRates: leagueGoalRates(hist) }
+      );
+      const yH = r.homeGoals > r.awayGoals ? 1 : 0;
+      const yO = r.homeGoals + r.awayGoals > 2 ? 1 : 0;
+      const baseH = hist.filter((x) => x.homeGoals > x.awayGoals).length / hist.length;
+      const baseO = hist.filter((x) => x.homeGoals + x.awayGoals > 2).length / hist.length;
+      bH += (mk.probabilities.home - yH) ** 2; bHb += (baseH - yH) ** 2;
+      bO += (mk.over25 - yO) ** 2; bOb += (baseO - yO) ** 2;
+      n++;
+    }
+    expect(n).toBeGreaterThan(50);
+    expect(bH).toBeLessThan(bHb * 0.95); // ≥ 5 % mejor en "gana local"
+    expect(bO).toBeLessThan(bOb * 1.02); // +2.5 no peor que la frecuencia (±2 %)
+  });
+
+  test("Convex: programar, cuotas, bajas y resultado en el Radar", async () => {
+    const t = convexTest(schema, modules);
+    await t.action(api.legacy.importLegacyData, {});
+    const teams = await t.run((ctx) => ctx.db.query("teams").collect());
+    const arsenal = teams.find((x) => x.name === "Arsenal")!;
+    const chelsea = teams.find((x) => x.name === "Chelsea")!;
+    const d = "2099-03-01";
+    const matchId = await t.mutation(api.radar.addRadarMatch, { homeTeamId: arsenal._id, awayTeamId: chelsea._id, date: d, competition: "premier" });
+    expect(await t.mutation(api.radar.addRadarMatch, { homeTeamId: arsenal._id, awayTeamId: chelsea._id, date: d })).toBe(matchId);
+    await expect(t.mutation(api.radar.setOdds, { matchId, home: 0.9 })).rejects.toThrow(/mayores que 1/);
+    await t.mutation(api.radar.setOdds, { matchId, home: 2.0, draw: 3.5, away: 3.8 });
+    const pid = await t.mutation(api.players.createPlayer, { teamId: arsenal._id, name: "Lesionado", position: "FW" });
+    await t.mutation(api.players.reportInjury, { playerId: pid, startDate: "2099-02-20" });
+
+    const radar = await t.query(api.radar.getRadar, { fromDate: d, toDate: d });
+    expect(radar.length).toBe(1);
+    const m = radar[0];
+    expect(m.fair).not.toBeNull();
+    expect(m.markets.reliable).toBe(true);
+    expect(m.flags.some((f) => f.code === "BAJAS_LOCAL" && f.detail.includes("Lesionado"))).toBe(true);
+    expect(m.result).toBeNull();
+    await t.mutation(api.teams.setMatchScore, { matchId, homeGoals: 1, awayGoals: 1 });
+    const after = await t.query(api.radar.getRadar, { fromDate: d, toDate: d });
+    expect(after[0].result!.outcome).toBe("draw");
+  }, 180_000);
+});

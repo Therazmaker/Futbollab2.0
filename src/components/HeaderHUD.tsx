@@ -16,6 +16,8 @@ export function HeaderHUD({ currentTab, onSearchClick, onFilterClick }: HeaderHU
     switch (currentTab) {
       case "explorer":
         return "Ligas";
+      case "radar":
+        return "Radar";
       case "team":
         return "Perfil de equipo";
       case "player":
