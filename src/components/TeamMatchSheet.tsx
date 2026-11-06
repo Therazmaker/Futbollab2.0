@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
+import { NarrativePanel } from "./NarrativePanel";
 
 interface TeamMatchSheetProps {
   matchId: Id<"matches">;
@@ -217,6 +218,8 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
               </form>
             )}
             {error && <p className="font-mono text-[11px] text-error text-center">{error}</p>}
+
+            {hasScore && <NarrativePanel matchId={matchId} homeName={data.home.name} awayName={data.away.name} />}
 
             {[ownSide!, otherSide!].map((side) => (
               <div key={side.teamId} className="flex flex-col gap-1.5">

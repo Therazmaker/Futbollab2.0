@@ -12,6 +12,7 @@
     "legacy:build": "python3 scripts/legacy/build_legacy_data.py"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
     "clsx": "^2.1.1",
     "convex": "^1.16.4",
     "dexie": "^4.0.8",

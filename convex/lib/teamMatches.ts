@@ -98,7 +98,13 @@ export async function deleteIfOrphan(db: Db, matchId: Id<"matches"> | undefined)
     .query("playerMatchLogs")
     .withIndex("by_match", (q) => q.eq("matchId", matchId))
     .first();
-  if (!anyLog) await db.delete(matchId);
+  if (anyLog) return;
+  // Un partido con narración analizada se conserva aunque no tenga jugadores
+  const narrative = await db
+    .query("matchNarratives")
+    .withIndex("by_match", (q) => q.eq("matchId", matchId))
+    .first();
+  if (!narrative) await db.delete(matchId);
 }
 
 /**

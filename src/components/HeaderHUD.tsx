@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
+import { AiSettingsSheet } from "./AiSettingsSheet";
 import { useSyncTelemetry } from "@/lib/offline-sync";
 
 interface HeaderHUDProps {
@@ -11,6 +12,7 @@ interface HeaderHUDProps {
 
 export function HeaderHUD({ currentTab, onSearchClick, onFilterClick }: HeaderHUDProps) {
   const { isOnline, pendingCount, isSyncing, triggerManualSync } = useSyncTelemetry();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   const getTabLabel = () => {
     switch (currentTab) {
@@ -76,6 +78,13 @@ export function HeaderHUD({ currentTab, onSearchClick, onFilterClick }: HeaderHU
             </div>
 
             <button
+              onClick={() => setSettingsOpen(true)}
+              aria-label="Ajustes"
+              className="w-10 h-10 flex items-center justify-center rounded-lg bg-surface-container-high/70 text-on-surface-variant hover:text-primary transition-colors border border-outline-variant/30"
+            >
+              <span className="material-symbols-outlined text-[18px]">settings</span>
+            </button>
+            <button
               onClick={onSearchClick}
               aria-label="Global Search"
               className="w-10 h-10 flex items-center justify-center rounded-lg bg-surface-container-high/70 text-on-surface-variant hover:text-primary transition-colors border border-outline-variant/30"
@@ -136,6 +145,7 @@ export function HeaderHUD({ currentTab, onSearchClick, onFilterClick }: HeaderHU
           </div>
         </div>
       </div>
+      {settingsOpen && <AiSettingsSheet onClose={() => setSettingsOpen(false)} />}
     </header>
   );
 }
