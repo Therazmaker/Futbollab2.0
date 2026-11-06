@@ -47,12 +47,15 @@ function ScoreRing({ value }: { value: number }) {
   );
 }
 
-function OddsEditor({ match, onDone }: { match: any; onDone: () => void }) {
-  const setOdds = useMutation(api.radar.setOdds);
+function OddsEditor({ match, onDone, closing }: { match: any; onDone: () => void; closing?: boolean }) {
+  const setOpen = useMutation(api.radar.setOdds);
+  const setClose = useMutation(api.radar.setClosingOdds);
+  const setOdds = closing ? setClose : setOpen;
+  const src = closing ? match.closingOdds : match.odds;
   const [o, setO] = useState({
-    home: match.odds?.home ? String(match.odds.home) : "",
-    draw: match.odds?.draw ? String(match.odds.draw) : "",
-    away: match.odds?.away ? String(match.odds.away) : "",
+    home: src?.home ? String(src.home) : "",
+    draw: src?.draw ? String(src.draw) : "",
+    away: src?.away ? String(src.away) : "",
   });
   const [error, setError] = useState<string | null>(null);
   const num = (s: string) => (s.trim() === "" ? undefined : Number(s.replace(",", ".")));
@@ -90,15 +93,31 @@ function OddsEditor({ match, onDone }: { match: any; onDone: () => void }) {
           Cancelar
         </button>
         <button type="submit" className="px-3 h-7 rounded bg-primary text-on-primary font-bold">
-          Guardar cuotas
+          {closing ? "Guardar cierre" : "Guardar cuotas"}
         </button>
       </div>
     </form>
   );
 }
 
+/** CLV de cada resultado: tu cuota frente a la de cierre sin margen. */
+function clvText(m: any) {
+  const c = m.closingOdds;
+  if (!c || !m.odds) return "";
+  const inv = { home: 1 / c.home, draw: 1 / c.draw, away: 1 / c.away };
+  const t = inv.home + inv.draw + inv.away;
+  const parts = (["home", "draw", "away"] as const)
+    .filter((k) => m.odds[k] > 1)
+    .map((k) => {
+      const v = m.odds[k] * (inv[k] / t) - 1;
+      return `${k === "home" ? "1" : k === "draw" ? "X" : "2"} ${v >= 0 ? "+" : ""}${(v * 100).toFixed(1)}%`;
+    });
+  return parts.length ? ` · CLV ${parts.join(" · ")}` : "";
+}
+
 export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"teams">) => void }) {
   const [editingOdds, setEditingOdds] = useState(false);
+  const [editingClose, setEditingClose] = useState(false);
   const [open, setOpen] = useState(false);
   const P = m.markets.probabilities;
   const outcomes = [
@@ -190,6 +209,24 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
         )}
       </div>
       {editingOdds && <OddsEditor match={m} onDone={() => setEditingOdds(false)} />}
+      {m.odds && (
+        <div className="mt-1 flex items-center justify-between gap-2 font-mono text-[10px] text-on-surface-variant">
+          <span>
+            {m.closingOdds ? (
+              <>
+                Cierre {m.closingOdds.home} · {m.closingOdds.draw} · {m.closingOdds.away}
+                {clvText(m)}
+              </>
+            ) : (
+              "Sin cuota de cierre (para medir el CLV)"
+            )}
+          </span>
+          <button onClick={() => setEditingClose(!editingClose)} className="text-secondary shrink-0">
+            {m.closingOdds ? "Editar cierre" : "+ Cierre"}
+          </button>
+        </div>
+      )}
+      {editingClose && <OddsEditor match={m} closing onDone={() => setEditingClose(false)} />}
 
       {open && (
         <div className="mt-2 flex flex-col gap-2 font-mono text-[11px]">

@@ -104,8 +104,14 @@ def main(csv_dir):
         old.setdefault((m["homeLegacyId"], m["awayLegacyId"]), []).append((m["date"], m["legacyId"]))
 
     new_teams = {}
+    names = {}  # div -> {nombre CSV: legacyId}, para la actualización automática (convex/footballData.ts)
 
     def team_id(div, name):
+        tid = _team_id(div, name)
+        names.setdefault(div, {})[name] = tid
+        return tid
+
+    def _team_id(div, name):
         lg = DIVS[div]
         if lg == "laliga":
             disp, aliases = LALIGA[name]
@@ -158,6 +164,7 @@ def main(csv_dir):
     teams = sorted(new_teams.values(), key=lambda t: t["legacyId"])
     json.dump(teams, open(os.path.join(root, "fd_teams.json"), "w"), ensure_ascii=False, separators=(",", ":"))
     json.dump(out, open(os.path.join(root, "fd_matches.json"), "w"), ensure_ascii=False, separators=(",", ":"))
+    json.dump(names, open(os.path.join(root, "fd_names.json"), "w"), ensure_ascii=False, indent=1, sort_keys=True)
     print(f"{len(teams)} equipos nuevos, {len(out)} partidos ({reused} ya estaban en el histórico), {out[0]['date']} → {out[-1]['date']}")
 
 

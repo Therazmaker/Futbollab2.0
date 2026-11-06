@@ -249,3 +249,81 @@ describe("diagnóstico de la importación", () => {
     expect(s.statsPending).toBe(0);
   });
 });
+
+import { evaluate } from "./lib/radarTraining";
+import { parseFootballDataCsv } from "./lib/footballData";
+import fdMatchesData from "../data/legacy/fd_matches.json";
+
+describe("CLV", () => {
+  const snap = (o: Record<string, unknown> = {}) => ({
+    probs: { home: 0.45, draw: 0.27, away: 0.28 },
+    base: null,
+    expectedGoals: { home: 1.4, away: 1.1 },
+    attackFactor: { home: 1, away: 1 },
+    odds: { home: 1.92, draw: 3.4, away: 4.25 },
+    fair: { home: 0.5, draw: 0.28, away: 0.22 },
+    flags: ["VALOR"],
+    favorite: "home" as const,
+    bestEdge: { outcome: "away" as const, odds: 4.25, model: 0.28, fair: 0.22 },
+    players: [],
+    late: false,
+    ...o,
+  });
+  test("CLV positivo si la cuota cerró más baja y el mercado se movió hacia el modelo", () => {
+    // Cierre: el visitante bajó a 3.40 → tu 4.25 era mejor que el cierre
+    const r = evaluate([{ snap: snap(), result: { homeGoals: 1, awayGoals: 1, closingOdds: { home: 2.1, draw: 3.4, away: 3.4 }, playerLogs: [] } }]);
+    expect(r.clv!.n).toBe(1);
+    expect(r.clv!.mean).toBeGreaterThan(0.1);
+    expect(r.clv!.beatRate).toBe(1);
+    expect(r.towardModel).toMatchObject({ n: 1, rate: 1 });
+    expect(r.vsClosing!.n).toBe(1);
+  });
+  test("CLV negativo si el mercado se movió en contra", () => {
+    const r = evaluate([{ snap: snap(), result: { homeGoals: 2, awayGoals: 0, closingOdds: { home: 1.7, draw: 3.6, away: 5.5 }, playerLogs: [] } }]);
+    expect(r.clv!.mean).toBeLessThan(0);
+    expect(r.towardModel!.rate).toBe(0);
+  });
+  test("sin cuota de cierre no hay CLV", () => {
+    const r = evaluate([{ snap: snap(), result: { homeGoals: 2, awayGoals: 0, playerLogs: [] } }]);
+    expect(r.clv).toBeNull();
+    expect(r.vsClosing).toBeNull();
+    expect(r.clvBacktest.n).toBeGreaterThan(1000);
+  });
+
+  test("lee el CSV de football-data con los mismos ids que el histórico", () => {
+    const csv = [
+      "Div,Date,Time,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HxG,AxG,HS,AS,HST,AST,AvgCH,AvgCD,AvgCA,AvgC>2.5,AvgC<2.5",
+      "SP1,15/08/2026,18:30,Alaves,Getafe,3,0,H,1.93,0.24,18,6,8,2,2.4,2.9,3.6,2.1,1.75",
+      "SP1,16/08/2026,18:30,Equipo Nuevo,Getafe,1,1,D,,,10,9,3,3,,,,,",
+      "SP1,17/08/2026,18:30,Sevilla,Betis,,,,,,,,,,,,,,",
+    ].join("\n");
+    const { rows, unknown } = parseFootballDataCsv(csv, "SP1", "2627");
+    expect(unknown).toEqual(["Equipo Nuevo"]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      legacyId: "sp1_2627_2026-08-15_alaves_getafe",
+      league: "laliga",
+      homeLegacyId: "sp_alaves",
+      stats: { hs: 18, hst: 8, hxg: 1.93 },
+      closingOdds: { home: 2.4, draw: 2.9, away: 3.6, over25: 2.1 },
+    });
+    expect((fdMatchesData as any[]).some((m) => m.legacyId === rows[0].legacyId)).toBe(true);
+  });
+
+  test("Convex: cuota de cierre → CLV en Entrenamiento", async () => {
+    const t = convexTest(schema, modules);
+    const home = await t.mutation(api.teams.createTeam, { name: "Sevilla", league: "laliga" });
+    const away = await t.mutation(api.teams.createTeam, { name: "Alavés", league: "laliga" });
+    await t.mutation(api.teams.addMatchResult, { homeTeamId: home, awayTeamId: away, homeGoals: 0, awayGoals: 2, date: "2026-09-01" });
+    const matchId = await t.mutation(api.radar.addRadarMatch, { homeTeamId: home, awayTeamId: away, date: "2026-11-06", competition: "laliga" });
+    await t.mutation(api.radar.setOdds, { matchId, home: 1.3, draw: 5, away: 9 });
+    await t.mutation(api.radar.snapshotRange, { fromDate: "2026-11-06", toDate: "2026-11-06" });
+    await expect(t.mutation(api.radar.setClosingOdds, { matchId, home: 1.5 })).rejects.toThrow(/tres cuotas/);
+    await t.mutation(api.radar.setClosingOdds, { matchId, home: 1.6, draw: 4, away: 6 });
+    await t.mutation(api.teams.setMatchScore, { matchId, homeGoals: 1, awayGoals: 1 });
+    const tr = await t.query(api.radar.getTraining, {});
+    expect(tr.vsClosing!.n).toBe(1);
+    const radar = await t.query(api.radar.getRadar, { fromDate: "2026-11-06", toDate: "2026-11-06" });
+    expect(radar[0].closingOdds).toMatchObject({ home: 1.6 });
+  });
+});

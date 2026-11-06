@@ -7,6 +7,7 @@ import type { DataModel } from "./_generated/dataModel";
 import { recomputeLeague } from "./lib/leagueTable";
 import { refreshRatingModel } from "./lib/ratingStore";
 import { currentSeason } from "./lib/season";
+import { ensureSnapshotBeforeScore } from "./lib/radarSnapshot";
 import legacyLeagues from "../data/legacy/leagues.json";
 import legacyTeams from "../data/legacy/teams.json";
 import legacyMatches from "../data/legacy/matches.json";
@@ -249,6 +250,8 @@ export const importMatchesChunk = internalMutation({
       ).find((x) => x.awayTeamId === away && !x.legacyId);
       if (manual) {
         const noScore = manual.homeGoals === undefined || manual.awayGoals === undefined;
+        // Partido que programaste: foto previa del Radar antes de ponerle el marcador
+        if (noScore) await ensureSnapshotBeforeScore(ctx.db, manual._id);
         await ctx.db.patch(manual._id, {
           legacyId: m.legacyId,
           league: m.league,

@@ -134,9 +134,12 @@ export function analyzeRadarMatch(input: RadarInput): RadarAnalysis {
     if (bestEdge) {
       flags.push({
         code: "VALOR",
-        label: `Valor: ${nameOf(bestEdge.outcome)} @${bestEdge.odds}`,
-        tone: "good",
-        detail: `Modelo ${pct(bestEdge.model)} vs mercado ${pct(bestEdge.fair)} (+${Math.round(bestEdge.edge * 100)} pts).`,
+        label: `Discrepancia: ${nameOf(bestEdge.outcome)} @${bestEdge.odds}`,
+        tone: "info",
+        detail:
+          `Modelo ${pct(bestEdge.model)} vs mercado ${pct(bestEdge.fair)} (+${Math.round(bestEdge.edge * 100)} pts). ` +
+          `Ojo: en el histórico (1.487 casos, solo con resultados y tiros) estas discrepancias NO ganaban: ` +
+          `CLV −5,6 %, ROI −22 %. Solo vale si tú sabes algo que el mercado no (bajas, narraciones). Mira su CLV en Entrenamiento.`,
       });
     }
     const mktFav: Outcome = fair.home >= fair.away ? "home" : "away";

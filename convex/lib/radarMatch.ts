@@ -86,6 +86,7 @@ export async function analyzeStoredMatch(db: Reader, m: Doc<"matches">, rc: Rada
     home: { _id: home._id, name: home.name, league: home.league },
     away: { _id: away._id, name: away.name, league: away.league },
     odds: m.odds ?? null,
+    closingOdds: m.closingOdds ?? null,
     result: played ? { home: m.homeGoals!, away: m.awayGoals!, outcome } : null,
     playersLogged: { home: hs.logged, away: as.logged },
     players: {

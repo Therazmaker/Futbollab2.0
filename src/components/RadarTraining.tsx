@@ -13,7 +13,7 @@ const FLAG_LABEL: Record<string, string> = {
   FAVORITO_CLARO: "Favorito claro",
   EMPATE_VIVO: "Empate vivo",
   SORPRESA_POSIBLE: "Sorpresa posible",
-  VALOR: "Valor",
+  VALOR: "Discrepancia (antes «Valor»)",
   FAVORITO_FRAGIL: "Favorito frágil",
 };
 
@@ -42,6 +42,7 @@ export function TrainingReport({ data, competition }: { data: any; competition: 
   const small = data.matches < data.minSample;
   return (
     <div className="flex flex-col gap-3">
+      <ClvCard data={data} />
       <div className={`${card} font-mono text-[11px] flex flex-col gap-1`}>
         <div className="flex justify-between items-baseline">
           <span className="text-on-surface font-bold text-sm">{data.matches} partidos evaluados</span>
@@ -66,6 +67,11 @@ export function TrainingReport({ data, competition }: { data: any; competition: 
         )}
         {help && (
           <div className="text-[10px] text-on-surface-variant border-t border-surface-container-high pt-1 mt-1 flex flex-col gap-1">
+            <p>
+              <b className="text-on-surface">CLV</b> (closing line value): compara tu cuota con la de cierre, ya sin el margen de la casa. Si
+              apostaste a 2,40 y cerró a 2,10, le ganaste al mercado aunque luego pierdas la apuesta. Con pocos partidos dice mucho más que el
+              ROI, que necesita cientos de apuestas para dejar de ser suerte.
+            </p>
             <p>
               <b className="text-on-surface">Brier</b>: error de una probabilidad (0 = perfecto). "Mejora" compara con usar solo la frecuencia de la
               liga: positivo = el modelo aporta.
@@ -193,6 +199,51 @@ export function TrainingReport({ data, competition }: { data: any; competition: 
           <p className="text-[9px] text-on-surface-variant">Solo cuentan los jugadores que tenían pronóstico y luego registraste en ese partido.</p>
         </div>
       )}
+    </div>
+  );
+}
+
+/** CLV: ¿tu cuota era mejor que la de cierre? y ¿el mercado se mueve hacia el modelo? */
+function ClvCard({ data }: { data: any }) {
+  const b = data.clvBacktest;
+  const signed = (x: number, d = 1) => `${x >= 0 ? "+" : ""}${(x * 100).toFixed(d)}%`;
+  return (
+    <div className={`${card} font-mono text-[11px] flex flex-col gap-1.5`}>
+      <span className="text-on-surface font-bold text-sm">CLV · contra la cuota de cierre</span>
+      {!data.vsClosing ? (
+        <p className="text-on-surface-variant">
+          Ningún partido evaluado tiene cuota de cierre todavía. Ponla en la tarjeta del partido («Cierre») o pulsa «Actualizar jornadas» en
+          Ligas → 🔧 para traerla de football-data.
+        </p>
+      ) : (
+        <>
+          <p className="text-on-surface-variant">
+            1X2 con {data.vsClosing.n} partidos: modelo log-loss <b className="text-on-surface">{data.vsClosing.logLossModel.toFixed(3)}</b> · cierre
+            del mercado <b className="text-on-surface">{data.vsClosing.logLossClose.toFixed(3)}</b> (menor = mejor)
+          </p>
+          {data.towardModel && (
+            <p className="text-on-surface-variant">
+              El mercado se movió hacia el modelo en <b className="text-primary">{pct(data.towardModel.rate)}</b> de {data.towardModel.n} partidos
+              (90 %: {pct(data.towardModel.ci.low)}–{pct(data.towardModel.ci.high)}). 50 % = el modelo no sabe nada que el mercado no sepa.
+            </p>
+          )}
+          {data.clv ? (
+            <p className="text-on-surface-variant">
+              Discrepancias ({data.clv.n}): CLV medio{" "}
+              <b className={data.clv.mean >= 0 ? "text-primary" : "text-error"}>{signed(data.clv.mean)}</b> (90 %: {signed(data.clv.ci.low)} a{" "}
+              {signed(data.clv.ci.high)}) · le ganan al cierre {pct(data.clv.beatRate)}
+            </p>
+          ) : (
+            <p className="text-on-surface-variant">Aún no hay discrepancias con cuota de cierre.</p>
+          )}
+        </>
+      )}
+      <p className="text-[10px] text-on-surface-variant border-t border-surface-container-high pt-1">
+        Referencia del histórico ({b.nToward.toLocaleString()} partidos, solo resultados y tiros): el mercado se movía hacia el modelo el{" "}
+        {pct(b.towardModel, 1)} de las veces, y las discrepancias de ≥5 pts daban CLV {signed(b.clv)} y ROI {signed(b.roi)} (n={b.n.toLocaleString()}).
+        Es decir: con solo resultados el modelo no le gana al mercado. Lo que mide este panel es si TUS datos (bajas, narraciones, jugadores) sí lo
+        hacen.
+      </p>
     </div>
   );
 }

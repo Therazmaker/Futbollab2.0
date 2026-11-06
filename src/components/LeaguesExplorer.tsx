@@ -98,6 +98,23 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
     }
   };
 
+  const refreshFd = useAction(api.footballData.refreshCurrentSeason);
+  const [fdState, setFdState] = useState<string | null>(null);
+  const runFdRefresh = async () => {
+    setFdState("Actualizando jornadas… (~1 min)");
+    try {
+      const r = await refreshFd({});
+      setFdState(
+        `Temporada ${r.season}: ${r.inserted} partidos nuevos, ${r.enriched} con tiros/xG o cuotas de cierre añadidos (${r.rows} leídos).` +
+          (r.leagues.length ? ` Fuerza recalculada en: ${r.leagues.join(", ")}.` : " No había nada nuevo.") +
+          (r.unknownTeams.length ? ` ⚠ Equipos que no reconozco: ${r.unknownTeams.join(", ")}.` : "") +
+          (r.errors.length ? ` ⚠ Errores: ${r.errors.join("; ")}.` : "")
+      );
+    } catch (err: any) {
+      setFdState(`Error al actualizar: ${err?.message ?? err}`);
+    }
+  };
+
   const runLegacyImport = async () => {
     setImportState("Importando histórico… (1–2 min)");
     try {
@@ -571,6 +588,20 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
             <button onClick={() => setShowMaintenance(false)} className="text-on-surface-variant hover:text-on-surface" aria-label="Cerrar">
               ✕
             </button>
+          </div>
+          <div className="p-2.5 rounded-xl border border-primary/30 bg-primary/5 flex items-center justify-between gap-2 font-mono text-[11px]">
+            <span className="text-on-surface">
+              {fdState ??
+                "Actualizar jornadas: trae de football-data los resultados nuevos, tiros, xG y cuotas de cierre (para el CLV) de las 5 ligas. Suele publicar 1–3 días después de cada jornada."}
+            </span>
+            {!fdState?.startsWith("Actualizando") && (
+              <button
+                onClick={runFdRefresh}
+                className="shrink-0 px-2.5 py-1 rounded bg-primary text-on-primary font-bold text-[10px] hover:opacity-90 active:scale-95"
+              >
+                Actualizar jornadas
+              </button>
+            )}
           </div>
           {maintenanceCount === 0 && !seasonState && !linkState && !importState && (
             <p className="font-mono text-[11px] text-on-surface-variant">Todo al día: no hay nada pendiente.</p>
