@@ -34,6 +34,7 @@ const ALL_MATCHES: MatchRow[] = Array.from(
   new Map<string, MatchRow>([...(legacyMatches as MatchRow[]), ...(fdMatches as MatchRow[])].map((m) => [m.legacyId, m])).values()
 );
 const WITH_STATS = ALL_MATCHES.filter((m) => m.stats).length;
+const TEAM_NAME = new Map(ALL_TEAMS.map((t) => [t.legacyId, t.name]));
 
 /**
  * Importa el histórico del FutbolLab viejo (data/legacy/*.json, generado con
@@ -206,6 +207,8 @@ export const importMatchesChunk = internalMutation({
     let inserted = 0;
     let skipped = 0;
     let enriched = 0;
+    let noTeam = 0;
+    const missingTeams = new Set<string>();
     const cache = new Map<string, Id<"teams"> | null>();
     const resolve = async (legacyId: string) => {
       if (!cache.has(legacyId)) cache.set(legacyId, (await teamByLegacyId(ctx.db, legacyId))?._id ?? null);
@@ -229,6 +232,9 @@ export const importMatchesChunk = internalMutation({
       }
       if (!home || !away) {
         skipped++;
+        if (!home) missingTeams.add(m.homeLegacyId);
+        if (!away) missingTeams.add(m.awayLegacyId);
+        noTeam++;
         continue;
       }
       // ¿Ya lo registraste a mano (mismo cruce, ±1 día)? Se enlaza en vez de duplicarlo.
@@ -264,7 +270,7 @@ export const importMatchesChunk = internalMutation({
       });
       inserted++;
     }
-    return { inserted, skipped, enriched };
+    return { inserted, skipped, enriched, noTeam, missingTeams: Array.from(missingTeams) };
   },
 });
 
@@ -337,7 +343,7 @@ export const legacyStatus = query({
     const imported = await ctx.db
       .query("matches")
       .withIndex("by_legacyId", (q) => q.gt("legacyId", ""))
-      .take(ALL_MATCHES.length + 1);
+      .take(ALL_MATCHES.length * 2);
     // ¿Quedan equipos duplicados de una importación anterior?
     let duplicateTeams = 0;
     for (const t of ALL_TEAMS) {
@@ -350,13 +356,36 @@ export const legacyStatus = query({
       }
     }
     const withStats = imported.filter((m) => m.stats).length;
+    // Diagnóstico: qué partidos faltan o siguen sin estadísticas, y por qué
+    const byId = new Map(imported.map((m) => [m.legacyId as string, m]));
+    const missingRows = ALL_MATCHES.filter((m) => !byId.has(m.legacyId));
+    const noStatsRows = ALL_MATCHES.filter((m) => m.stats && byId.has(m.legacyId) && !byId.get(m.legacyId)!.stats);
+    const teamExists = new Map<string, boolean>();
+    const exists = async (id: string) => {
+      if (!teamExists.has(id)) {
+        teamExists.set(id, !!(await ctx.db.query("teams").withIndex("by_legacyId", (q) => q.eq("legacyId", id)).first()));
+      }
+      return teamExists.get(id)!;
+    };
+    const missingTeams = new Set<string>();
+    for (const m of missingRows.slice(0, 400)) {
+      if (!(await exists(m.homeLegacyId))) missingTeams.add(TEAM_NAME.get(m.homeLegacyId) ?? m.homeLegacyId);
+      if (!(await exists(m.awayLegacyId))) missingTeams.add(TEAM_NAME.get(m.awayLegacyId) ?? m.awayLegacyId);
+    }
+    const sample = (rows: MatchRow[]) =>
+      rows.slice(0, 3).map((m) => `${m.date} ${TEAM_NAME.get(m.homeLegacyId) ?? m.homeLegacyId} - ${TEAM_NAME.get(m.awayLegacyId) ?? m.awayLegacyId}`);
     return {
+      missingMatches: missingRows.length,
+      missingSample: sample(missingRows),
+      missingTeams: Array.from(missingTeams).slice(0, 10),
+      statsPending: noStatsRows.length,
+      statsPendingSample: sample(noStatsRows),
       importedMatches: imported.length,
       availableMatches: ALL_MATCHES.length,
       matchesWithStats: withStats,
       availableWithStats: WITH_STATS,
       duplicateTeams,
-      needsImport: imported.length < ALL_MATCHES.length || withStats < WITH_STATS || duplicateTeams > 0,
+      needsImport: missingRows.length > 0 || noStatsRows.length > 0 || duplicateTeams > 0,
     };
   },
 });
@@ -371,7 +400,11 @@ function chunks<T>(rows: T[], size: number): T[][] {
 export const importLegacyData = action({
   args: {},
   handler: async (ctx) => {
-    const report = { teamsCreated: 0, teamsLinked: 0, teamsMerged: 0, matches: 0, enriched: 0, players: 0, leagues: legacyLeagues.length };
+    const report = {
+      teamsCreated: 0, teamsLinked: 0, teamsMerged: 0, matches: 0, enriched: 0, players: 0, leagues: legacyLeagues.length,
+      skippedNoTeam: 0, missingTeams: [] as string[],
+    };
+    const missing = new Set<string>();
     for (const part of chunks(ALL_TEAMS, 100)) {
       const r = await ctx.runMutation(internal.legacy.importTeamsChunk, { teams: part });
       report.teamsCreated += r.created;
@@ -382,6 +415,8 @@ export const importLegacyData = action({
       const r = await ctx.runMutation(internal.legacy.importMatchesChunk, { matches: part });
       report.matches += r.inserted;
       report.enriched += r.enriched;
+      report.skippedNoTeam += r.noTeam;
+      r.missingTeams.forEach((x) => missing.add(x));
     }
     for (const part of chunks(legacyPlayers, 150)) {
       const r = await ctx.runMutation(internal.legacy.importPlayersChunk, { players: part });
@@ -391,6 +426,7 @@ export const importLegacyData = action({
       await ctx.runMutation(internal.legacy.recomputeTeamStrengthInternal, { league: code });
     }
     await ctx.runMutation(internal.legacy.refreshRatingModelInternal, {});
+    report.missingTeams = Array.from(missing).map((id) => TEAM_NAME.get(id) ?? id);
     return report;
   },
 });

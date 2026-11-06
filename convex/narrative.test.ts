@@ -237,3 +237,15 @@ describe("jugadores desde la narración", () => {
     expect(await t.run((c) => c.db.query("injuries").collect())).toHaveLength(1);
   });
 });
+
+describe("diagnóstico de la importación", () => {
+  test("dice cuántos partidos faltan y qué equipos no encuentra", async () => {
+    const t = convexTest(schema, modules);
+    const s = await t.query(api.legacy.legacyStatus, {});
+    expect(s.needsImport).toBe(true);
+    expect(s.missingMatches).toBe(s.availableMatches);
+    expect(s.missingTeams.length).toBeGreaterThan(0);
+    expect(s.missingSample.length).toBe(3);
+    expect(s.statsPending).toBe(0);
+  });
+});
