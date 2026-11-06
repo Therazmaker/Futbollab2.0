@@ -3,6 +3,7 @@
 import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useAction } from "convex/react";
 import { api } from "../../convex/_generated/api";
+import { BulkResultsSheet } from "./BulkResultsSheet";
 import type { Id } from "../../convex/_generated/dataModel";
 import { useSyncTelemetry } from "@/lib/offline-sync";
 import { currentSeason } from "../../convex/lib/season";
@@ -79,6 +80,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
   const linkLogs = useMutation(api.players.linkUnlinkedLogs);
   const [linkState, setLinkState] = useState<string | null>(null);
   const [showMaintenance, setShowMaintenance] = useState(false);
+  const [bulkOpen, setBulkOpen] = useState(false);
   const maintenanceCount =
     ((seasonStatus?.staleLeagues.length ?? 0) > 0 ? 1 : 0) +
     ((unlinkedLogs ?? 0) > 0 ? 1 : 0) +
@@ -554,6 +556,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
 
   return (
     <div className="flex flex-col w-full gap-space-md">
+      {bulkOpen && <BulkResultsSheet defaultCompetition={selectedLeague} onClose={() => setBulkOpen(false)} />}
       {/* Mantenimiento: avisos ocultos tras el icono 🔧 de la barra de acciones */}
       {showMaintenance && (
         <div className="flex flex-col gap-2 p-2.5 rounded-xl border border-surface-container-high bg-surface-container-low">
@@ -670,6 +673,13 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
           >
             <span className="material-symbols-outlined text-[13px]">add_circle</span>
             <span>+ Liga / Torneo</span>
+          </button>
+          <button
+            onClick={() => setBulkOpen(true)}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-surface-container-high text-secondary border border-secondary/30 text-[11px] font-mono font-bold transition-all active:scale-95"
+          >
+            <span className="material-symbols-outlined text-[13px]">playlist_add</span>
+            <span>+ Resultados</span>
           </button>
           <button
             onClick={() => setIsAddTeamOpen(true)}

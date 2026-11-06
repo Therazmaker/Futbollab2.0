@@ -29,6 +29,7 @@ import type * as lib_teamRatings from "../lib/teamRatings.js";
 import type * as narratives from "../narratives.js";
 import type * as players from "../players.js";
 import type * as radar from "../radar.js";
+import type * as results from "../results.js";
 import type * as predictions from "../predictions.js";
 import type * as teams from "../teams.js";
 
@@ -60,6 +61,7 @@ declare const fullApi: ApiFromModules<{
   narratives: typeof narratives;
   players: typeof players;
   radar: typeof radar;
+  results: typeof results;
   predictions: typeof predictions;
   teams: typeof teams;
 }>;
