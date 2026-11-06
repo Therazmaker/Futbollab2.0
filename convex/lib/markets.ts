@@ -2,16 +2,14 @@
  * Mercados de un partido a partir de la fuerza de los equipos (Poisson con
  * corrección Dixon-Coles).
  *
- * Validación walk-forward con 1.324 partidos del histórico (Brier frente a la
- * frecuencia de cada liga):
- *   1X2: local +12,9 %, visitante +10,8 %, empate +1,5 %.
- *   Goles totales (+1,5/+2,5/+3,5, ambos marcan): con solo resultados la
- *   fuerza NO predice cuántos goles habrá (salía −6 %), y además la forma de
- *   Poisson no coincide con la de cada liga. Por eso esos mercados usan la
- *   FRECUENCIA REAL de la liga (con más peso a lo reciente, ver
- *   leagueGoalRates), y el total esperado se acerca a la media de la liga.
+ * Desde que la fuerza se ajusta a goles + xG (lib/xgBlend.ts) y hay 3 temporadas
+ * de 5 ligas, la fuerza SÍ predice cuántos goles habrá: en walk-forward
+ * (3.920 partidos) le gana a la frecuencia de cada liga en +1,5, +2,5, +3,5 y
+ * ambos marcan, así que los totales salen de la matriz de marcadores.
+ * Antes (solo goles, 1 temporada) pasaba lo contrario y se usaba la frecuencia.
+ * ρ = −0,1 sale prácticamente óptimo en ese mismo backtest (−0,15 / −0,05 empatan).
  */
-export const TOTAL_SHRINK = 0; // peso de la fuerza en el TOTAL de goles (0 = solo media de la liga)
+export const TOTAL_SHRINK = 1; // peso de la fuerza en el TOTAL de goles (0 = solo media de la liga)
 export const DC_RHO = -0.1;
 
 export interface TeamForMarkets {
@@ -150,15 +148,14 @@ export function computeMarkets(home: TeamForMarkets, away: TeamForMarkets, leagu
   let hH = 0, hD = 0, hA = 0;
   ht.forEach((row, i) => row.forEach((p, j) => (i > j ? (hH += p) : i === j ? (hD += p) : (hA += p))));
   const r = (x: number) => +x.toFixed(3);
-  const rates = league.goalRates;
   return {
     expectedGoals: { home: +lh.toFixed(2), away: +la.toFixed(2) },
     reliable,
     probabilities: { home: r(H), draw: r(D), away: r(A) },
-    over15: rates ? rates.over15 : r(o15),
-    over25: rates ? rates.over25 : r(o25),
-    over35: rates ? rates.over35 : r(o35),
-    btts: rates ? rates.btts : r(btts),
+    over15: r(o15),
+    over25: r(o25),
+    over35: r(o35),
+    btts: r(btts),
     homeCleanSheet: r(csH),
     awayCleanSheet: r(csA),
     topScores: scores.slice(0, 5).map((s) => ({ ...s, p: r(s.p) })),

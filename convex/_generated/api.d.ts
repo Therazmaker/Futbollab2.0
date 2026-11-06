@@ -26,6 +26,7 @@ import type * as lib_ratingStore from "../lib/ratingStore.js";
 import type * as lib_season from "../lib/season.js";
 import type * as lib_teamMatches from "../lib/teamMatches.js";
 import type * as lib_teamRatings from "../lib/teamRatings.js";
+import type * as lib_xgBlend from "../lib/xgBlend.js";
 import type * as narratives from "../narratives.js";
 import type * as players from "../players.js";
 import type * as radar from "../radar.js";
@@ -58,6 +59,7 @@ declare const fullApi: ApiFromModules<{
   "lib/season": typeof lib_season;
   "lib/teamMatches": typeof lib_teamMatches;
   "lib/teamRatings": typeof lib_teamRatings;
+  "lib/xgBlend": typeof lib_xgBlend;
   narratives: typeof narratives;
   players: typeof players;
   radar: typeof radar;

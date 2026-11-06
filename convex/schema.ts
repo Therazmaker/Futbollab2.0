@@ -97,6 +97,27 @@ export default defineSchema({
     awayTeamId: v.id("teams"),
     homeGoals: v.optional(v.number()), // sin marcador todavía = undefined
     awayGoals: v.optional(v.number()),
+    // Estadísticas de equipo (football-data): tiros, a puerta y xG (si lo hay)
+    stats: v.optional(
+      v.object({
+        hs: v.number(),
+        as: v.number(),
+        hst: v.number(),
+        ast: v.number(),
+        hxg: v.optional(v.number()),
+        axg: v.optional(v.number()),
+      })
+    ),
+    // Cuotas medias de cierre del mercado (para medir CLV)
+    closingOdds: v.optional(
+      v.object({
+        home: v.number(),
+        draw: v.number(),
+        away: v.number(),
+        over25: v.optional(v.number()),
+        under25: v.optional(v.number()),
+      })
+    ),
     // Cuotas decimales que mete el usuario (Radar): 1-X-2
     odds: v.optional(
       v.object({

@@ -103,7 +103,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
     try {
       const r = await importLegacy({});
       setImportState(
-        `Listo: ${r.matches} partidos, ${r.players} jugadores, ${r.teamsCreated} equipos nuevos (${r.teamsLinked} enlazados, ${r.teamsMerged} duplicados fusionados). Tablas y fuerza de equipos recalculadas.`
+        `Listo: ${r.matches} partidos nuevos, ${r.enriched} con tiros/xG añadidos, ${r.players} jugadores, ${r.teamsCreated} equipos nuevos (${r.teamsLinked} enlazados, ${r.teamsMerged} duplicados fusionados). Tablas y fuerza de equipos recalculadas.`
       );
     } catch (err: any) {
       setImportState(`Error al importar: ${err?.message ?? err}`);
@@ -623,7 +623,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
             {importState ??
               (legacyStatus.duplicateTeams > 0
                 ? `Hay ${legacyStatus.duplicateTeams} equipos duplicados de la importación anterior (p. ej. dos Aston Villa). Pulsa para fusionarlos y recalcular las tablas.`
-                : `Hay ${legacyStatus.availableMatches} partidos del FutbolLab anterior (Serie A, Premier, Bundesliga, Ligue 1) listos para importar.`)}
+                : legacyStatus.importedMatches >= legacyStatus.availableMatches
+                ? `Hay estadísticas nuevas (tiros y xG) para ${legacyStatus.availableWithStats - legacyStatus.matchesWithStats} partidos. Pulsa para añadirlas y recalcular la fuerza.`
+                : `Hay ${legacyStatus.availableMatches - legacyStatus.importedMatches} partidos históricos (LaLiga, Premier, Serie A, Bundesliga, Ligue 1, desde 2023-24) listos para importar.`)}
           </span>
           {!importState?.startsWith("Importando") && (
             <button
