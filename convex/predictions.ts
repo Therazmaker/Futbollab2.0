@@ -174,7 +174,17 @@ export const recordMatchAndCalibrate = mutation({
         .query("playerMatchLogs")
         .withIndex("by_match", (q) => q.eq("matchId", matchId))
         .collect();
-      if (dup.some((l) => l.playerId === args.playerId)) {
+      const mine = dup.find((l) => l.playerId === args.playerId);
+      if (mine && mine.source === "narrative") {
+        // Había un registro sacado de la narración: lo sustituyen las stats completas
+        const injs = await ctx.db
+          .query("injuries")
+          .withIndex("by_player", (q) => q.eq("playerId", args.playerId))
+          .collect();
+        for (const inj of injs) if (inj.fromLogId === mine._id) await ctx.db.delete(inj._id);
+        args = { ...args, injuredOff: args.injuredOff || mine.injuredOff };
+        await ctx.db.delete(mine._id);
+      } else if (mine) {
         throw new Error("Este jugador ya tiene registrado ese partido. Edítalo desde su historial.");
       }
     }

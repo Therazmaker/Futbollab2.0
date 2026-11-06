@@ -1,3 +1,4 @@
+import { STATS, readStat } from "./lib/engine";
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
 import { syncPlayerWeights } from "./lib/playerModel";
@@ -130,7 +131,11 @@ export const updateMatchLog = mutation({
     if (args.isAway !== undefined) patch.isAway = args.isAway;
     if (args.minutesPlayed !== undefined) patch.minutesPlayed = args.minutesPlayed;
     if (args.tacticalRole !== undefined) patch.tacticalRole = args.tacticalRole;
-    if (args.rawStats !== undefined) patch.rawStats = args.rawStats;
+    if (args.rawStats !== undefined) {
+      patch.rawStats = args.rawStats;
+      // Al pegarle stats completas, el partido de narración pasa a contar para el modelo
+      if (hasModelStats(args.rawStats)) patch.source = undefined;
+    }
     if (args.contextFeatures !== undefined) patch.contextFeatures = args.contextFeatures;
     if (args.opponentTeamId !== undefined) patch.opponentTeamId = args.opponentTeamId ?? undefined;
     if (args.competition !== undefined) patch.competition = args.competition;
@@ -467,3 +472,7 @@ export const deleteInjury = mutation({
     return injuryId;
   },
 });
+
+function hasModelStats(raw: unknown) {
+  return STATS.some((k) => readStat(raw, k) !== null);
+}

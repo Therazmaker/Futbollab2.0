@@ -50,6 +50,8 @@ export async function loadPlayerModelInput(db: Reader, playerId: Id<"players">) 
 
   const modelLogs: ModelLog[] = [];
   for (const [i, l] of logs.entries()) {
+    // Partidos sacados de la narración: sin stats completas, no entran al modelo
+    if (l.source === "narrative") continue;
     modelLogs.push({
       id: l._id,
       matchDate: l.matchDate,
