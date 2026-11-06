@@ -78,6 +78,11 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
   const unlinkedLogs = useQuery(api.players.unlinkedLogsCount);
   const linkLogs = useMutation(api.players.linkUnlinkedLogs);
   const [linkState, setLinkState] = useState<string | null>(null);
+  const [showMaintenance, setShowMaintenance] = useState(false);
+  const maintenanceCount =
+    ((seasonStatus?.staleLeagues.length ?? 0) > 0 ? 1 : 0) +
+    ((unlinkedLogs ?? 0) > 0 ? 1 : 0) +
+    (legacyStatus?.needsImport ? 1 : 0);
   const runLinkLogs = async () => {
     setLinkState("Vinculando…");
     try {
@@ -549,9 +554,24 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
 
   return (
     <div className="flex flex-col w-full gap-space-md">
+      {/* Mantenimiento: avisos ocultos tras el icono 🔧 de la barra de acciones */}
+      {showMaintenance && (
+        <div className="flex flex-col gap-2 p-2.5 rounded-xl border border-surface-container-high bg-surface-container-low">
+          <div className="flex items-center justify-between font-mono text-[11px]">
+            <span className="text-on-surface font-bold flex items-center gap-1">
+              <span className="material-symbols-outlined text-[16px] text-secondary">build</span>
+              Mantenimiento
+            </span>
+            <button onClick={() => setShowMaintenance(false)} className="text-on-surface-variant hover:text-on-surface" aria-label="Cerrar">
+              ✕
+            </button>
+          </div>
+          {maintenanceCount === 0 && !seasonState && !linkState && !importState && (
+            <p className="font-mono text-[11px] text-on-surface-variant">Todo al día: no hay nada pendiente.</p>
+          )}
       {/* Cambio de temporada: la tabla solo cuenta la temporada actual */}
-      {((seasonStatus?.staleLeagues.length ?? 0) > 0 || seasonState) && (
-        <div className="p-2.5 rounded-xl border border-secondary/40 bg-secondary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
+          {((seasonStatus?.staleLeagues.length ?? 0) > 0 || seasonState) && (
+            <div className="p-2.5 rounded-xl border border-secondary/40 bg-secondary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
           <span className="text-on-surface">
             {seasonState ??
               `Las tablas aún mezclan temporadas. Actualízalas a la ${seasonStatus?.season}: el histórico queda solo para entrenar los modelos.`}
@@ -575,9 +595,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
         </div>
       )}
 
-      {/* Partidos de jugadores anteriores a los partidos de equipo */}
-      {((unlinkedLogs ?? 0) > 0 || linkState) && (
-        <div className="p-2.5 rounded-xl border border-primary/40 bg-primary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
+          {/* Partidos de jugadores anteriores a los partidos de equipo */}
+          {((unlinkedLogs ?? 0) > 0 || linkState) && (
+            <div className="p-2.5 rounded-xl border border-primary/40 bg-primary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
           <span className="text-on-surface">
             {linkState ??
               `${unlinkedLogs} partidos de jugadores no están en el perfil de su equipo. Vincúlalos por rival y fecha.`}
@@ -593,9 +613,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
         </div>
       )}
 
-      {/* Histórico del FutbolLab viejo */}
-      {legacyStatus && legacyStatus.needsImport && (
-        <div className="p-2.5 rounded-xl border border-secondary/40 bg-secondary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
+          {/* Histórico del FutbolLab viejo */}
+          {legacyStatus && legacyStatus.needsImport && (
+            <div className="p-2.5 rounded-xl border border-secondary/40 bg-secondary/10 flex items-center justify-between gap-2 font-mono text-[11px]">
           <span className="text-on-surface">
             {importState ??
               (legacyStatus.duplicateTeams > 0
@@ -613,6 +633,9 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
         </div>
       )}
 
+        </div>
+      )}
+
       {/* Breadcrumb & Actions Bar */}
       <div className="flex items-center justify-between gap-space-xs pt-space-xs">
         <div className="flex items-center gap-1.5 min-w-0">
@@ -626,6 +649,21 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
           </span>
         </div>
         <div className="flex items-center gap-2 shrink-0">
+          <button
+            onClick={() => setShowMaintenance(!showMaintenance)}
+            title={maintenanceCount ? `${maintenanceCount} tarea(s) de mantenimiento pendiente(s)` : "Mantenimiento"}
+            aria-label="Mantenimiento"
+            className={`relative w-8 h-8 rounded-lg flex items-center justify-center border transition-all active:scale-95 ${
+              showMaintenance ? "bg-secondary/20 border-secondary/50 text-secondary" : "bg-surface-container-high border-outline-variant/30 text-on-surface-variant hover:text-secondary"
+            }`}
+          >
+            <span className="material-symbols-outlined text-[16px]">build</span>
+            {maintenanceCount > 0 && (
+              <span className="absolute -top-1 -right-1 min-w-4 h-4 px-1 rounded-full bg-amber-400 text-black font-mono text-[9px] font-bold flex items-center justify-center">
+                {maintenanceCount}
+              </span>
+            )}
+          </button>
           <button
             onClick={() => setIsAddLeagueOpen(true)}
             className="flex items-center gap-1 px-2 py-1 rounded-lg bg-surface-container-high hover:bg-surface-container-highest text-secondary text-[11px] font-mono border border-secondary/30 transition-all active:scale-95 shadow-sm"
