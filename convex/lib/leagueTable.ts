@@ -3,6 +3,7 @@ import type { DataModel, Id } from "../_generated/dataModel";
 import { fitTeamRatings, standings } from "./teamRatings";
 import { currentSeason, previousSeason, seasonOf } from "./season";
 import { recomputeChampions } from "./competitionTable";
+import { leagueGoalRates } from "./markets";
 
 type Db = GenericDatabaseWriter<DataModel>;
 
@@ -56,6 +57,7 @@ export async function recomputeLeague(db: Db, league: string, opts: { season?: s
       homeAdvantage: +homeAdvantage.toFixed(3),
       goalsPerTeam: +goalsPerTeam.toFixed(3),
       matchesPlayed: unique.length,
+      goalRates: leagueGoalRates(results) ?? undefined,
       currentSeason: opts.season ?? currentSeason(),
     });
   }

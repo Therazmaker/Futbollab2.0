@@ -9,6 +9,7 @@ import { BottomNav, TabKey } from "@/components/BottomNav";
 import { LeaguesExplorer } from "@/components/LeaguesExplorer";
 import { PlayerProfileLab } from "@/components/PlayerProfileLab";
 import { TeamProfile } from "@/components/TeamProfile";
+import { RadarView } from "@/components/RadarView";
 
 /**
  * Navegación: Ligas → Equipo → Jugador.
@@ -26,7 +27,7 @@ function readUrl(): NavState {
   const q = new URLSearchParams(window.location.search);
   const view = (q.get("view") as TabKey) || "explorer";
   return {
-    view: ["explorer", "team", "player"].includes(view) ? view : "explorer",
+    view: ["explorer", "radar", "team", "player"].includes(view) ? view : "explorer",
     teamId: (q.get("team") as Id<"teams">) || undefined,
     playerId: (q.get("player") as Id<"players">) || undefined,
   };
@@ -73,6 +74,8 @@ export default function FutbolLabApp() {
 
       <main className="flex-1 max-w-lg w-full mx-auto px-4 pt-32 pb-36 flex flex-col">
         {nav.view === "explorer" && <LeaguesExplorer onSelectTeam={openTeam} />}
+
+        {nav.view === "radar" && <RadarView onOpenTeam={openTeam} />}
 
         {nav.view === "team" &&
           (nav.teamId ? (

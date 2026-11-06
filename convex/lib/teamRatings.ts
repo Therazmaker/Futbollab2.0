@@ -26,7 +26,7 @@ const DAY = 86_400_000;
 export function fitTeamRatings(rows: ResultRow[], opts: { now?: number; xi?: number; prior?: number } = {}) {
   const now = opts.now ?? Math.max(...rows.map((r) => Date.parse(r.date) || 0));
   const xi = opts.xi ?? 0.004; // vida media ≈ 170 días
-  const PRIOR = opts.prior ?? 3; // "partidos fantasma" en la media
+  const PRIOR = opts.prior ?? 8; // "partidos fantasma" en la media (8: mejor validado que 3)
   const teams = new Set<string>();
   rows.forEach((r) => {
     teams.add(r.home);
