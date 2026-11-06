@@ -25,10 +25,26 @@ export interface RadarInput {
   playersLogged?: { home: number; away: number };
   /** Jugadores de baja en cada equipo */
   absences?: { home: string[]; away: string[] };
+  /**
+   * Parte del xG del equipo que se pierde por bajas (0–1), según los perfiles
+   * de los jugadores lesionados. Se descuenta REPLACEMENT_LOSS de ella.
+   */
+  absentXgShare?: { home: number; away: number };
 }
+
+/**
+ * Cuando falta un jugador, otro ocupa su sitio y produce algo: se asume que se
+ * pierde la mitad de su aporte. Suposición razonable, todavía SIN VALIDAR con
+ * datos (se podrá ajustar cuando haya partidos con bajas registradas).
+ */
+export const REPLACEMENT_LOSS = 0.5;
+export const MAX_ABSENCE_HIT = 0.35; // como mucho −35 % del ataque de un equipo
 
 export interface RadarAnalysis {
   markets: Markets;
+  /** Mercados sin el ajuste por bajas (para mostrar cuánto mueven) */
+  baseMarkets: Markets | null;
+  attackFactor: { home: number; away: number };
   fair: { home: number; draw: number; away: number; margin: number } | null;
   edges: Record<Outcome, number> | null; // modelo − mercado (probabilidad)
   bestEdge: { outcome: Outcome; edge: number; model: number; fair: number; odds: number } | null;
@@ -49,8 +65,49 @@ export const RADAR_RULES = {
   fragileGap: 0.08, // favorito frágil: el mercado lo ve ≥ 8 puntos más fuerte
 };
 
+/**
+ * Mercados con el ataque de cada equipo multiplicado por `factor` (bajas).
+ * El 1X2 sale del Poisson con el ataque reducido. Para los goles totales se
+ * parte de la frecuencia real de la liga y se le suma el cambio que la baja
+ * produce en el Poisson (el total esperado baja en proporción al ataque perdido).
+ */
+export function marketsWithAttackFactor(
+  home: TeamForMarkets,
+  away: TeamForMarkets,
+  league: LeagueForMarkets,
+  factor: { home: number; away: number }
+): Markets {
+  const base = computeMarkets(home, away, league);
+  if (factor.home === 1 && factor.away === 1) return base;
+  const adj = (t: TeamForMarkets, f: number) => ({ ...t, attackRating: (t.attackRating ?? 1) * f });
+  const noRates: LeagueForMarkets = { ...league, goalRates: null };
+  const pBase = computeMarkets(home, away, noRates);
+  const { home: lhB, away: laB } = pBase.expectedGoals;
+  const scale = (lhB * factor.home + laB * factor.away) / (lhB + laB);
+  const pAdj = computeMarkets(adj(home, factor.home), adj(away, factor.away), {
+    ...noRates,
+    goalsPerTeam: (league.goalsPerTeam ?? 1.4) * scale,
+  });
+  const clamp01 = (x: number) => +Math.min(0.99, Math.max(0.01, x)).toFixed(3);
+  return {
+    ...pAdj,
+    reliable: base.reliable,
+    over15: clamp01(base.over15 + (pAdj.over15 - pBase.over15)),
+    over25: clamp01(base.over25 + (pAdj.over25 - pBase.over25)),
+    over35: clamp01(base.over35 + (pAdj.over35 - pBase.over35)),
+    btts: clamp01(base.btts + (pAdj.btts - pBase.btts)),
+  };
+}
+
 export function analyzeRadarMatch(input: RadarInput): RadarAnalysis {
-  const markets = computeMarkets(input.home, input.away, input.league);
+  const share = input.absentXgShare ?? { home: 0, away: 0 };
+  const attackFactor = {
+    home: +(1 - Math.min(MAX_ABSENCE_HIT, REPLACEMENT_LOSS * share.home)).toFixed(3),
+    away: +(1 - Math.min(MAX_ABSENCE_HIT, REPLACEMENT_LOSS * share.away)).toFixed(3),
+  };
+  const hasAbsenceEffect = attackFactor.home < 1 || attackFactor.away < 1;
+  const baseMarkets = hasAbsenceEffect ? computeMarkets(input.home, input.away, input.league) : null;
+  const markets = marketsWithAttackFactor(input.home, input.away, input.league, attackFactor);
   const P = markets.probabilities;
   const fair = input.odds ? fairProbabilities(input.odds) : null;
   const outcomes: Outcome[] = ["home", "draw", "away"];
@@ -112,11 +169,12 @@ export function analyzeRadarMatch(input: RadarInput): RadarAnalysis {
   const abs = input.absences ?? { home: [], away: [] };
   for (const side of ["home", "away"] as const) {
     if (abs[side].length) {
+      const hit = Math.round((1 - attackFactor[side]) * 100);
       flags.push({
         code: side === "home" ? "BAJAS_LOCAL" : "BAJAS_VISITANTE",
-        label: `Bajas ${nameOf(side)}: ${abs[side].length}`,
+        label: `Bajas ${nameOf(side)}: ${abs[side].length}${hit ? ` (−${hit}% ataque)` : ""}`,
         tone: "risk",
-        detail: abs[side].join(", "),
+        detail: abs[side].join(", ") + (hit ? `. Su ataque baja un ${hit}% (se asume que el sustituto cubre la mitad).` : ". Sin perfil con xG: no se ajusta el ataque."),
       });
     }
   }
@@ -133,6 +191,8 @@ export function analyzeRadarMatch(input: RadarInput): RadarAnalysis {
       : 0.35 * entropy + 0.45 * disagreement + 0.2 * data;
   return {
     markets,
+    baseMarkets,
+    attackFactor,
     fair,
     edges,
     bestEdge,

@@ -2,7 +2,10 @@ import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { analyzeRadarMatch } from "./lib/radar";
-import { availabilityOn } from "./lib/injuries";
+import { buildTeamPlayerLayer, newLayerCaches } from "./lib/playerLayer";
+import { loadRatingParams } from "./lib/ratingStore";
+import { teamStrength } from "./lib/ratingModel";
+import { computeMarkets } from "./lib/markets";
 import { findTeamMatch } from "./lib/teamMatches";
 import { homeCompetition } from "./lib/noLeague";
 
@@ -40,34 +43,8 @@ export const getRadar = query({
       }
       return leagueCache.get(code)!;
     };
-    const squadCache = new Map<string, { logged: number; absences: string[] }>();
-    const squadInfo = async (teamId: Id<"teams">, date: string) => {
-      const key = `${teamId}|${date}`;
-      if (!squadCache.has(key)) {
-        const players = await ctx.db
-          .query("players")
-          .withIndex("by_team", (q) => q.eq("teamId", teamId))
-          .collect();
-        let logged = 0;
-        const absences: string[] = [];
-        for (const p of players) {
-          const logs = await ctx.db
-            .query("playerMatchLogs")
-            .withIndex("by_player", (q) => q.eq("playerId", p._id))
-            .collect();
-          if (logs.length) logged++;
-          const injuries = await ctx.db
-            .query("injuries")
-            .withIndex("by_player", (q) => q.eq("playerId", p._id))
-            .collect();
-          if (!injuries.length) continue;
-          const av = availabilityOn(date, injuries, logs.filter((l) => l.minutesPlayed > 0).map((l) => l.matchDate).sort());
-          if (av.status === "injured") absences.push(p.name);
-        }
-        squadCache.set(key, { logged, absences });
-      }
-      return squadCache.get(key)!;
-    };
+    const ratingParams = await loadRatingParams(ctx.db);
+    const caches = newLayerCaches();
 
     const out = [];
     for (const m of rows) {
@@ -84,15 +61,33 @@ export const getRadar = query({
           break;
         }
       }
-      const hs = await squadInfo(home._id, m.date);
-      const as = await squadInfo(away._id, m.date);
+      const league = { goalsPerTeam: lg?.goalsPerTeam, homeAdvantage: lg?.homeAdvantage, goalRates: lg?.goalRates };
+      // Capa de jugadores: perfil de cada jugador para ESTE partido y aporte de las bajas
+      const hs = await buildTeamPlayerLayer(
+        ctx.db,
+        home._id,
+        { date: m.date, isAway: false, opponentDefense: away.defenseRating ?? null, opponentStrength: teamStrength(away) },
+        ratingParams,
+        caches
+      );
+      const as = await buildTeamPlayerLayer(
+        ctx.db,
+        away._id,
+        { date: m.date, isAway: true, opponentDefense: home.defenseRating ?? null, opponentStrength: teamStrength(home) },
+        ratingParams,
+        caches
+      );
+      // Parte del ataque del equipo que se pierde: xG de los lesionados / goles esperados del equipo
+      const base = computeMarkets(home, away, league).expectedGoals;
+      const share = (absent: number, lambda: number) => (absent > 0 ? Math.min(1, absent / Math.max(lambda, absent, 0.3)) : 0);
       const analysis = analyzeRadarMatch({
         home: { ...home, name: home.name },
         away: { ...away, name: away.name },
-        league: { goalsPerTeam: lg?.goalsPerTeam, homeAdvantage: lg?.homeAdvantage, goalRates: lg?.goalRates },
+        league,
         odds: m.odds ?? null,
         playersLogged: { home: hs.logged, away: as.logged },
-        absences: { home: hs.absences, away: as.absences },
+        absences: { home: hs.absent.map((a) => a.name), away: as.absent.map((a) => a.name) },
+        absentXgShare: { home: share(hs.absentXg, base.home), away: share(as.absentXg, base.away) },
       });
       const played = m.homeGoals !== undefined && m.awayGoals !== undefined;
       const actual = played ? (m.homeGoals! > m.awayGoals! ? "home" : m.homeGoals === m.awayGoals ? "draw" : "away") : null;
@@ -105,6 +100,10 @@ export const getRadar = query({
         odds: m.odds ?? null,
         result: played ? { home: m.homeGoals!, away: m.awayGoals!, outcome: actual } : null,
         playersLogged: { home: hs.logged, away: as.logged },
+        players: {
+          home: { list: hs.players.slice(0, 8), absent: hs.absent, playersXg: hs.playersXg, absentXg: hs.absentXg, coverage: hs.coverage },
+          away: { list: as.players.slice(0, 8), absent: as.absent, playersXg: as.playersXg, absentXg: as.absentXg, coverage: as.coverage },
+        },
         ...analysis,
       });
     }
