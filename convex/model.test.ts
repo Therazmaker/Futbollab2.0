@@ -794,9 +794,20 @@ describe("Radar 2.0", () => {
       league: { goalsPerTeam: 1.4, homeAdvantage: 1.15 },
     };
     const model = analyzeRadarMatch(base).markets.probabilities;
-    // Mercado que infravalora al local → valor en el local
+    // Con cuotas, el 1X2 ES el mercado: aunque el modelo discrepe, no hay "ventaja"
     const cheap = analyzeRadarMatch({ ...base, odds: { home: 1 / (model.home - 0.1) / 1.05, draw: 3.5, away: 2.6 } });
-    expect(cheap.flags.some((f) => f.code === "VALOR")).toBe(true);
+    expect(cheap.source).toBe("market");
+    expect(cheap.markets.probabilities.home).toBeCloseTo(cheap.fair!.home, 2);
+    expect(cheap.modelProbabilities.home).toBeCloseTo(model.home, 3);
+    expect(cheap.flags.some((f) => f.code === "VALOR" || f.code === "TU_INFO")).toBe(false);
+    // Tus bajas sí mueven el 1X2 sobre el mercado (a medio peso) → "Tu información"
+    const odds = { home: 1 / (model.home * 1.05), draw: 1 / (model.draw * 1.05), away: 1 / (model.away * 1.05) };
+    const info = analyzeRadarMatch({ ...base, odds, absences: { home: ["Nueve"], away: [] }, absentXgShare: { home: 0.5, away: 0 } });
+    expect(info.markets.probabilities.home).toBeLessThan(info.fair!.home);
+    expect(info.markets.probabilities.away).toBeGreaterThan(info.fair!.away);
+    expect(info.flags.find((f) => f.code === "TU_INFO")?.label).toContain("B");
+    // A medio peso: se mueve menos que el modelo con las bajas
+    expect(info.fair!.away - info.markets.probabilities.away).toBeGreaterThan(info.fair!.away - info.modelProbabilities.away);
     // Mercado que da al visitante muy favorito → favorito frágil
     const fragile = analyzeRadarMatch({ ...base, odds: { home: 4.5, draw: 3.8, away: 1.6 } });
     expect(fragile.flags.some((f) => f.code === "FAVORITO_FRAGIL")).toBe(true);

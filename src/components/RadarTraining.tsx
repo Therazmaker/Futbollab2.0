@@ -14,6 +14,7 @@ const FLAG_LABEL: Record<string, string> = {
   EMPATE_VIVO: "Empate vivo",
   SORPRESA_POSIBLE: "Sorpresa posible",
   VALOR: "Discrepancia (antes «Valor»)",
+  TU_INFO: "Tu información",
   FAVORITO_FRAGIL: "Favorito frágil",
 };
 
@@ -218,8 +219,10 @@ function ClvCard({ data }: { data: any }) {
       ) : (
         <>
           <p className="text-on-surface-variant">
-            1X2 con {data.vsClosing.n} partidos: modelo log-loss <b className="text-on-surface">{data.vsClosing.logLossModel.toFixed(3)}</b> · cierre
-            del mercado <b className="text-on-surface">{data.vsClosing.logLossClose.toFixed(3)}</b> (menor = mejor)
+            1X2 con {data.vsClosing.n} partidos (log-loss, menor = mejor): modelo solo{" "}
+            <b className="text-on-surface">{data.vsClosing.logLossModel.toFixed(3)}</b> · Radar (mercado + tus correcciones){" "}
+            <b className="text-on-surface">{data.vsClosing.logLossFinal.toFixed(3)}</b> · cierre del mercado{" "}
+            <b className="text-on-surface">{data.vsClosing.logLossClose.toFixed(3)}</b>
           </p>
           {data.towardModel && (
             <p className="text-on-surface-variant">
@@ -237,6 +240,16 @@ function ClvCard({ data }: { data: any }) {
             <p className="text-on-surface-variant">Aún no hay discrepancias con cuota de cierre.</p>
           )}
         </>
+      )}
+      {data.corrections && (
+        <p className="text-on-surface-variant">
+          Tus correcciones por bajas ({data.corrections.n} partidos): Δ log-loss frente al mercado{" "}
+          <b className={data.corrections.delta < 0 ? "text-primary" : "text-error"}>
+            {data.corrections.delta >= 0 ? "+" : ""}
+            {data.corrections.delta.toFixed(3)}
+          </b>{" "}
+          (90 %: {data.corrections.ci.low.toFixed(3)} a {data.corrections.ci.high.toFixed(3)}). Negativo = tus bajas mejoran al mercado.
+        </p>
       )}
       <p className="text-[10px] text-on-surface-variant border-t border-surface-container-high pt-1">
         Referencia del histórico ({b.nToward.toLocaleString()} partidos, solo resultados y tiros): el mercado se movía hacia el modelo el{" "}

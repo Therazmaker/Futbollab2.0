@@ -37,6 +37,8 @@ export async function upsertSnapshot(db: Db, matchId: Id<"matches">, opts: { lat
       homeCleanSheet: mk.homeCleanSheet,
       awayCleanSheet: mk.awayCleanSheet,
     },
+    modelProbs: a.modelProbabilities,
+    source: a.source,
     base: a.leagueBase ?? null,
     baseProbs: a.baseMarkets ? a.baseMarkets.probabilities : undefined,
     expectedGoals: mk.expectedGoals,

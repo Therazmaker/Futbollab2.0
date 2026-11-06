@@ -166,18 +166,29 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
           {pct(m.baseMarkets.probabilities.away)}
         </p>
       )}
-      {m.fair && (
-        <div className="grid grid-cols-3 gap-1 mt-1 font-mono text-[10px] text-center">
-          {outcomes.map(([k, label]) => {
-            const e = m.edges[k];
-            return (
-              <div key={k} className={`rounded py-0.5 ${e >= 0.05 ? "bg-primary/15 text-primary" : e <= -0.05 ? "bg-error/10 text-error" : "bg-surface-container text-on-surface-variant"}`}>
-                {label} @{m.odds[k]} · merc. {pct(m.fair[k])} · {e >= 0 ? "+" : ""}
-                {Math.round(e * 100)}
-              </div>
-            );
-          })}
-        </div>
+      {m.fair ? (
+        <>
+          <p className="mt-1 font-mono text-[10px] text-on-surface-variant">
+            Barra = mercado (tus cuotas sin margen){m.baseMarkets ? " + tus bajas a medio peso" : ""}. El modelo solo no le gana al mercado.
+          </p>
+          <div className="grid grid-cols-3 gap-1 mt-1 font-mono text-[10px] text-center">
+            {outcomes.map(([k, label]) => {
+              const e = m.edges[k];
+              return (
+                <div
+                  key={k}
+                  className={`rounded py-0.5 ${e >= 0.02 ? "bg-primary/15 text-primary" : e <= -0.02 ? "bg-error/10 text-error" : "bg-surface-container text-on-surface-variant"}`}
+                >
+                  {label} @{m.odds[k]} · modelo {pct(m.modelProbabilities[k])}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      ) : (
+        <p className="mt-1 font-mono text-[10px] text-on-surface-variant">
+          Sin cuotas: solo el modelo. Pon las cuotas 1X2 y la barra pasará a partir del mercado.
+        </p>
       )}
 
       {/* Alertas */}
@@ -193,8 +204,8 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
 
       {m.result && (
         <p className={`mt-2 font-mono text-[10px] ${hit ? "text-primary" : "text-on-surface-variant"}`}>
-          {hit ? "✓ El resultado más probable según el modelo se cumplió." : "✗ El resultado más probable no se cumplió."} (Probabilidad que el modelo daba
-          a lo que pasó: {pct(P[m.result.outcome as "home" | "draw" | "away"])})
+          {hit ? "✓ El resultado más probable se cumplió." : "✗ El resultado más probable no se cumplió."} (Probabilidad que el Radar daba a lo
+          que pasó: {pct(P[m.result.outcome as "home" | "draw" | "away"])})
         </p>
       )}
 

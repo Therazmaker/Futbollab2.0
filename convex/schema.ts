@@ -187,6 +187,8 @@ export default defineSchema({
     takenAt: v.number(),
     late: v.boolean(), // tomada al guardar el marcador (sin que nadie abriera el Radar antes)
     probs: v.any(), // home, draw, away, over15, over25, over35, btts, homeCleanSheet, awayCleanSheet
+    modelProbs: v.optional(v.any()), // 1X2 del modelo (con cuotas, probs = mercado + tus correcciones)
+    source: v.optional(v.string()), // "market" | "model"
     base: v.any(), // frecuencias de la liga en ese momento (referencia)
     baseProbs: v.optional(v.any()), // 1X2 sin el ajuste por bajas (si lo hubo)
     expectedGoals: v.any(),

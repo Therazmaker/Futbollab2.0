@@ -40,13 +40,36 @@ export interface RadarInput {
 export const REPLACEMENT_LOSS = 0.5;
 export const MAX_ABSENCE_HIT = 0.35; // como mucho −35 % del ataque de un equipo
 
+/**
+ * Con cuotas, el 1X2 parte del MERCADO (tus cuotas sin margen), no del modelo.
+ *
+ * Backtest (football-data, 3.920 partidos 2024-08 → 2026-11, cuota media de
+ * apertura): mezclar el modelo con el mercado empeora siempre la predicción —
+ * peso 0 % → log-loss 0,9688; 10 % → 0,9699; 30 % → 0,9728— y una mezcla
+ * aprendida le da al modelo peso NEGATIVO. Es decir: con solo resultados y tiros
+ * el modelo no sabe nada que el mercado no sepa.
+ *
+ * Encima del mercado solo se aplican TUS correcciones (por ahora, las bajas):
+ *   P ∝ mercado · (modelo con bajas / modelo sin bajas)^CORRECTION_WEIGHT
+ * El mercado suele conocer las lesiones públicas, así que empiezan a medio peso.
+ * Entrenamiento mide si esas correcciones mejoran al mercado.
+ */
+export const CORRECTION_WEIGHT = 0.5;
+export const INFO_EDGE = 0.02; // "Tu información" si tus correcciones mueven ≥ 2 pts
+
 export interface RadarAnalysis {
+  /** Mercados del partido; con cuotas, el 1X2 es mercado + tus correcciones */
   markets: Markets;
+  /** 1X2 del modelo (fuerza + bajas), para comparar */
+  modelProbabilities: { home: number; draw: number; away: number };
+  /** De dónde sale el 1X2 mostrado */
+  source: "market" | "model";
   /** Mercados sin el ajuste por bajas (para mostrar cuánto mueven) */
   baseMarkets: Markets | null;
   attackFactor: { home: number; away: number };
   fair: { home: number; draw: number; away: number; margin: number } | null;
-  edges: Record<Outcome, number> | null; // modelo − mercado (probabilidad)
+  edges: Record<Outcome, number> | null; // 1X2 final − mercado (solo lo que mueven tus correcciones)
+  modelEdges: Record<Outcome, number> | null; // modelo − mercado
   bestEdge: { outcome: Outcome; edge: number; model: number; fair: number; odds: number } | null;
   favorite: Outcome;
   flags: RadarFlag[];
@@ -90,11 +113,22 @@ export function analyzeRadarMatch(input: RadarInput): RadarAnalysis {
   };
   const hasAbsenceEffect = attackFactor.home < 1 || attackFactor.away < 1;
   const baseMarkets = hasAbsenceEffect ? computeMarkets(input.home, input.away, input.league) : null;
-  const markets = marketsWithAttackFactor(input.home, input.away, input.league, attackFactor);
-  const P = markets.probabilities;
+  let markets = marketsWithAttackFactor(input.home, input.away, input.league, attackFactor);
   const fair = input.odds ? fairProbabilities(input.odds) : null;
   const outcomes: Outcome[] = ["home", "draw", "away"];
-  const edges = fair ? (Object.fromEntries(outcomes.map((o) => [o, +(P[o] - fair[o]).toFixed(3)])) as Record<Outcome, number>) : null;
+  const modelP = markets.probabilities;
+  const baseP = baseMarkets ? baseMarkets.probabilities : modelP;
+  let P = modelP;
+  if (fair) {
+    const raw = outcomes.map((o) => fair[o] * Math.pow(modelP[o] / Math.max(1e-6, baseP[o]), CORRECTION_WEIGHT));
+    const t = raw[0] + raw[1] + raw[2];
+    P = { home: +(raw[0] / t).toFixed(3), draw: +(raw[1] / t).toFixed(3), away: +(raw[2] / t).toFixed(3) };
+    markets = { ...markets, probabilities: P };
+  }
+  const diff = (a: Record<Outcome, number>) =>
+    fair ? (Object.fromEntries(outcomes.map((o) => [o, +(a[o] - fair[o]).toFixed(3)])) as Record<Outcome, number>) : null;
+  const edges = diff(P);
+  const modelEdges = diff(modelP);
   const favorite: Outcome = P.home >= P.away ? "home" : "away";
   const underdog: Outcome = favorite === "home" ? "away" : "home";
   const nameOf = (o: Outcome) => (o === "home" ? input.home.name : o === "away" ? input.away.name : "Empate");
@@ -125,30 +159,30 @@ export function analyzeRadarMatch(input: RadarInput): RadarAnalysis {
   }
   let bestEdge: RadarAnalysis["bestEdge"] = null;
   if (fair && edges && input.odds) {
+    // Solo hay "ventaja" si TUS correcciones (bajas) mueven el 1X2 frente al mercado
     for (const o of outcomes) {
       const odds = input.odds[o]!;
-      if (edges[o] >= RADAR_RULES.valueEdge && P[o] >= 0.15 && (!bestEdge || edges[o] > bestEdge.edge)) {
+      if (edges[o] >= INFO_EDGE && P[o] >= 0.15 && (!bestEdge || edges[o] > bestEdge.edge)) {
         bestEdge = { outcome: o, edge: edges[o], model: P[o], fair: fair[o], odds };
       }
     }
     if (bestEdge) {
       flags.push({
-        code: "VALOR",
-        label: `Discrepancia: ${nameOf(bestEdge.outcome)} @${bestEdge.odds}`,
-        tone: "info",
+        code: "TU_INFO",
+        label: `Tu información: ${nameOf(bestEdge.outcome)} @${bestEdge.odds}`,
+        tone: "good",
         detail:
-          `Modelo ${pct(bestEdge.model)} vs mercado ${pct(bestEdge.fair)} (+${Math.round(bestEdge.edge * 100)} pts). ` +
-          `Ojo: en el histórico (1.487 casos, solo con resultados y tiros) estas discrepancias NO ganaban: ` +
-          `CLV −5,6 %, ROI −22 %. Solo vale si tú sabes algo que el mercado no (bajas, narraciones). Mira su CLV en Entrenamiento.`,
+          `Tus bajas mueven el ${LABEL[bestEdge.outcome]} de ${pct(bestEdge.fair)} (mercado) a ${pct(bestEdge.model)} (+${Math.round(bestEdge.edge * 100)} pts). ` +
+          `Solo vale si el mercado aún no lo sabe. Su CLV se mide en Entrenamiento.`,
       });
     }
     const mktFav: Outcome = fair.home >= fair.away ? "home" : "away";
-    if (fair[mktFav] >= 0.55 && fair[mktFav] - P[mktFav] >= RADAR_RULES.fragileGap) {
+    if (fair[mktFav] >= 0.55 && fair[mktFav] - modelP[mktFav] >= RADAR_RULES.fragileGap) {
       flags.push({
         code: "FAVORITO_FRAGIL",
         label: `Favorito frágil: ${nameOf(mktFav)}`,
-        tone: "risk",
-        detail: `El mercado le da ${pct(fair[mktFav])}, el modelo ${pct(P[mktFav])}.`,
+        tone: "info",
+        detail: `El mercado le da ${pct(fair[mktFav])}, el modelo ${pct(modelP[mktFav])}. Ojo: en el histórico el mercado acierta más que el modelo.`,
       });
     }
   }
@@ -168,7 +202,7 @@ export function analyzeRadarMatch(input: RadarInput): RadarAnalysis {
   // Study Score (0–100): incertidumbre del resultado + discrepancia con el
   // mercado + datos propios disponibles.
   const entropy = -outcomes.reduce((a, o) => a + (P[o] > 0 ? P[o] * Math.log(P[o]) : 0), 0) / Math.log(3);
-  const disagreement = edges ? Math.min(1, Math.max(...outcomes.map((o) => Math.abs(edges[o]))) / 0.15) : null;
+  const disagreement = modelEdges ? Math.min(1, Math.max(...outcomes.map((o) => Math.abs(modelEdges[o]))) / 0.15) : null;
   const logged = input.playersLogged ?? { home: 0, away: 0 };
   const data = Math.min(1, (Math.min(logged.home, 8) + Math.min(logged.away, 8)) / 16) * (markets.reliable ? 1 : 0.5);
   const score =
@@ -177,10 +211,13 @@ export function analyzeRadarMatch(input: RadarInput): RadarAnalysis {
       : 0.35 * entropy + 0.45 * disagreement + 0.2 * data;
   return {
     markets,
+    modelProbabilities: modelP,
+    source: fair ? "market" : "model",
     baseMarkets,
     attackFactor,
     fair,
     edges,
+    modelEdges,
     bestEdge,
     favorite,
     flags,
