@@ -204,6 +204,8 @@ export function NarrativePanel({ matchId, homeName, awayName }: { matchId: Id<"m
             </div>
           )}
 
+          <NarrativePlayers matchId={matchId} homeName={homeName} awayName={awayName} count={(a.players ?? []).length} />
+
           <div className="flex items-center justify-between text-[9px] text-on-surface-variant">
             <span>
               {saved!.provider === "claude" ? "Claude" : "Gemini"} · {saved!.model} · {new Date(saved!.createdAt).toLocaleDateString()}
@@ -286,6 +288,148 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="rounded-lg bg-surface-container py-1">
       <div className="text-on-surface font-bold text-xs">{value}</div>
       <div className="text-[9px] text-on-surface-variant">{label}</div>
+    </div>
+  );
+}
+
+type PlanRow = {
+  idx: number;
+  name: string;
+  side: "home" | "away";
+  existingName: string | null;
+  alreadyLogged: boolean;
+  minutes: number;
+  minutesEstimated: boolean;
+  goals: number;
+  assists: number;
+  yellowCards: number;
+  redCards: number;
+  bigChancesMissed: number;
+  injured: boolean;
+};
+
+/** Registrar a los jugadores que salen en la narración (y crear los que falten). */
+function NarrativePlayers({ matchId, homeName, awayName, count }: { matchId: Id<"matches">; homeName: string; awayName: string; count: number }) {
+  const run = useMutation(api.narratives.registerNarrativePlayers);
+  const [plan, setPlan] = useState<PlanRow[] | null>(null);
+  const [checked, setChecked] = useState<Set<number>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  if (count === 0) {
+    return (
+      <p className="text-[10px] text-on-surface-variant">
+        Este análisis no trae jugadores (es anterior a esa función): dale a "Volver a analizar" para sacarlos.
+      </p>
+    );
+  }
+
+  const open = async () => {
+    setBusy(true);
+    setMsg(null);
+    try {
+      const r = await run({ matchId, preview: true });
+      setPlan(r.plan as PlanRow[]);
+      setChecked(new Set(r.plan.filter((p: PlanRow) => !p.alreadyLogged).map((p: PlanRow) => p.idx)));
+    } catch (e: any) {
+      setMsg(e?.message ?? String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const save = async () => {
+    setBusy(true);
+    try {
+      const r = await run({ matchId, include: Array.from(checked) });
+      setMsg(`Listo: ${r.logged} jugadores con este partido apuntado (${r.created} nuevos en la plantilla).`);
+      setPlan(null);
+    } catch (e: any) {
+      setMsg(e?.message ?? String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const facts = (p: PlanRow) =>
+    [
+      p.goals ? `⚽${p.goals > 1 ? "×" + p.goals : ""}` : "",
+      p.assists ? `🅰️${p.assists > 1 ? "×" + p.assists : ""}` : "",
+      p.yellowCards ? "🟨" : "",
+      p.redCards ? "🟥" : "",
+      p.bigChancesMissed ? `🎯✗${p.bigChancesMissed}` : "",
+      p.injured ? "🩹" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+  return (
+    <div className="flex flex-col gap-1.5 border-t border-surface-container-high pt-2">
+      {!plan ? (
+        <button
+          onClick={open}
+          disabled={busy}
+          className="self-start px-2 h-7 rounded-lg bg-surface-container-high text-secondary border border-secondary/30 text-[10px] flex items-center gap-1"
+        >
+          <span className="material-symbols-outlined text-[13px]">group_add</span>
+          {busy ? "Cargando…" : `Registrar jugadores de la narración (${count})`}
+        </button>
+      ) : (
+        <>
+          {(["home", "away"] as const).map((side) => (
+            <div key={side} className="flex flex-col">
+              <span className={`text-[10px] font-bold ${side === "home" ? "text-primary" : "text-secondary"}`}>
+                {side === "home" ? homeName : awayName}
+              </span>
+              {plan
+                .filter((p) => p.side === side)
+                .map((p) => (
+                  <label key={p.idx} className="flex items-center gap-1.5 text-[10px] py-0.5 border-t border-surface-container-high/30">
+                    <input
+                      type="checkbox"
+                      disabled={p.alreadyLogged}
+                      checked={!p.alreadyLogged && checked.has(p.idx)}
+                      onChange={(e) => {
+                        const next = new Set(checked);
+                        if (e.target.checked) next.add(p.idx);
+                        else next.delete(p.idx);
+                        setChecked(next);
+                      }}
+                    />
+                    <span className="text-on-surface truncate flex-1">
+                      {p.name}
+                      <span className="text-on-surface-variant">
+                        {p.alreadyLogged ? " · ya registrado" : p.existingName ? (p.existingName !== p.name ? ` · = ${p.existingName}` : "") : " · nuevo"}
+                      </span>
+                    </span>
+                    <span>{facts(p)}</span>
+                    <span className="text-on-surface-variant w-9 text-right">
+                      {p.minutesEstimated ? "~" : ""}
+                      {p.minutes}&apos;
+                    </span>
+                  </label>
+                ))}
+            </div>
+          ))}
+          <p className="text-[9px] text-on-surface-variant">
+            Se apuntan goles, asistencias, tarjetas, ocasiones falladas, lesión y minutos (~ = aproximados). No cuentan para
+            el modelo de tiros/xG/nota hasta que pegues sus stats de Sofascore en ese partido. Los nuevos se crean como
+            centrocampistas si la narración no deja clara la posición; puedes cambiarla en su ficha.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button onClick={() => setPlan(null)} className="px-3 h-7 rounded-lg text-on-surface-variant text-[10px]">
+              Cancelar
+            </button>
+            <button
+              onClick={save}
+              disabled={busy || checked.size === 0}
+              className="px-3 h-7 rounded-lg bg-primary text-on-primary font-bold text-[10px] disabled:opacity-50"
+            >
+              {busy ? "Guardando…" : `Registrar ${checked.size}`}
+            </button>
+          </div>
+        </>
+      )}
+      {msg && <p className="text-[10px] text-primary">{msg}</p>}
     </div>
   );
 }

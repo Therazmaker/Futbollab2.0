@@ -40,6 +40,23 @@ export interface NarrativeEvent {
   note: string;
 }
 
+export interface NarrativePlayer {
+  name: string;
+  team: Side;
+  position: "GK" | "DF" | "MF" | "FW" | "?";
+  /** true titular, false suplente, null si la narración no lo dice */
+  started: boolean | null;
+  minuteIn: number | null;
+  minuteOut: number | null;
+  goals: number;
+  assists: number;
+  yellowCards: number;
+  redCards: number;
+  bigChancesMissed: number;
+  injured: boolean;
+  note: string;
+}
+
 export interface NarrativeAnalysis {
   summary: string;
   periods: { range: string; dominant: Side | "even"; note: string }[];
@@ -48,6 +65,7 @@ export interface NarrativeAnalysis {
   /** ¿El marcador refleja el partido? */
   scoreFairness: "fair" | "flattering_home" | "flattering_away";
   events: NarrativeEvent[];
+  players: NarrativePlayer[];
 }
 
 const TEAM_SCHEMA = {
@@ -71,7 +89,7 @@ const TEAM_SCHEMA = {
 export const NARRATIVE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["summary", "periods", "home", "away", "scoreFairness", "events"],
+  required: ["summary", "periods", "home", "away", "scoreFairness", "events", "players"],
   properties: {
     summary: { type: "string", description: "3-4 frases en español: cómo fue el partido de verdad" },
     periods: {
@@ -91,6 +109,31 @@ export const NARRATIVE_SCHEMA = {
     home: TEAM_SCHEMA,
     away: TEAM_SCHEMA,
     scoreFairness: { type: "string", enum: ["fair", "flattering_home", "flattering_away"] },
+    players: {
+      type: "array",
+      description:
+        "Cada jugador que aparece en la narración (de los dos equipos), con lo que hizo. Nombre completo como sale.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["name", "team", "position", "started", "minuteIn", "minuteOut", "goals", "assists", "yellowCards", "redCards", "bigChancesMissed", "injured", "note"],
+        properties: {
+          name: { type: "string" },
+          team: { type: "string", enum: ["home", "away"] },
+          position: { type: "string", enum: ["GK", "DF", "MF", "FW", "?"] },
+          started: { type: "string", enum: ["yes", "no", "unknown"], description: "¿Fue titular?" },
+          minuteIn: { type: "integer", description: "Minuto en que entró; -1 si no entró desde el banquillo o no se sabe" },
+          minuteOut: { type: "integer", description: "Minuto en que salió (cambio, lesión o roja); -1 si no salió o no se sabe" },
+          goals: { type: "integer" },
+          assists: { type: "integer" },
+          yellowCards: { type: "integer" },
+          redCards: { type: "integer" },
+          bigChancesMissed: { type: "integer" },
+          injured: { type: "boolean", description: "Se lesionó o tuvo que ser atendido y salió" },
+          note: { type: "string", description: "Muy corto, en español" },
+        },
+      },
+    },
     events: {
       type: "array",
       items: {
@@ -126,7 +169,8 @@ Léela entera y extrae cómo se jugó DE VERDAD, no solo el resultado:
 - si reaccionó al ir perdiendo,
 - si definió bien (clinical) o perdonó (wasteful), y si su defensa fue sólida o frágil,
 - expulsiones, lesiones, penaltis y cambios tácticos importantes con su minuto,
-- si el marcador refleja el partido o lo maquilla a favor de alguien.
+- si el marcador refleja el partido o lo maquilla a favor de alguien,
+- la lista de jugadores que aparecen (de los dos equipos) con goles, asistencias, tarjetas, ocasiones claras falladas, si se lesionó y el minuto en que entró o salió si hubo cambio.
 Usa solo lo que dice la narración; si algo no aparece, usa el valor neutro ("normal", "medium", "never_led", 0).
 "home" es siempre el equipo local indicado abajo, aunque la narración los nombre de otra forma.
 Textos libres (summary, notes, note) en español y cortos.`;
@@ -147,6 +191,11 @@ const int = (v: unknown, lo: number, hi: number, fallback = 0) => {
   return Number.isFinite(n) ? Math.min(hi, Math.max(lo, n)) : fallback;
 };
 const str = (v: unknown, max = 600) => (typeof v === "string" ? v.trim().slice(0, max) : "");
+
+const minuteOrNull = (v: unknown) => {
+  const n = Math.round(Number(v));
+  return v === null || v === undefined || !Number.isFinite(n) || n < 0 ? null : Math.min(130, n);
+};
 
 function normalizeTeam(t: any): TeamSignals {
   return {
@@ -176,6 +225,24 @@ export function normalizeAnalysis(raw: any): NarrativeAnalysis {
     home: normalizeTeam(raw.home),
     away: normalizeTeam(raw.away),
     scoreFairness: pick(raw.scoreFairness, ["fair", "flattering_home", "flattering_away"] as const, "fair"),
+    players: (Array.isArray(raw.players) ? raw.players : [])
+      .slice(0, 50)
+      .map((p: any) => ({
+        name: str(p?.name, 60),
+        team: pick(p?.team, sides, "home"),
+        position: pick(p?.position, ["GK", "DF", "MF", "FW", "?"] as const, "?"),
+        started: p?.started === "yes" || p?.started === true ? true : p?.started === "no" || p?.started === false ? false : null,
+        minuteIn: minuteOrNull(p?.minuteIn),
+        minuteOut: minuteOrNull(p?.minuteOut),
+        goals: int(p?.goals, 0, 10),
+        assists: int(p?.assists, 0, 10),
+        yellowCards: int(p?.yellowCards, 0, 2),
+        redCards: int(p?.redCards, 0, 1),
+        bigChancesMissed: int(p?.bigChancesMissed, 0, 10),
+        injured: !!p?.injured,
+        note: str(p?.note, 160),
+      }))
+      .filter((p: NarrativePlayer) => p.name.length >= 2),
     events: (Array.isArray(raw.events) ? raw.events : []).slice(0, 40).map((e: any) => ({
       minute: int(e?.minute, 0, 130),
       team: pick(e?.team, sides, "home"),
@@ -292,3 +359,51 @@ export function teamTrends(rows: TrendRow[]): TeamTrends {
     I.push(`Concede más ocasiones claras de las que crea (${t.avgClearChancesAgainst} vs ${t.avgClearChancesFor}).`);
   return t;
 }
+
+/**
+ * Minutos aproximados según la narración: titular hasta que sale (o 90),
+ * suplente desde que entra. Si no se sabe si fue titular ni hubo cambio, 90.
+ */
+export function narrativeMinutes(p: NarrativePlayer): { minutes: number; estimated: boolean } {
+  const end = Math.min(95, p.minuteOut ?? 90);
+  if (p.minuteIn !== null && p.started !== true) return { minutes: Math.max(1, end - p.minuteIn), estimated: p.minuteOut === null };
+  return { minutes: Math.max(1, end), estimated: p.minuteOut === null && p.started !== true };
+}
+
+// ---------- Nombres de jugadores ----------
+
+const plain = (s: string) =>
+  s
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** Empareja un nombre de la narración con la plantilla: completo, "I. Romero" o apellido único. */
+export function matchPlayerName<T extends { name: string }>(name: string, squad: T[]): T | null {
+  const key = plain(name);
+  if (!key) return null;
+  const exact = squad.filter((p) => plain(p.name) === key);
+  if (exact.length === 1) return exact[0];
+  const parts = key.split(" ");
+  const last = parts[parts.length - 1];
+  const first = parts[0];
+  const sameLast = squad.filter((p) => {
+    const q = plain(p.name).split(" ");
+    return q[q.length - 1] === last;
+  });
+  if (sameLast.length === 1) {
+    const q = plain(sameLast[0].name).split(" ");
+    // Si los dos tienen nombre de pila, que la inicial coincida
+    if (parts.length === 1 || q.length === 1 || q[0][0] === first[0]) return sameLast[0];
+  }
+  // "Vinícius Júnior" ↔ "Vinicius Jr", "Isaac" ↔ "Isaac Romero" (un solo candidato)
+  const contains = squad.filter((p) => {
+    const n = plain(p.name);
+    return n.startsWith(key + " ") || key.startsWith(n + " ");
+  });
+  return contains.length === 1 ? contains[0] : null;
+}
+

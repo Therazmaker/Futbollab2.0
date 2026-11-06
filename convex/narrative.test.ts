@@ -3,7 +3,7 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
-import { normalizeAnalysis, roleFor, teamTrends, TrendRow } from "./lib/narrative";
+import { matchPlayerName, narrativeMinutes, normalizeAnalysis, roleFor, teamTrends, TrendRow } from "./lib/narrative";
 
 const modules = import.meta.glob("./**/!(*.*.*)*.*s");
 
@@ -144,5 +144,96 @@ describe("resultados en bloque", () => {
     expect(r2).toMatchObject({ added: 0, unchanged: 1 });
     const valencia = (await t.run((c) => c.db.query("teams").collect())).find((x) => x.name === "Valencia")!;
     expect(valencia.attackRating).toBeGreaterThan(0);
+  });
+});
+
+const np = (o: Record<string, unknown>) => ({
+  name: "Xavi",
+  team: "home",
+  position: "FW",
+  started: "unknown",
+  minuteIn: -1,
+  minuteOut: -1,
+  goals: 0,
+  assists: 0,
+  yellowCards: 0,
+  redCards: 0,
+  bigChancesMissed: 0,
+  injured: false,
+  note: "",
+  ...o,
+});
+
+describe("jugadores desde la narración", () => {
+  test("empareja nombres y estima minutos", () => {
+    const squad = [{ name: "Isaac Romero" }, { name: "Vinícius Júnior" }, { name: "Dani Carvajal" }, { name: "Dani Ceballos" }];
+    expect(matchPlayerName("Isaac Romero", squad)?.name).toBe("Isaac Romero");
+    expect(matchPlayerName("I. Romero", squad)?.name).toBe("Isaac Romero");
+    expect(matchPlayerName("Romero", squad)?.name).toBe("Isaac Romero");
+    expect(matchPlayerName("Vinicius", squad)?.name).toBe("Vinícius Júnior");
+    expect(matchPlayerName("Dani", squad)).toBeNull(); // ambiguo
+    expect(matchPlayerName("Juan Romero", squad)).toBeNull(); // otra inicial
+
+    const p = (o: Record<string, unknown>) => normalizeAnalysis({ players: [np(o)] }).players[0];
+    expect(narrativeMinutes(p({ started: "no", minuteIn: 63 }))).toEqual({ minutes: 27, estimated: true });
+    expect(narrativeMinutes(p({ started: "yes", minuteOut: 70 }))).toEqual({ minutes: 70, estimated: false });
+    expect(narrativeMinutes(p({ started: "yes" }))).toEqual({ minutes: 90, estimated: false });
+    expect(narrativeMinutes(p({}))).toEqual({ minutes: 90, estimated: true });
+  });
+
+  test("crea jugadores, apunta el partido, no duplica y las stats completas lo sustituyen", async () => {
+    const t = convexTest(schema, modules);
+    const home = await t.mutation(api.teams.createTeam, { name: "Sevilla", league: "laliga" });
+    const away = await t.mutation(api.teams.createTeam, { name: "Alavés", league: "laliga" });
+    const existing = await t.mutation(api.players.createPlayer, { teamId: home, name: "Isaac Romero", position: "FW" });
+    const matchId = await t.mutation(api.teams.addMatchResult, { homeTeamId: home, awayTeamId: away, homeGoals: 1, awayGoals: 1, date: "2026-11-06" });
+    await t.mutation(api.narratives.saveNarrative, {
+      matchId,
+      text: "…",
+      provider: "gemini",
+      model: "m",
+      analysis: {
+        ...analysis({}, {}),
+        players: [
+          np({ name: "I. Romero", goals: 1, started: "yes", minuteOut: 54, injured: true }),
+          np({ name: "Lucas Stassin", minuteIn: 63, started: "no", position: "FW" }),
+          np({ name: "Carlos Vicente", team: "away", goals: 1, yellowCards: 1, position: "MF" }),
+        ],
+      },
+    });
+    const pre = await t.mutation(api.narratives.registerNarrativePlayers, { matchId, preview: true });
+    expect(pre.plan.map((p) => p.existingId)).toEqual([existing, null, null]);
+    expect(await t.run((c) => c.db.query("playerMatchLogs").collect())).toHaveLength(0);
+
+    const r = await t.mutation(api.narratives.registerNarrativePlayers, { matchId });
+    expect(r).toMatchObject({ created: 2, logged: 3 });
+    const again = await t.mutation(api.narratives.registerNarrativePlayers, { matchId });
+    expect(again.logged).toBe(0);
+
+    const logs = await t.run((c) => c.db.query("playerMatchLogs").collect());
+    const romero = logs.find((l) => l.playerId === existing)!;
+    expect(romero).toMatchObject({ source: "narrative", minutesPlayed: 54, injuredOff: true, isAway: false });
+    expect(romero.rawStats.goals).toBe(1);
+    const injuries = await t.run((c) => c.db.query("injuries").collect());
+    expect(injuries).toHaveLength(1);
+    // Partido de narración: aparece en el perfil pero no en el modelo
+    const report = await t.query(api.predictions.getModelReport, { playerId: existing });
+    expect(report!.points ?? []).toHaveLength(0);
+
+    // Al registrar sus stats completas de ese partido, sustituyen al de narración
+    await t.mutation(api.predictions.recordMatchAndCalibrate, {
+      playerId: existing,
+      matchId,
+      matchDate: "2026-11-06",
+      opponent: "Alavés",
+      isAway: false,
+      minutesPlayed: 54,
+      rawStats: { totalShots: 3, xG: 0.6, keyPasses: 1, groundDuelsWon: 2, rating: 7.4, goals: 1 },
+    });
+    const mine = (await t.run((c) => c.db.query("playerMatchLogs").collect())).filter((l) => l.playerId === existing);
+    expect(mine).toHaveLength(1);
+    expect(mine[0].source).toBeUndefined();
+    expect(mine[0].injuredOff).toBe(true);
+    expect(await t.run((c) => c.db.query("injuries").collect())).toHaveLength(1);
   });
 });

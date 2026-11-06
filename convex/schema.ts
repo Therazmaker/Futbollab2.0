@@ -150,6 +150,9 @@ export default defineSchema({
     rawStats: v.any(), // Flexible container for Sofascore/FotMob OCR ingested metrics (50+ fields)
     matchId: v.optional(v.id("matches")), // partido del equipo al que pertenece
     injuredOff: v.optional(v.boolean()), // salió lesionado en este partido
+    // "narrative": sacado de la narración (goles, tarjetas, minutos aprox.), sin stats
+    // completas; no entra en los modelos de tiros/xG/nota hasta que se pegan sus stats
+    source: v.optional(v.string()),
   })
     .index("by_player", ["playerId"])
     .index("by_player_and_date", ["playerId", "matchDate"])

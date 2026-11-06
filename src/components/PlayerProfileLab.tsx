@@ -977,12 +977,25 @@ export function PlayerProfileLab({ playerId, onSelectPlayer, onOpenTeam, onBack 
                         {log.competition === "ucl" ? "UCL" : competitionLabel(log.competition)}
                       </span>
                     )}
+                    {log.source === "narrative" && (
+                      <span
+                        className="font-mono text-[9px] px-1.5 rounded bg-secondary/15 text-secondary border border-secondary/30"
+                        title="Sacado de la narración: solo goles, tarjetas y minutos. Pega sus stats para que cuente en el modelo."
+                      >
+                        NARRACIÓN
+                      </span>
+                    )}
                     <span className="material-symbols-outlined text-[13px] text-on-surface-variant opacity-0 group-hover:opacity-100 transition-opacity">
                       arrow_forward
                     </span>
                   </div>
                   <p className="font-mono text-[10px] text-on-surface-variant">
-                    {log.matchDate} • {log.tacticalRole || activePlayer?.position || ""} • {log.minutesPlayed}'
+                    {log.matchDate} • {log.tacticalRole || activePlayer?.position || ""} • {log.rawStats?.minutesEstimated ? "~" : ""}
+                    {log.minutesPlayed}'
+                    {log.rawStats?.goals ? ` • ⚽${log.rawStats.goals}` : ""}
+                    {log.rawStats?.assists ? ` • 🅰️${log.rawStats.assists}` : ""}
+                    {log.rawStats?.yellowCards ? " • 🟨" : ""}
+                    {log.rawStats?.redCards ? " • 🟥" : ""}
                   </p>
                 </div>
               </div>
