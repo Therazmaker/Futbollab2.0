@@ -2,6 +2,7 @@ import type { GenericDatabaseReader, GenericDatabaseWriter } from "convex/server
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { recomputeLeague } from "./leagueTable";
 import { homeCompetition } from "./noLeague";
+import { ensureSnapshotBeforeScore } from "./radarSnapshot";
 
 type Db = GenericDatabaseWriter<DataModel>;
 type Reader = GenericDatabaseReader<DataModel>;
@@ -72,14 +73,19 @@ export async function findOrCreateTeamMatch(
   const existing = await findTeamMatch(db, homeTeamId, awayTeamId, args.date);
   if (existing) {
     if (hasScore && (existing.homeGoals !== homeGoals || existing.awayGoals !== awayGoals)) {
+      if (existing.homeGoals === undefined) await ensureSnapshotBeforeScore(db, existing._id);
       await db.patch(existing._id, { homeGoals, awayGoals });
       await recomputeLeague(db, existing.league);
     }
     return existing._id;
   }
   const league = args.competition || homeCompetition(team);
-  const id = await db.insert("matches", { league, date: args.date, homeTeamId, awayTeamId, homeGoals, awayGoals });
-  if (hasScore) await recomputeLeague(db, league);
+  const id = await db.insert("matches", { league, date: args.date, homeTeamId, awayTeamId });
+  if (hasScore) {
+    await ensureSnapshotBeforeScore(db, id);
+    await db.patch(id, { homeGoals, awayGoals });
+    await recomputeLeague(db, league);
+  }
   return id;
 }
 

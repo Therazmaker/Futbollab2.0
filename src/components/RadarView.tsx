@@ -1,11 +1,12 @@
 "use client";
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { competitionLabel, COMPETITIONS } from "@/lib/competitions";
 import { RivalPicker } from "./RivalPicker";
+import { RadarTraining } from "./RadarTraining";
 
 interface RadarViewProps {
   onOpenTeam: (teamId: Id<"teams">) => void;
@@ -302,6 +303,8 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
   const [sort, setSort] = useState<"study" | "date" | "value">("study");
   const [adding, setAdding] = useState(false);
   const [showRules, setShowRules] = useState(false);
+  const [mode, setMode] = useState<"matches" | "training">("matches");
+  const snapshotRange = useMutation(api.radar.snapshotRange);
 
   const { fromDate, toDate } = useMemo(() => {
     if (range === "today") return { fromDate: addDays(0), toDate: addDays(0) };
@@ -312,6 +315,13 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
   }, [range, day]);
 
   const rows = useQuery(api.radar.getRadar, { fromDate, toDate, competition });
+
+  // Foto previa de los partidos sin marcador que se están viendo (para el entrenamiento)
+  useEffect(() => {
+    const today = addDays(0);
+    if (toDate < today) return;
+    snapshotRange({ fromDate: fromDate < today ? today : fromDate, toDate }).catch(() => {});
+  }, [fromDate, toDate, snapshotRange]);
   const leagues = useQuery(api.teams.getLeagues) ?? [];
   const teams = useQuery(api.teams.getTeams, {}) ?? [];
 
@@ -340,6 +350,37 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
         </button>
       </div>
 
+      <div className="flex gap-1 font-mono text-[11px] self-start bg-surface-container rounded-lg p-0.5 border border-surface-container-highest">
+        {(
+          [
+            ["matches", "Partidos"],
+            ["training", "Entrenamiento"],
+          ] as const
+        ).map(([k, label]) => (
+          <button
+            key={k}
+            onClick={() => setMode(k)}
+            className={`px-3 py-1 rounded ${mode === k ? "bg-primary text-on-primary font-bold" : "text-on-surface-variant"}`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {mode === "training" ? (
+        <>
+          <select value={competition} onChange={(e) => setCompetition(e.target.value)} className={input} aria-label="Competición">
+            <option value="all">Todas las competiciones</option>
+            {Array.from(new Set([...leagues.map((l: any) => l.code), ...COMPETITIONS.map((c) => c.code)])).map((c) => (
+              <option key={c} value={c}>
+                {competitionLabel(c) || c}
+              </option>
+            ))}
+          </select>
+          <RadarTraining competition={competition} />
+        </>
+      ) : (
+      <>
       {/* Filtros */}
       <div className="flex flex-wrap gap-1.5 font-mono text-[11px]">
         {(
@@ -414,6 +455,9 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
         </div>
       ) : (
         sorted.map((m) => <RadarCard key={m._id} m={m} onOpenTeam={onOpenTeam} />)
+      )}
+
+      </>
       )}
 
       {adding && <AddMatchModal teams={teams as any[]} onClose={() => setAdding(false)} />}

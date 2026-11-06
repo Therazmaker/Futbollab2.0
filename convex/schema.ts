@@ -14,7 +14,19 @@ export default defineSchema({
     matchesPlayed: v.optional(v.number()),
     currentSeason: v.optional(v.string()), // "2026-27"
     // Frecuencias reales de goles (para +1.5/+2.5/+3.5 y ambos marcan)
-    goalRates: v.optional(v.object({ over15: v.number(), over25: v.number(), over35: v.number(), btts: v.number() })),
+    goalRates: v.optional(
+      v.object({
+        over15: v.number(),
+        over25: v.number(),
+        over35: v.number(),
+        btts: v.number(),
+        homeWin: v.optional(v.number()),
+        draw: v.optional(v.number()),
+        awayWin: v.optional(v.number()),
+        homeCleanSheet: v.optional(v.number()),
+        awayCleanSheet: v.optional(v.number()),
+      })
+    ),
   }).index("by_code", ["code"]),
 
   teams: defineTable({
@@ -142,6 +154,27 @@ export default defineSchema({
     .index("by_player", ["playerId"])
     .index("by_player_and_date", ["playerId", "matchDate"])
     .index("by_match", ["matchId"]),
+
+  // Foto del Radar ANTES del partido: con ella se puntúa el modelo cuando llega el resultado
+  radarSnapshots: defineTable({
+    matchId: v.id("matches"),
+    date: v.string(),
+    competition: v.string(),
+    takenAt: v.number(),
+    late: v.boolean(), // tomada al guardar el marcador (sin que nadie abriera el Radar antes)
+    probs: v.any(), // home, draw, away, over15, over25, over35, btts, homeCleanSheet, awayCleanSheet
+    base: v.any(), // frecuencias de la liga en ese momento (referencia)
+    baseProbs: v.optional(v.any()), // 1X2 sin el ajuste por bajas (si lo hubo)
+    expectedGoals: v.any(),
+    attackFactor: v.any(),
+    odds: v.optional(v.any()),
+    fair: v.optional(v.any()),
+    flags: v.array(v.string()),
+    favorite: v.string(),
+    bestEdge: v.optional(v.any()),
+    players: v.any(), // [{ playerId, teamId, pScore, pShot1, pShot2, xG, minutes, rating }]
+    studyScore: v.number(),
+  }).index("by_match", ["matchId"]),
 
   // Lesiones de jugadores (la abierta = sin endDate)
   injuries: defineTable({

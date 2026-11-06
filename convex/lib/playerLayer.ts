@@ -81,8 +81,10 @@ export async function buildTeamPlayerLayer(
 
   for (const p of roster) {
     if (!caches.input.has(p._id)) caches.input.set(p._id, await loadPlayerModelInput(db, p._id));
-    const input = caches.input.get(p._id);
-    if (!input) continue;
+    const fullInput = caches.input.get(p._id);
+    if (!fullInput) continue;
+    // Solo lo que se sabía ANTES del partido (sin el propio partido ni posteriores)
+    const input = { ...fullInput, logs: fullInput.logs.filter((l) => l.matchDate < ctx.date) };
     const played = input.logs.filter((l) => Number(l.minutesPlayed) > 0);
     const av = availabilityOn(ctx.date, input.injuries, played.map((l) => l.matchDate));
     if (!played.length) {
@@ -90,8 +92,9 @@ export async function buildTeamPlayerLayer(
       continue;
     }
     logged++;
-    if (!caches.state.has(p._id)) caches.state.set(p._id, fitProfile(input.logs, input.priorInput));
-    const state = caches.state.get(p._id)!;
+    const stateKey = `${p._id}|${ctx.date}`;
+    if (!caches.state.has(stateKey)) caches.state.set(stateKey, fitProfile(input.logs, input.priorInput));
+    const state = caches.state.get(stateKey)!;
     const usual = state.expectedMinutes;
     if (av.status === "injured") {
       const xgPerMatch = state.rates.xG.rate * (usual / 90);
