@@ -6,6 +6,7 @@ import { loadRatingParams } from "./ratingStore";
 import { RatingParams, teamStrength } from "./ratingModel";
 import { computeMarkets } from "./markets";
 import { homeCompetition } from "./noLeague";
+import { buildReading, teamSeasonBefore } from "./matchReading";
 
 type Reader = GenericDatabaseReader<DataModel>;
 
@@ -78,6 +79,23 @@ export async function analyzeStoredMatch(db: Reader, m: Doc<"matches">, rc: Rada
     absentXgShare: { home: share(hs.absentXg, base.home), away: share(as.absentXg, base.away) },
   });
   const played = m.homeGoals !== undefined && m.awayGoals !== undefined;
+  const [hSeason, aSeason] = await Promise.all([
+    teamSeasonBefore(db, home._id, home.name, homeCompetition(home), m.date),
+    teamSeasonBefore(db, away._id, away.name, homeCompetition(away), m.date),
+  ]);
+  const reading = buildReading({
+    home: { ...hSeason, rank: home.rank, points: home.points },
+    away: { ...aSeason, rank: away.rank, points: away.points },
+    probs: analysis.markets.probabilities,
+    modelProbs: analysis.modelProbabilities,
+    fair: analysis.fair,
+    expectedGoals: analysis.markets.expectedGoals,
+    over25: analysis.markets.over25,
+    homeAdvantage: lg?.homeAdvantage,
+    goalsPerTeam: lg?.goalsPerTeam,
+    absences: { home: hs.absent.map((a) => a.name), away: as.absent.map((a) => a.name) },
+    played,
+  });
   const outcome = played ? (m.homeGoals! > m.awayGoals! ? "home" : m.homeGoals === m.awayGoals ? "draw" : "away") : null;
   return {
     _id: m._id,
@@ -94,6 +112,7 @@ export async function analyzeStoredMatch(db: Reader, m: Doc<"matches">, rc: Rada
       away: { list: as.players.slice(0, 8), absent: as.absent, playersXg: as.playersXg, absentXg: as.absentXg, coverage: as.coverage },
     },
     leagueBase: lg?.goalRates ?? null,
+    reading,
     ...analysis,
   };
 }

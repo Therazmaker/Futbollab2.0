@@ -118,6 +118,7 @@ function clvText(m: any) {
 export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"teams">) => void }) {
   const [editingOdds, setEditingOdds] = useState(false);
   const [editingClose, setEditingClose] = useState(false);
+  const [reading, setReading] = useState(false);
   const [open, setOpen] = useState(false);
   const P = m.markets.probabilities;
   const outcomes = [
@@ -189,6 +190,23 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
         <p className="mt-1 font-mono text-[10px] text-on-surface-variant">
           Sin cuotas: solo el modelo. Pon las cuotas 1X2 y la barra pasará a partir del mercado.
         </p>
+      )}
+
+      {/* Lectura en lenguaje normal */}
+      {m.reading && (
+        <div className="mt-2 p-2 rounded-lg bg-surface-container border border-surface-container-high">
+          <p className="text-[12px] text-on-surface leading-snug">{m.reading.headline}</p>
+          {reading && (
+            <ul className="mt-1.5 flex flex-col gap-1 text-[11px] text-on-surface-variant leading-snug">
+              {m.reading.lines.map((l: string, i: number) => (
+                <li key={i}>• {l}</li>
+              ))}
+            </ul>
+          )}
+          <button onClick={() => setReading(!reading)} className="mt-1 font-mono text-[10px] text-secondary">
+            {reading ? "Ocultar lectura" : "Leer el partido"}
+          </button>
+        </div>
       )}
 
       {/* Alertas */}
