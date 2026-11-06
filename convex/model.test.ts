@@ -865,3 +865,79 @@ describe("Radar: capa de jugadores", () => {
     expect(after.players.home.list.map((p: any) => p.name)).not.toContain("Estrella");
   }, 180_000);
 });
+
+import { evaluate, wilson } from "./lib/radarTraining";
+
+describe("Radar: entrenamiento", () => {
+  test("medidas: mercados, alertas, valor, bajas y jugadores", () => {
+    const snap = (over: Record<string, any> = {}) => ({
+      probs: { home: 0.6, draw: 0.25, away: 0.15, over25: 0.5, btts: 0.5, over15: 0.75, over35: 0.25, homeCleanSheet: 0.4, awayCleanSheet: 0.2 },
+      base: { homeWin: 0.45, draw: 0.26, awayWin: 0.29, over25: 0.5, btts: 0.5, over15: 0.75, over35: 0.25, homeCleanSheet: 0.33, awayCleanSheet: 0.25 },
+      expectedGoals: { home: 1.8, away: 0.9 },
+      attackFactor: { home: 1, away: 0.8 },
+      fair: { home: 0.5, draw: 0.27, away: 0.23 },
+      flags: ["FAVORITO_CLARO", "VALOR"],
+      favorite: "home",
+      bestEdge: { outcome: "home", odds: 1.9, model: 0.6, fair: 0.5 },
+      players: [{ playerId: "p1", pScore: 0.4, pShot1: 0.8, pShot2: 0.5 }],
+      late: false,
+      ...over,
+    });
+    const rows = [
+      { snap: snap(), result: { homeGoals: 2, awayGoals: 0, playerLogs: [{ playerId: "p1", goals: 1, shots: 3 }] } },
+      { snap: snap(), result: { homeGoals: 1, awayGoals: 1, playerLogs: [{ playerId: "p1", goals: 0, shots: 0 }] } },
+      { snap: snap({ late: true }), result: { homeGoals: 3, awayGoals: 1, playerLogs: [] } },
+    ] as any;
+    const r = evaluate(rows);
+    expect(r.matches).toBe(3);
+    expect(r.lateSnapshots).toBe(1);
+    expect(r.oneXTwo!.hitRate).toBeCloseTo(2 / 3, 5);
+    const home = r.markets.find((m) => m.key === "home")!;
+    expect(home.improvement!).toBeGreaterThan(0); // dio 60 % y el local ganó 2 de 3
+    const fav = r.flags.find((f) => f.code === "FAVORITO_CLARO")!;
+    expect([fav.n, fav.hits]).toEqual([3, 2]);
+    const val = r.flags.find((f) => f.code === "VALOR")!;
+    expect(val.roi!).toBeCloseTo((0.9 + 0.9 - 1) / 3, 5);
+    expect(r.absence!.n).toBe(3);
+    expect(r.absence!.expectedBase).toBeCloseTo(0.9 / 0.8, 5);
+    expect(r.players.score!.n).toBe(2);
+    expect(r.players.score!.observed).toBe(0.5);
+    const w = wilson(5, 10);
+    expect(w.low).toBeLessThan(0.5);
+    expect(w.high).toBeGreaterThan(0.5);
+  });
+
+  test("Convex: la foto previa no se reescribe con el resultado y se puntúa", async () => {
+    const t = convexTest(schema, modules);
+    await t.action(api.legacy.importLegacyData, {});
+    const teams = await t.run((ctx) => ctx.db.query("teams").collect());
+    const arsenal = teams.find((x) => x.name === "Arsenal")!;
+    const chelsea = teams.find((x) => x.name === "Chelsea")!;
+    const d = "2099-04-01";
+    const matchId = await t.mutation(api.radar.addRadarMatch, { homeTeamId: arsenal._id, awayTeamId: chelsea._id, date: d, competition: "premier" });
+    await t.mutation(api.radar.setOdds, { matchId, home: 2.4, draw: 3.4, away: 3.0 });
+    expect(await t.mutation(api.radar.snapshotRange, { fromDate: d, toDate: d })).toBe(1);
+    const before = (await t.run((ctx) => ctx.db.query("radarSnapshots").collect()))[0];
+    expect(before.late).toBe(false);
+    expect(before.fair).toBeTruthy();
+
+    await t.mutation(api.teams.setMatchScore, { matchId, homeGoals: 0, awayGoals: 3 });
+    // Volver a abrir el Radar no toca la foto de un partido ya jugado
+    await t.mutation(api.radar.snapshotRange, { fromDate: d, toDate: d });
+    const after = (await t.run((ctx) => ctx.db.query("radarSnapshots").collect()))[0];
+    expect(after.probs).toEqual(before.probs);
+    expect(after.takenAt).toBe(before.takenAt);
+
+    // Un resultado puesto sin foto previa crea una foto "tardía" ANTES de aplicar el marcador
+    await t.mutation(api.teams.addMatchResult, { homeTeamId: chelsea._id, awayTeamId: arsenal._id, homeGoals: 1, awayGoals: 1, date: "2099-04-08", competition: "premier" });
+    const snaps = await t.run((ctx) => ctx.db.query("radarSnapshots").collect());
+    expect(snaps.length).toBe(2);
+    expect(snaps.find((s) => s.date === "2099-04-08")!.late).toBe(true);
+
+    const tr = await t.query(api.radar.getTraining, {});
+    expect(tr.matches).toBe(2);
+    expect(tr.lateSnapshots).toBe(1);
+    expect(tr.markets.find((m) => m.key === "away")!.n).toBe(2);
+    expect(tr.markets.find((m) => m.key === "away")!.brierBase).not.toBeNull();
+  }, 180_000);
+});

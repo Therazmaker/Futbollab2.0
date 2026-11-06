@@ -9,6 +9,7 @@ import { currentSeason, seasonOf } from "./lib/season";
 import { activeIn, homeCompetition, isNoLeague, NO_LEAGUE } from "./lib/noLeague";
 import { availabilityOn } from "./lib/injuries";
 import { computeMarkets } from "./lib/markets";
+import { ensureSnapshotBeforeScore } from "./lib/radarSnapshot";
 
 /**
  * Returns all registered leagues and continental tournaments.
@@ -505,20 +506,22 @@ export const addMatchResult = mutation({
     // Si ya existe (p. ej. creado al registrar un jugador), solo se pone el marcador
     const existing = await findTeamMatch(ctx.db, args.homeTeamId, args.awayTeamId, args.date);
     if (existing) {
+      if (existing.homeGoals === undefined) await ensureSnapshotBeforeScore(ctx.db, existing._id);
       await ctx.db.patch(existing._id, { homeGoals: args.homeGoals, awayGoals: args.awayGoals });
       await recomputeLeague(ctx.db, existing.league);
       await refreshRatingModel(ctx.db);
       return existing._id;
     }
     const league = args.competition || homeCompetition(home);
+    // Se crea sin marcador, se toma la foto previa y luego se pone el marcador
     const id = await ctx.db.insert("matches", {
       homeTeamId: args.homeTeamId,
       awayTeamId: args.awayTeamId,
-      homeGoals: args.homeGoals,
-      awayGoals: args.awayGoals,
       date: args.date,
       league,
     });
+    await ensureSnapshotBeforeScore(ctx.db, id);
+    await ctx.db.patch(id, { homeGoals: args.homeGoals, awayGoals: args.awayGoals });
     await recomputeLeague(ctx.db, league);
     await refreshRatingModel(ctx.db);
     return id;
@@ -1332,6 +1335,7 @@ export const setMatchScore = mutation({
     const m = await ctx.db.get(matchId);
     if (!m) throw new Error("Partido no encontrado");
     if (homeGoals < 0 || awayGoals < 0) throw new Error("Goles no válidos");
+    if (m.homeGoals === undefined) await ensureSnapshotBeforeScore(ctx.db, matchId);
     await ctx.db.patch(matchId, { homeGoals, awayGoals });
     await recomputeLeague(ctx.db, m.league);
     await refreshRatingModel(ctx.db);
@@ -1375,6 +1379,7 @@ export const updateMatch = mutation({
       if (clash && clash._id !== m._id) throw new Error("Ya existe ese partido (mismos equipos y fecha).");
     }
 
+    if (m.homeGoals === undefined && homeGoals !== undefined) await ensureSnapshotBeforeScore(ctx.db, args.matchId);
     await ctx.db.patch(args.matchId, { homeTeamId, awayTeamId, date, league, homeGoals, awayGoals });
 
     // Partidos de jugadores de este partido: misma competición, fecha y casa/fuera

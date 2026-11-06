@@ -23,6 +23,12 @@ export interface GoalRates {
   over25: number;
   over35: number;
   btts: number;
+  // Frecuencias 1X2 de la liga (referencia para evaluar el modelo)
+  homeWin?: number;
+  draw?: number;
+  awayWin?: number;
+  homeCleanSheet?: number;
+  awayCleanSheet?: number;
 }
 export interface LeagueForMarkets {
   goalsPerTeam?: number | null;
@@ -37,7 +43,7 @@ export function leagueGoalRates(
 ): GoalRates | null {
   if (rows.length < 20) return null;
   const now = Math.max(...rows.map((r) => Date.parse(r.date) || 0));
-  let w = 0, o15 = 0, o25 = 0, o35 = 0, bt = 0;
+  let w = 0, o15 = 0, o25 = 0, o35 = 0, bt = 0, hw = 0, dr = 0, aw = 0, csh = 0, csa = 0;
   for (const r of rows) {
     const wi = Math.exp((-xi * (now - (Date.parse(r.date) || now))) / 86_400_000);
     const g = r.homeGoals + r.awayGoals;
@@ -46,9 +52,24 @@ export function leagueGoalRates(
     if (g > 2) o25 += wi;
     if (g > 3) o35 += wi;
     if (r.homeGoals > 0 && r.awayGoals > 0) bt += wi;
+    if (r.homeGoals > r.awayGoals) hw += wi;
+    else if (r.homeGoals === r.awayGoals) dr += wi;
+    else aw += wi;
+    if (r.awayGoals === 0) csh += wi;
+    if (r.homeGoals === 0) csa += wi;
   }
   const r3 = (x: number) => +(x / w).toFixed(3);
-  return { over15: r3(o15), over25: r3(o25), over35: r3(o35), btts: r3(bt) };
+  return {
+    over15: r3(o15),
+    over25: r3(o25),
+    over35: r3(o35),
+    btts: r3(bt),
+    homeWin: r3(hw),
+    draw: r3(dr),
+    awayWin: r3(aw),
+    homeCleanSheet: r3(csh),
+    awayCleanSheet: r3(csa),
+  };
 }
 
 export interface Markets {
