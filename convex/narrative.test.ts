@@ -355,3 +355,29 @@ describe("mercado + tus correcciones", () => {
     expect(bad.corrections!.delta).toBeGreaterThan(0);
   });
 });
+
+import { buildReading } from "./lib/matchReading";
+
+describe("lectura del partido", () => {
+  test("Sevilla–Alavés: explica en palabras lo que dicen los números", () => {
+    const t = (o: Record<string, unknown>) => ({ xgFor: 0, xgAgainst: 0, xgMatches: 0, ...o }) as any;
+    const r = buildReading({
+      home: t({ name: "Sevilla", played: 12, w: 5, d: 3, l: 4, gf: 17, ga: 19, form: ["L", "W", "L", "D", "L"], rank: 6, points: 18, xgFor: 16.8, xgAgainst: 14.4, xgMatches: 12 }),
+      away: t({ name: "Alavés", played: 12, w: 3, d: 4, l: 5, gf: 15, ga: 17, form: ["L", "D", "L", "D", "D"], rank: 9, points: 13 }),
+      probs: { home: 0.5, draw: 0.28, away: 0.22 },
+      modelProbs: { home: 0.44, draw: 0.27, away: 0.28 },
+      fair: { home: 0.5, draw: 0.28, away: 0.22 },
+      expectedGoals: { home: 1.6, away: 1.2 },
+      over25: 0.55,
+      homeAdvantage: 1.2,
+      goalsPerTeam: 1.35,
+      absences: { home: [], away: [] },
+      played: false,
+    });
+    console.log([r.headline, ...r.lines].join("\n"));
+    expect(r.headline).toContain("no por mucho");
+    expect(r.lines.some((l) => l.includes("casi iguales"))).toBe(true);
+    expect(r.lines.some((l) => l.includes("juega mejor de lo que dice su marcador"))).toBe(true);
+    expect(r.lines.some((l) => l.includes("suele acertar el mercado"))).toBe(true);
+  });
+});

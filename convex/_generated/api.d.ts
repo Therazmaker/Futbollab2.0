@@ -15,6 +15,7 @@ import type * as lib_engine from "../lib/engine.js";
 import type * as lib_footballData from "../lib/footballData.js";
 import type * as lib_leagueTable from "../lib/leagueTable.js";
 import type * as lib_markets from "../lib/markets.js";
+import type * as lib_matchReading from "../lib/matchReading.js";
 import type * as lib_narrative from "../lib/narrative.js";
 import type * as lib_noLeague from "../lib/noLeague.js";
 import type * as lib_playerLayer from "../lib/playerLayer.js";
@@ -50,6 +51,7 @@ declare const fullApi: ApiFromModules<{
   "lib/footballData": typeof lib_footballData;
   "lib/leagueTable": typeof lib_leagueTable;
   "lib/markets": typeof lib_markets;
+  "lib/matchReading": typeof lib_matchReading;
   "lib/narrative": typeof lib_narrative;
   "lib/noLeague": typeof lib_noLeague;
   "lib/playerLayer": typeof lib_playerLayer;
