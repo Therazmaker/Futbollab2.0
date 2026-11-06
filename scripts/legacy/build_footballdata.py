@@ -155,6 +155,9 @@ def main(csv_dir):
                 st = {k: v for k, v in st.items() if v is not None}
                 if {"hs", "as", "hst", "ast"} <= st.keys():
                     row["stats"] = st
+                hth, hta = num(r, "HTHG"), num(r, "HTAG")
+                if hth is not None and hta is not None:
+                    row["halfTime"] = {"home": int(hth), "away": int(hta)}
                 co = {k: num(r, c) for k, c in (("home", "AvgCH"), ("draw", "AvgCD"), ("away", "AvgCA"), ("over25", "AvgC>2.5"), ("under25", "AvgC<2.5"))}
                 co = {k: v for k, v in co.items() if v and v > 1}
                 if {"home", "draw", "away"} <= co.keys():
