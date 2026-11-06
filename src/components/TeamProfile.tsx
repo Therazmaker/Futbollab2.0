@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { TeamMatchSheet } from "./TeamMatchSheet";
+import { TeamNarrativeTrends } from "./NarrativePanel";
 import { RivalPicker } from "./RivalPicker";
 import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
 
@@ -301,6 +302,8 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
           </span>
         </div>
       </div>
+
+      <TeamNarrativeTrends teamId={team._id} />
 
       {/* Fuerza */}
       <div className={`${card} flex flex-col gap-3`}>

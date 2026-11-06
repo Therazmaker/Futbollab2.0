@@ -539,6 +539,11 @@ export const deleteMatchResult = mutation({
       .withIndex("by_match", (q) => q.eq("matchId", matchId))
       .collect();
     for (const l of logs) await ctx.db.patch(l._id, { matchId: undefined });
+    const narratives = await ctx.db
+      .query("matchNarratives")
+      .withIndex("by_match", (q) => q.eq("matchId", matchId))
+      .collect();
+    for (const n of narratives) await ctx.db.delete(n._id);
     await ctx.db.delete(matchId);
     await recomputeLeague(ctx.db, m.league);
     await refreshRatingModel(ctx.db);

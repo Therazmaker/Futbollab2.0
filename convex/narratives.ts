@@ -1,0 +1,155 @@
+import { mutation, query } from "./_generated/server";
+import { v } from "convex/values";
+import type { Doc } from "./_generated/dataModel";
+import { AI_DEFAULTS, CLAUDE_MODELS, normalizeAnalysis, roleFor, teamTrends, TrendRow } from "./lib/narrative";
+import { teamStrength } from "./lib/ratingModel";
+
+// ---------- Ajustes de IA ----------
+
+export const getAiSettings = query({
+  args: {},
+  handler: async (ctx) => {
+    const doc = await ctx.db
+      .query("appSettings")
+      .withIndex("by_key", (q) => q.eq("key", "ai"))
+      .unique();
+    return { ...AI_DEFAULTS, ...(doc?.value ?? {}) } as typeof AI_DEFAULTS;
+  },
+});
+
+export const setAiSettings = mutation({
+  args: {
+    provider: v.optional(v.union(v.literal("gemini"), v.literal("claude"))),
+    geminiModel: v.optional(v.string()),
+    claudeModel: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    if (args.claudeModel && !CLAUDE_MODELS.includes(args.claudeModel)) throw new Error("Modelo de Claude no válido");
+    if (args.geminiModel !== undefined && !/^[a-z0-9.\-]{3,60}$/i.test(args.geminiModel)) throw new Error("Nombre de modelo de Gemini no válido");
+    const doc = await ctx.db
+      .query("appSettings")
+      .withIndex("by_key", (q) => q.eq("key", "ai"))
+      .unique();
+    const clean = Object.fromEntries(Object.entries(args).filter(([, x]) => x !== undefined));
+    const value = { ...AI_DEFAULTS, ...(doc?.value ?? {}), ...clean };
+    if (doc) await ctx.db.patch(doc._id, { value });
+    else await ctx.db.insert("appSettings", { key: "ai", value });
+    return value;
+  },
+});
+
+// ---------- Narraciones ----------
+
+/** Datos del partido que necesita el prompt (equipos, marcador…). */
+export const matchContext = query({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, { matchId }) => {
+    const m = await ctx.db.get(matchId);
+    if (!m) return null;
+    const home = await ctx.db.get(m.homeTeamId);
+    const away = await ctx.db.get(m.awayTeamId);
+    return {
+      home: home?.name ?? "Local",
+      away: away?.name ?? "Visitante",
+      homeGoals: m.homeGoals,
+      awayGoals: m.awayGoals,
+      date: m.date,
+      competition: m.league,
+    };
+  },
+});
+
+export const saveNarrative = mutation({
+  args: {
+    matchId: v.id("matches"),
+    text: v.string(),
+    provider: v.string(),
+    model: v.string(),
+    analysis: v.any(),
+  },
+  handler: async (ctx, args) => {
+    if (!(await ctx.db.get(args.matchId))) throw new Error("Partido no encontrado");
+    const analysis = normalizeAnalysis(args.analysis);
+    const row = { text: args.text.slice(0, 200_000), provider: args.provider, model: args.model, analysis, createdAt: Date.now() };
+    const existing = await ctx.db
+      .query("matchNarratives")
+      .withIndex("by_match", (q) => q.eq("matchId", args.matchId))
+      .unique();
+    if (existing) await ctx.db.patch(existing._id, row);
+    else await ctx.db.insert("matchNarratives", { matchId: args.matchId, ...row });
+    return analysis;
+  },
+});
+
+export const getNarrative = query({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, { matchId }) =>
+    await ctx.db
+      .query("matchNarratives")
+      .withIndex("by_match", (q) => q.eq("matchId", matchId))
+      .unique(),
+});
+
+export const deleteNarrative = mutation({
+  args: { matchId: v.id("matches") },
+  handler: async (ctx, { matchId }) => {
+    const doc = await ctx.db
+      .query("matchNarratives")
+      .withIndex("by_match", (q) => q.eq("matchId", matchId))
+      .unique();
+    if (doc) await ctx.db.delete(doc._id);
+  },
+});
+
+/** Tendencias de un equipo a partir de todas sus narraciones analizadas. */
+export const getTeamTrends = query({
+  args: { teamId: v.id("teams"), beforeDate: v.optional(v.string()) },
+  handler: async (ctx, { teamId, beforeDate }) => {
+    const [asHome, asAway] = await Promise.all([
+      ctx.db.query("matches").withIndex("by_home_and_date", (q) => q.eq("homeTeamId", teamId)).collect(),
+      ctx.db.query("matches").withIndex("by_away_and_date", (q) => q.eq("awayTeamId", teamId)).collect(),
+    ]);
+    const teamCache = new Map<string, Doc<"teams"> | null>();
+    const team = async (id: Doc<"matches">["homeTeamId"]) => {
+      if (!teamCache.has(id)) teamCache.set(id, await ctx.db.get(id));
+      return teamCache.get(id)!;
+    };
+    const rows: (TrendRow & { date: string; matchId: string; opponent: string })[] = [];
+    for (const m of [...asHome, ...asAway]) {
+      if (beforeDate && m.date >= beforeDate) continue;
+      const n = await ctx.db
+        .query("matchNarratives")
+        .withIndex("by_match", (q) => q.eq("matchId", m._id))
+        .unique();
+      if (!n) continue;
+      const side = m.homeTeamId === teamId ? "home" : "away";
+      const [h, a] = [await team(m.homeTeamId), await team(m.awayTeamId)];
+      rows.push({
+        side,
+        role: roleFor(side, m.odds, teamStrength(h), teamStrength(a)),
+        goalsFor: side === "home" ? m.homeGoals : m.awayGoals,
+        goalsAgainst: side === "home" ? m.awayGoals : m.homeGoals,
+        analysis: normalizeAnalysis(n.analysis),
+        date: m.date,
+        matchId: m._id,
+        opponent: (side === "home" ? a?.name : h?.name) ?? "?",
+      });
+    }
+    rows.sort((x, y) => (x.date < y.date ? 1 : -1));
+    const recent = rows.slice(0, 20);
+    return {
+      trends: teamTrends(recent),
+      matches: recent.map((r) => ({
+        matchId: r.matchId,
+        date: r.date,
+        opponent: r.opponent,
+        side: r.side,
+        role: r.role,
+        dominance: r.analysis[r.side].dominance,
+        clearChances: r.analysis[r.side].clearChances,
+        clearChancesAgainst: r.analysis[r.side === "home" ? "away" : "home"].clearChances,
+        summary: r.analysis.summary,
+      })),
+    };
+  },
+});

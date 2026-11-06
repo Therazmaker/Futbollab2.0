@@ -212,4 +212,20 @@ export default defineSchema({
     kind: v.optional(v.string()), // "forecast" (próximo partido)
     appliedAt: v.number(),
   }).index("by_player", ["playerId"]),
+
+  // Narración del partido (texto pegado) + lo que la IA extrajo de ella
+  matchNarratives: defineTable({
+    matchId: v.id("matches"),
+    text: v.string(),
+    provider: v.string(), // "gemini" | "claude"
+    model: v.string(),
+    analysis: v.any(), // ver src/lib/narrative.ts (NarrativeAnalysis)
+    createdAt: v.number(),
+  }).index("by_match", ["matchId"]),
+
+  // Ajustes de la app (proveedor de IA, modelos…)
+  appSettings: defineTable({
+    key: v.string(),
+    value: v.any(),
+  }).index("by_key", ["key"]),
 });

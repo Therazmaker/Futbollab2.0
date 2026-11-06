@@ -7,6 +7,7 @@ import type { Id } from "../../convex/_generated/dataModel";
 import { competitionLabel, COMPETITIONS } from "@/lib/competitions";
 import { RivalPicker } from "./RivalPicker";
 import { RadarTraining } from "./RadarTraining";
+import { TeamNarrativeTrends } from "./NarrativePanel";
 
 interface RadarViewProps {
   onOpenTeam: (teamId: Id<"teams">) => void;
@@ -192,6 +193,11 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
 
       {open && (
         <div className="mt-2 flex flex-col gap-2 font-mono text-[11px]">
+          <div className="flex flex-col gap-2 p-2 rounded-lg bg-surface-container-low border border-secondary/20">
+            <span className="text-[10px] uppercase text-secondary font-bold">Cómo juegan (narraciones previas)</span>
+            <TeamNarrativeTrends teamId={m.home._id} teamName={m.home.name} beforeDate={m.date} compact />
+            <TeamNarrativeTrends teamId={m.away._id} teamName={m.away.name} beforeDate={m.date} compact />
+          </div>
           <p className="text-on-surface-variant text-[10px]">
             Goles esperados {m.markets.expectedGoals.home} – {m.markets.expectedGoals.away} · jugadores registrados {m.playersLogged.home} /{" "}
             {m.playersLogged.away}
