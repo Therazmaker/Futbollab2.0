@@ -67,9 +67,8 @@ export const RADAR_RULES = {
 
 /**
  * Mercados con el ataque de cada equipo multiplicado por `factor` (bajas).
- * El 1X2 sale del Poisson con el ataque reducido. Para los goles totales se
- * parte de la frecuencia real de la liga y se le suma el cambio que la baja
- * produce en el Poisson (el total esperado baja en proporción al ataque perdido).
+ * Todo (1X2 y goles) sale del Poisson con el ataque reducido: desde que los
+ * totales salen de la fuerza, una baja ya baja el total esperado por sí sola.
  */
 export function marketsWithAttackFactor(
   home: TeamForMarkets,
@@ -80,23 +79,7 @@ export function marketsWithAttackFactor(
   const base = computeMarkets(home, away, league);
   if (factor.home === 1 && factor.away === 1) return base;
   const adj = (t: TeamForMarkets, f: number) => ({ ...t, attackRating: (t.attackRating ?? 1) * f });
-  const noRates: LeagueForMarkets = { ...league, goalRates: null };
-  const pBase = computeMarkets(home, away, noRates);
-  const { home: lhB, away: laB } = pBase.expectedGoals;
-  const scale = (lhB * factor.home + laB * factor.away) / (lhB + laB);
-  const pAdj = computeMarkets(adj(home, factor.home), adj(away, factor.away), {
-    ...noRates,
-    goalsPerTeam: (league.goalsPerTeam ?? 1.4) * scale,
-  });
-  const clamp01 = (x: number) => +Math.min(0.99, Math.max(0.01, x)).toFixed(3);
-  return {
-    ...pAdj,
-    reliable: base.reliable,
-    over15: clamp01(base.over15 + (pAdj.over15 - pBase.over15)),
-    over25: clamp01(base.over25 + (pAdj.over25 - pBase.over25)),
-    over35: clamp01(base.over35 + (pAdj.over35 - pBase.over35)),
-    btts: clamp01(base.btts + (pAdj.btts - pBase.btts)),
-  };
+  return { ...computeMarkets(adj(home, factor.home), adj(away, factor.away), league), reliable: base.reliable };
 }
 
 export function analyzeRadarMatch(input: RadarInput): RadarAnalysis {

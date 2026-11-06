@@ -4,6 +4,7 @@ import { fitTeamRatings, standings } from "./teamRatings";
 import { currentSeason, previousSeason, seasonOf } from "./season";
 import { recomputeChampions } from "./competitionTable";
 import { leagueGoalRates } from "./markets";
+import { ratingTarget, weightedGoalsPerTeam } from "./xgBlend";
 
 type Db = GenericDatabaseWriter<DataModel>;
 
@@ -47,7 +48,13 @@ export async function recomputeLeague(db: Db, league: string, opts: { season?: s
     awayGoals: r.awayGoals,
     date: r.date,
   }));
-  const { ratings, homeAdvantage, goalsPerTeam } = fitTeamRatings(results);
+  // La fuerza se ajusta a goles + xG (ver lib/xgBlend.ts); la tabla, a los goles reales
+  const targets = unique.map((r) => {
+    const t = ratingTarget(r);
+    return { home: r.homeTeamId as string, away: r.awayTeamId as string, homeGoals: t.home, awayGoals: t.away, date: r.date };
+  });
+  const { ratings, homeAdvantage } = fitTeamRatings(targets);
+  const goalsPerTeam = weightedGoalsPerTeam(results);
   const leagueDoc = await db
     .query("leagues")
     .withIndex("by_code", (q) => q.eq("code", league))

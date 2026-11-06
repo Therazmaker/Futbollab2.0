@@ -125,7 +125,9 @@ describe("Convex: registro, informe e importación", () => {
     const t = convexTest(schema, modules);
     await t.mutation(api.teams.seedInitialCompetitionsAndTeams, {});
     const r1 = await t.action(api.legacy.importLegacyData, {});
-    expect(r1.matches).toBe(1324 + 1249); // 4 ligas del FutbolLab viejo + LaLiga (football-data)
+    // 4 ligas del FutbolLab viejo + 5 ligas de football-data (los repetidos se enriquecen, no se duplican)
+    expect(r1.matches).toBeGreaterThan(5500);
+    expect(r1.enriched).toBe(0);
     expect(r1.teamsLinked).toBeGreaterThanOrEqual(2); // Manchester City e Inter ya existían
     const r2 = await t.action(api.legacy.importLegacyData, {});
     expect(r2.matches).toBe(0);
@@ -134,9 +136,9 @@ describe("Convex: registro, informe e importación", () => {
     const teams = await t.run((ctx) => ctx.db.query("teams").collect());
     const city = teams.filter((x) => x.name === "Manchester City");
     expect(city.length).toBe(1);
-    // El histórico (2025-26) no cuenta para la tabla actual, pero queda como referencia
-    expect(city[0].played).toBeUndefined();
+    // La tabla actual solo cuenta la temporada actual; la anterior queda como referencia
     expect(city[0].lastSeason!.played).toBeGreaterThan(20);
+    expect(city[0].lastSeason!.played).toBeLessThanOrEqual(38);
     expect(city[0].attackRating).toBeGreaterThan(0);
     const rated = teams.filter((x) => x.defenseRating);
     const meanDef = rated.reduce((a, x) => a + x.defenseRating!, 0) / rated.length;
@@ -144,11 +146,19 @@ describe("Convex: registro, informe e importación", () => {
     expect(meanDef).toBeLessThan(1.15);
     const status = await t.query(api.legacy.legacyStatus, {});
     expect(status.importedMatches).toBe(status.availableMatches);
+    expect(status.matchesWithStats).toBe(status.availableWithStats);
     expect(status.needsImport).toBe(false);
+    // Los partidos del histórico viejo recibieron tiros/xG de football-data
+    const withStats = await t.run(async (ctx) => (await ctx.db.query("matches").collect()).filter((m) => m.stats).length);
+    expect(withStats).toBeGreaterThan(5000);
     const villa = teams.filter((x) => x.name === "Aston Villa");
     expect(villa.length).toBe(1);
     expect(villa[0].lastSeason!.points).toBeGreaterThan(30);
-    expect(teams.filter((x) => x.league === "premier").length).toBe(20);
+    // Con 3 temporadas hay más de 20 equipos de Premier en la base (ascensos y descensos),
+    // pero la lista de la liga solo enseña los que juegan esta temporada
+    expect(teams.filter((x) => x.league === "premier").length).toBeGreaterThan(20);
+    const premierList = await t.query(api.teams.getTeams, { league: "premier" });
+    if (premierList.some((x) => (x.played ?? 0) > 0)) expect(premierList.length).toBe(20);
 
     // LaLiga: enlaza con los equipos que ya existían y calcula la temporada actual real
     const madrids = teams.filter((x) => x.name.startsWith("Real Madrid"));
@@ -198,10 +208,10 @@ describe("Convex: flujo equipo → jugador", () => {
     const chelsea = teams.find((x) => x.name === "Chelsea")!;
 
     const profile = await t.query(api.teams.getTeamProfile, { teamId: arsenal._id });
-    expect(profile!.record.total.played).toBe(0); // temporada actual: aún sin partidos
+    expect(profile!.record.total.played).toBe(arsenal.played ?? 0); // solo la temporada actual
     expect(arsenal.lastSeason!.played).toBeGreaterThan(30);
     expect(profile!.squad.length).toBeGreaterThan(10);
-    expect(profile!.table.length).toBe(0);
+    expect([0, 20]).toContain(profile!.table.length);
     expect(profile!.lastTable.length).toBe(20);
     expect(profile!.results[0].date >= profile!.results[profile!.results.length - 1].date).toBe(true);
 
@@ -521,15 +531,16 @@ describe("temporadas", () => {
     const before = await t.run((ctx) => ctx.db.query("teams").collect());
     const arsenal = before.find((x) => x.name === "Arsenal")!;
     const chelsea = before.find((x) => x.name === "Chelsea")!;
-    expect(arsenal.rank).toBeUndefined();
     expect(arsenal.lastSeason!.rank).toBeGreaterThan(0);
+    const p0 = arsenal.played ?? 0;
+    const pts0 = arsenal.points ?? 0;
     await t.mutation(api.teams.addMatchResult, {
       homeTeamId: arsenal._id, awayTeamId: chelsea._id, homeGoals: 2, awayGoals: 0, date: inSeason("10-01"),
     });
     const a = (await t.run((ctx) => ctx.db.get(arsenal._id)))!;
-    expect(a.played).toBe(1);
-    expect(a.points).toBe(3);
-    expect(a.rank).toBe(1);
+    expect(a.played).toBe(p0 + 1);
+    expect(a.points).toBe(pts0 + 3);
+    expect(a.rank).toBeGreaterThan(0);
     expect(a.season).toBe(currentSeason());
     expect(a.lastSeason!.played).toBeGreaterThan(30); // no se mezcla
     // La fuerza sigue entrenada con todo el histórico (+ el partido nuevo)
@@ -591,7 +602,8 @@ describe("Convex: editar partido de equipo", () => {
       competition: "premier", isAway: true, minutesPlayed: 90, rawStats: { totalShots: 2, rating: 7 },
       teamGoals: 4, opponentGoals: 2,
     });
-    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(3);
+    const pts0 = arsenal.points ?? 0;
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points).toBe(pts0 + 3);
 
     // Era de Champions, en casa del Arsenal, y fue el 15
     await t.mutation(api.teams.updateMatch, {
@@ -601,7 +613,7 @@ describe("Convex: editar partido de equipo", () => {
     expect(m.league).toBe("ucl");
     expect(m.homeTeamId).toBe(arsenal._id);
     expect([m.homeGoals, m.awayGoals]).toEqual([4, 2]);
-    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points ?? 0).toBe(0); // ya no cuenta en la Premier
+    expect((await t.run((ctx) => ctx.db.get(arsenal._id)))!.points ?? 0).toBe(pts0); // ya no cuenta en la Premier
     const log = (await t.run((ctx) => ctx.db.get(r.matchLogId)))!;
     expect(log.competition).toBe("ucl");
     expect(log.matchDate).toBe(inSeason("10-15"));
@@ -715,7 +727,7 @@ describe("Champions: clasificación con partidos reales", () => {
     const ucl = await t.query(api.teams.getTeams, { league: "ucl" });
     expect(ucl[0]._id).toBe(psg._id);
     // No toca la tabla de liga
-    expect(p.points ?? 0).toBe(0);
+    expect(p.points ?? 0).toBe(psg.points ?? 0);
   }, 120_000);
 });
 
@@ -741,7 +753,26 @@ describe("Champions: limpieza de datos sembrados", () => {
 import { computeMarkets, fairProbabilities, leagueGoalRates } from "./lib/markets";
 import { analyzeRadarMatch } from "./lib/radar";
 import { fitTeamRatings } from "./lib/teamRatings";
-import legacyMatchesForTest from "../data/legacy/matches.json";
+import fdMatchesForTest from "../data/legacy/fd_matches.json";
+import { ratingTarget, weightedGoalsPerTeam } from "./lib/xgBlend";
+
+/** 1X2 de un Poisson con Dixon-Coles (ρ = −0,1), para comparar con el modelo anterior. */
+function poisson1x2(lh: number, la: number) {
+  const f = (k: number) => (k < 2 ? 1 : k * f(k - 1));
+  const p = (k: number, l: number) => (Math.exp(-l) * l ** k) / f(k);
+  let H = 0, D = 0, A = 0;
+  for (let i = 0; i <= 10; i++)
+    for (let j = 0; j <= 10; j++) {
+      let q = p(i, lh) * p(j, la);
+      if (i === 0 && j === 0) q *= 1 + 0.1 * lh * la;
+      else if (i === 0 && j === 1) q *= 1 - 0.1 * lh;
+      else if (i === 1 && j === 0) q *= 1 - 0.1 * la;
+      else if (i === 1 && j === 1) q *= 1.1;
+      if (i > j) H += q; else if (i === j) D += q; else A += q;
+    }
+  const t = H + D + A;
+  return { home: H / t, draw: D / t, away: A / t };
+}
 
 describe("Radar 2.0", () => {
   test("mercados coherentes y cuotas sin margen", () => {
@@ -775,31 +806,55 @@ describe("Radar 2.0", () => {
     expect(cheap.studyScore).toBeLessThanOrEqual(100);
   });
 
-  test("con el histórico: 1X2 mejora y los goles totales no empeoran frente a la frecuencia de la liga", () => {
-    const rows = (legacyMatchesForTest as any[]).filter((m) => m.league === "premier").sort((a, b) => (a.date < b.date ? -1 : 1));
-    let bH = 0, bHb = 0, bO = 0, bOb = 0, n = 0;
-    for (let i = 120; i < rows.length; i += 3) {
-      const hist = rows.slice(0, i).map((r) => ({ home: r.homeLegacyId, away: r.awayLegacyId, homeGoals: r.homeGoals, awayGoals: r.awayGoals, date: r.date }));
-      const { ratings, homeAdvantage, goalsPerTeam } = fitTeamRatings(hist);
-      const r = rows[i];
-      const h = ratings.get(r.homeLegacyId), a = ratings.get(r.awayLegacyId);
-      if (!h || !a) continue;
-      const mk = computeMarkets(
-        { attackRating: h.attack, defenseRating: h.defense },
-        { attackRating: a.attack, defenseRating: a.defense },
-        { goalsPerTeam, homeAdvantage, goalRates: leagueGoalRates(hist) }
-      );
-      const yH = r.homeGoals > r.awayGoals ? 1 : 0;
-      const yO = r.homeGoals + r.awayGoals > 2 ? 1 : 0;
-      const baseH = hist.filter((x) => x.homeGoals > x.awayGoals).length / hist.length;
-      const baseO = hist.filter((x) => x.homeGoals + x.awayGoals > 2).length / hist.length;
-      bH += (mk.probabilities.home - yH) ** 2; bHb += (baseH - yH) ** 2;
-      bO += (mk.over25 - yO) ** 2; bOb += (baseO - yO) ** 2;
-      n++;
+  test("walk-forward: goles + xG y totales desde la fuerza mejoran al modelo anterior y a la frecuencia de la liga", () => {
+    // Premier y LaLiga de football-data (con tiros/xG), desde 2024-08, sin mirar el futuro
+    const all = fdMatchesForTest as any[];
+    let llNew = 0, llOld = 0, bH = 0, bHb = 0, bO = 0, bOfreq = 0, n = 0;
+    for (const lg of ["premier", "laliga"]) {
+      const rows = all.filter((m) => m.league === lg).sort((a, b) => (a.date < b.date ? -1 : 1));
+      const start = rows.findIndex((r) => r.date >= "2024-08-01");
+      for (let i = start; i < rows.length; i += 20) {
+        const hist = rows.slice(0, i);
+        const goalsRows = hist.map((r) => ({ home: r.homeLegacyId, away: r.awayLegacyId, homeGoals: r.homeGoals, awayGoals: r.awayGoals, date: r.date }));
+        const blendRows = hist.map((r) => {
+          const t = ratingTarget(r);
+          return { home: r.homeLegacyId, away: r.awayLegacyId, homeGoals: t.home, awayGoals: t.away, date: r.date };
+        });
+        const old = fitTeamRatings(goalsRows);
+        const neu = fitTeamRatings(blendRows);
+        const gpt = weightedGoalsPerTeam(goalsRows);
+        const rates = leagueGoalRates(goalsRows)!;
+        for (const r of rows.slice(i, i + 20)) {
+          const ho = old.ratings.get(r.homeLegacyId), ao = old.ratings.get(r.awayLegacyId);
+          const hn = neu.ratings.get(r.homeLegacyId), an = neu.ratings.get(r.awayLegacyId);
+          if (!ho || !ao || !hn || !an) continue;
+          const mk = computeMarkets(
+            { attackRating: hn.attack, defenseRating: hn.defense },
+            { attackRating: an.attack, defenseRating: an.defense },
+            { goalsPerTeam: gpt, homeAdvantage: neu.homeAdvantage }
+          );
+          // Modelo anterior: solo goles y total = media de la liga
+          const share = (x: any, y: any, ha: number) => (ha * x.attack * y.defense) / (ha * x.attack * y.defense + y.attack * x.defense);
+          const s = share(ho, ao, old.homeAdvantage);
+          const T = old.goalsPerTeam * (old.homeAdvantage + 1);
+          const pOld = poisson1x2(T * s, T * (1 - s));
+          const out = r.homeGoals > r.awayGoals ? "home" : r.homeGoals === r.awayGoals ? "draw" : "away";
+          llNew += -Math.log(mk.probabilities[out]);
+          llOld += -Math.log(pOld[out]);
+          const yH = out === "home" ? 1 : 0;
+          const yO = r.homeGoals + r.awayGoals > 2 ? 1 : 0;
+          bH += (mk.probabilities.home - yH) ** 2;
+          bHb += ((rates.homeWin ?? 0.45) - yH) ** 2;
+          bO += (mk.over25 - yO) ** 2;
+          bOfreq += (rates.over25 - yO) ** 2;
+          n++;
+        }
+      }
     }
-    expect(n).toBeGreaterThan(50);
-    expect(bH).toBeLessThan(bHb * 0.95); // ≥ 5 % mejor en "gana local"
-    expect(bO).toBeLessThan(bOb * 1.02); // +2.5 no peor que la frecuencia (±2 %)
+    expect(n).toBeGreaterThan(1000);
+    expect(llNew).toBeLessThan(llOld); // 1X2: mejor que el modelo anterior
+    expect(bH).toBeLessThan(bHb * 0.95); // ≥ 5 % mejor que la frecuencia en "gana local"
+    expect(bO).toBeLessThan(bOfreq); // +2.5: mejor que la frecuencia de la liga
   });
 
   test("Convex: programar, cuotas, bajas y resultado en el Radar", async () => {
@@ -842,7 +897,7 @@ describe("Radar: capa de jugadores", () => {
     expect(hit.probabilities.away).toBeGreaterThan(base.probabilities.away);
     expect(hit.over25).toBeLessThan(base.over25);
     expect(hit.probabilities.home + hit.probabilities.draw + hit.probabilities.away).toBeCloseTo(1, 2);
-    expect(base.over25).toBe(0.5); // sin bajas = frecuencia de la liga
+    expect(base.over25).toBeGreaterThan(0.4); // sale de la fuerza de los equipos (no de la frecuencia)
   });
 
   test("Convex: el lesionado resta ataque y los disponibles salen con sus probabilidades", async () => {

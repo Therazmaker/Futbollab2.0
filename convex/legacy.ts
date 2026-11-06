@@ -11,16 +11,29 @@ import legacyLeagues from "../data/legacy/leagues.json";
 import legacyTeams from "../data/legacy/teams.json";
 import legacyMatches from "../data/legacy/matches.json";
 import legacyPlayers from "../data/legacy/players.json";
-import laligaTeams from "../data/legacy/laliga_teams.json";
-import laligaMatches from "../data/legacy/laliga_matches.json";
+import fdTeams from "../data/legacy/fd_teams.json";
+import fdMatches from "../data/legacy/fd_matches.json";
 
-// LaLiga no estaba en el FutbolLab viejo: viene de football-data.co.uk
-// (scripts/legacy/build_laliga.py), desde 2023-24 hasta la jornada más reciente.
-const ALL_TEAMS: Array<{ legacyId: string; name: string; league: string; mergedLegacyIds?: string[]; aliases?: string[] }> = [
-  ...legacyTeams,
-  ...laligaTeams,
-];
-const ALL_MATCHES = [...legacyMatches, ...laligaMatches];
+// football-data.co.uk (scripts/legacy/build_footballdata.py): 5 ligas desde 2023-24
+// hasta la jornada más reciente, con tiros, xG y cuotas de cierre. Los partidos
+// que ya estaban en el histórico viejo llevan su mismo legacyId: se enriquecen.
+type TeamRow = { legacyId: string; name: string; league: string; mergedLegacyIds?: string[]; aliases?: string[] };
+type MatchRow = {
+  legacyId: string;
+  league: string;
+  date: string;
+  homeLegacyId: string;
+  awayLegacyId: string;
+  homeGoals: number;
+  awayGoals: number;
+  stats?: { hs: number; as: number; hst: number; ast: number; hxg?: number; axg?: number };
+  closingOdds?: { home: number; draw: number; away: number; over25?: number; under25?: number };
+};
+const ALL_TEAMS: TeamRow[] = [...legacyTeams, ...(fdTeams as TeamRow[])];
+const ALL_MATCHES: MatchRow[] = Array.from(
+  new Map<string, MatchRow>([...(legacyMatches as MatchRow[]), ...(fdMatches as MatchRow[])].map((m) => [m.legacyId, m])).values()
+);
+const WITH_STATS = ALL_MATCHES.filter((m) => m.stats).length;
 
 /**
  * Importa el histórico del FutbolLab viejo (data/legacy/*.json, generado con
@@ -180,12 +193,19 @@ export const importMatchesChunk = internalMutation({
         awayLegacyId: v.string(),
         homeGoals: v.number(),
         awayGoals: v.number(),
+        stats: v.optional(
+          v.object({ hs: v.number(), as: v.number(), hst: v.number(), ast: v.number(), hxg: v.optional(v.number()), axg: v.optional(v.number()) })
+        ),
+        closingOdds: v.optional(
+          v.object({ home: v.number(), draw: v.number(), away: v.number(), over25: v.optional(v.number()), under25: v.optional(v.number()) })
+        ),
       })
     ),
   },
   handler: async (ctx, { matches }) => {
     let inserted = 0;
     let skipped = 0;
+    let enriched = 0;
     const cache = new Map<string, Id<"teams"> | null>();
     const resolve = async (legacyId: string) => {
       if (!cache.has(legacyId)) cache.set(legacyId, (await teamByLegacyId(ctx.db, legacyId))?._id ?? null);
@@ -198,7 +218,16 @@ export const importMatchesChunk = internalMutation({
         .first();
       const home = await resolve(m.homeLegacyId);
       const away = await resolve(m.awayLegacyId);
-      if (exists || !home || !away) {
+      const extra = { ...(m.stats ? { stats: m.stats } : {}), ...(m.closingOdds ? { closingOdds: m.closingOdds } : {}) };
+      if (exists) {
+        // Ya importado: solo se le añaden las estadísticas si le faltan
+        if ((m.stats && !exists.stats) || (m.closingOdds && !exists.closingOdds)) {
+          await ctx.db.patch(exists._id, extra);
+          enriched++;
+        } else skipped++;
+        continue;
+      }
+      if (!home || !away) {
         skipped++;
         continue;
       }
@@ -217,6 +246,7 @@ export const importMatchesChunk = internalMutation({
         await ctx.db.patch(manual._id, {
           legacyId: m.legacyId,
           league: m.league,
+          ...extra,
           ...(noScore ? { homeGoals: m.homeGoals, awayGoals: m.awayGoals } : {}),
         });
         inserted++;
@@ -230,10 +260,11 @@ export const importMatchesChunk = internalMutation({
         awayTeamId: away,
         homeGoals: m.homeGoals,
         awayGoals: m.awayGoals,
+        ...extra,
       });
       inserted++;
     }
-    return { inserted, skipped };
+    return { inserted, skipped, enriched };
   },
 });
 
@@ -318,11 +349,14 @@ export const legacyStatus = query({
         if (dup) duplicateTeams++;
       }
     }
+    const withStats = imported.filter((m) => m.stats).length;
     return {
       importedMatches: imported.length,
       availableMatches: ALL_MATCHES.length,
+      matchesWithStats: withStats,
+      availableWithStats: WITH_STATS,
       duplicateTeams,
-      needsImport: imported.length < ALL_MATCHES.length || duplicateTeams > 0,
+      needsImport: imported.length < ALL_MATCHES.length || withStats < WITH_STATS || duplicateTeams > 0,
     };
   },
 });
@@ -337,7 +371,7 @@ function chunks<T>(rows: T[], size: number): T[][] {
 export const importLegacyData = action({
   args: {},
   handler: async (ctx) => {
-    const report = { teamsCreated: 0, teamsLinked: 0, teamsMerged: 0, matches: 0, players: 0, leagues: legacyLeagues.length };
+    const report = { teamsCreated: 0, teamsLinked: 0, teamsMerged: 0, matches: 0, enriched: 0, players: 0, leagues: legacyLeagues.length };
     for (const part of chunks(ALL_TEAMS, 100)) {
       const r = await ctx.runMutation(internal.legacy.importTeamsChunk, { teams: part });
       report.teamsCreated += r.created;
@@ -347,6 +381,7 @@ export const importLegacyData = action({
     for (const part of chunks(ALL_MATCHES, 200)) {
       const r = await ctx.runMutation(internal.legacy.importMatchesChunk, { matches: part });
       report.matches += r.inserted;
+      report.enriched += r.enriched;
     }
     for (const part of chunks(legacyPlayers, 150)) {
       const r = await ctx.runMutation(internal.legacy.importPlayersChunk, { players: part });

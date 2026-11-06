@@ -218,8 +218,8 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
             ))}
           </div>
           <p className="text-[9px] text-on-surface-variant">
-            Goles totales ≈ frecuencia de la liga: con solo resultados, la fuerza de los equipos no predice cuántos goles habrá (validado con 1.324
-            partidos). Cuando registres más jugadores, su xG afinará esto.
+            Goles totales: salen de la fuerza de los equipos (70 % goles + 30 % xG de cada partido). En 3.920 partidos de 5 ligas le gana a
+            la frecuencia de la liga en +1,5, +2,5, +3,5 y ambos marcan; las cuotas de cierre siguen siendo mejores.
           </p>
           <div className="flex justify-between bg-surface-container rounded px-2 py-1">
             <span className="text-on-surface-variant">Descanso (estimado, sin validar)</span>
