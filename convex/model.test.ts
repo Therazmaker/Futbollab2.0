@@ -813,3 +813,55 @@ describe("Radar 2.0", () => {
     expect(after[0].result!.outcome).toBe("draw");
   }, 180_000);
 });
+
+import { marketsWithAttackFactor } from "./lib/radar";
+
+describe("Radar: capa de jugadores", () => {
+  test("una baja en el ataque del local baja su victoria y los goles", () => {
+    const home = { attackRating: 1.2, defenseRating: 0.9 };
+    const away = { attackRating: 1.0, defenseRating: 1.0 };
+    const league = { goalsPerTeam: 1.4, homeAdvantage: 1.15, goalRates: { over15: 0.75, over25: 0.5, over35: 0.26, btts: 0.5 } };
+    const base = marketsWithAttackFactor(home, away, league, { home: 1, away: 1 });
+    const hit = marketsWithAttackFactor(home, away, league, { home: 0.8, away: 1 });
+    expect(hit.probabilities.home).toBeLessThan(base.probabilities.home);
+    expect(hit.probabilities.away).toBeGreaterThan(base.probabilities.away);
+    expect(hit.over25).toBeLessThan(base.over25);
+    expect(hit.probabilities.home + hit.probabilities.draw + hit.probabilities.away).toBeCloseTo(1, 2);
+    expect(base.over25).toBe(0.5); // sin bajas = frecuencia de la liga
+  });
+
+  test("Convex: el lesionado resta ataque y los disponibles salen con sus probabilidades", async () => {
+    const t = convexTest(schema, modules);
+    await t.action(api.legacy.importLegacyData, {});
+    const teams = await t.run((ctx) => ctx.db.query("teams").collect());
+    const arsenal = teams.find((x) => x.name === "Arsenal")!;
+    const chelsea = teams.find((x) => x.name === "Chelsea")!;
+    const star = await t.mutation(api.players.createPlayer, { teamId: arsenal._id, name: "Estrella", position: "FW" });
+    const mate = await t.mutation(api.players.createPlayer, { teamId: arsenal._id, name: "Compañero", position: "MF" });
+    for (let k = 0; k < 5; k++) {
+      for (const [pid, xg] of [[star, 0.7], [mate, 0.15]] as const) {
+        await t.mutation(api.predictions.recordMatchAndCalibrate, {
+          playerId: pid, matchDate: `2099-01-0${k + 1}`, opponent: "Chelsea", opponentTeamId: chelsea._id,
+          isAway: false, minutesPlayed: 90, rawStats: { totalShots: 3, xG: xg, rating: 7.2 },
+        });
+      }
+    }
+    const d = "2099-02-01";
+    await t.mutation(api.radar.addRadarMatch, { homeTeamId: arsenal._id, awayTeamId: chelsea._id, date: d, competition: "premier" });
+    const before = (await t.query(api.radar.getRadar, { fromDate: d, toDate: d }))[0];
+    expect(before.players.home.list.map((p: any) => p.name)).toContain("Estrella");
+    const starProp = before.players.home.list.find((p: any) => p.name === "Estrella")!;
+    expect(starProp.pScore).toBeGreaterThan(0.2);
+    expect(starProp.pShot1).toBeGreaterThan(0.5);
+    expect(before.baseMarkets).toBeNull();
+
+    await t.mutation(api.players.reportInjury, { playerId: star, startDate: "2099-01-20" });
+    const after = (await t.query(api.radar.getRadar, { fromDate: d, toDate: d }))[0];
+    expect(after.players.home.absent[0].name).toBe("Estrella");
+    expect(after.players.home.absent[0].xgPerMatch).toBeGreaterThan(0.3);
+    expect(after.attackFactor.home).toBeLessThan(1);
+    expect(after.markets.probabilities.home).toBeLessThan(after.baseMarkets!.probabilities.home);
+    expect(after.flags.find((f: any) => f.code === "BAJAS_LOCAL")!.label).toMatch(/ataque/);
+    expect(after.players.home.list.map((p: any) => p.name)).not.toContain("Estrella");
+  }, 180_000);
+});

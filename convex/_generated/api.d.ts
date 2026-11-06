@@ -14,6 +14,7 @@ import type * as lib_engine from "../lib/engine.js";
 import type * as lib_leagueTable from "../lib/leagueTable.js";
 import type * as lib_markets from "../lib/markets.js";
 import type * as lib_noLeague from "../lib/noLeague.js";
+import type * as lib_playerLayer from "../lib/playerLayer.js";
 import type * as lib_playerModel from "../lib/playerModel.js";
 import type * as lib_radar from "../lib/radar.js";
 import type * as lib_ratingModel from "../lib/ratingModel.js";
@@ -39,6 +40,7 @@ declare const fullApi: ApiFromModules<{
   "lib/leagueTable": typeof lib_leagueTable;
   "lib/markets": typeof lib_markets;
   "lib/noLeague": typeof lib_noLeague;
+  "lib/playerLayer": typeof lib_playerLayer;
   "lib/playerModel": typeof lib_playerModel;
   "lib/radar": typeof lib_radar;
   "lib/ratingModel": typeof lib_ratingModel;

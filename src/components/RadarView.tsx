@@ -139,6 +139,12 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
           {pct(P.away)}
         </div>
       </div>
+      {m.baseMarkets && (
+        <p className="mt-1 font-mono text-[10px] text-error">
+          Con las bajas. Sin ellas: 1 {pct(m.baseMarkets.probabilities.home)} · X {pct(m.baseMarkets.probabilities.draw)} · 2{" "}
+          {pct(m.baseMarkets.probabilities.away)}
+        </p>
+      )}
       {m.fair && (
         <div className="grid grid-cols-3 gap-1 mt-1 font-mono text-[10px] text-center">
           {outcomes.map(([k, label]) => {
@@ -195,8 +201,8 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
               ["Más de 2.5", m.markets.over25],
               ["Más de 3.5", m.markets.over35],
               ["Ambos marcan", m.markets.btts],
-              [`${m.home.name} a cero`, m.markets.homeCleanSheet],
-              [`${m.away.name} a cero`, m.markets.awayCleanSheet],
+              [`${m.home.name}: portería a cero`, m.markets.homeCleanSheet],
+              [`${m.away.name}: portería a cero`, m.markets.awayCleanSheet],
             ].map(([label, p]) => (
               <div key={label as string} className="flex justify-between bg-surface-container rounded px-2 py-1">
                 <span className="text-on-surface-variant truncate">{label}</span>
@@ -216,6 +222,67 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
           </div>
           <p className="text-on-surface-variant">
             Marcadores más probables: {m.markets.topScores.map((s: any) => `${s.home}-${s.away} (${pct(s.p)})`).join(" · ")}
+          </p>
+          {(["home", "away"] as const).map((side) => {
+            const layer = m.players?.[side];
+            const teamName = m[side].name;
+            if (!layer) return null;
+            return (
+              <div key={side} className="flex flex-col gap-1 border-t border-surface-container-high pt-2">
+                <div className="flex justify-between">
+                  <span className="text-on-surface font-bold">{teamName}: jugadores</span>
+                  <span className="text-[9px] text-on-surface-variant">
+                    xG de sus jugadores {layer.playersXg} · cubren {pct(layer.coverage)} del equipo
+                  </span>
+                </div>
+                {layer.list.length === 0 ? (
+                  <p className="text-[10px] text-on-surface-variant">Sin jugadores con partidos registrados.</p>
+                ) : (
+                  <table className="w-full text-[10px]">
+                    <thead>
+                      <tr className="text-on-surface-variant">
+                        <th className="text-left font-normal">Jugador</th>
+                        <th className="text-right font-normal">Min</th>
+                        <th className="text-right font-normal">xG</th>
+                        <th className="text-right font-normal">Marca</th>
+                        <th className="text-right font-normal">≥1 tiro</th>
+                        <th className="text-right font-normal">≥2</th>
+                        <th className="text-right font-normal">Nota</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {layer.list.map((p: any) => (
+                        <tr key={p.playerId} className="border-t border-surface-container-high/40">
+                          <td className="py-0.5 text-on-surface truncate max-w-[120px]">
+                            {p.name}
+                            {p.returning && <span className="text-amber-300" title="Vuelve de lesión"> ↺</span>}
+                            {p.ownMatches < 4 && <span className="text-on-surface-variant" title="Pocos partidos propios: pesa la base de su posición"> ·</span>}
+                          </td>
+                          <td className="text-right">{p.minutes}&apos;</td>
+                          <td className="text-right">{p.xG}</td>
+                          <td className="text-right text-primary font-bold">{pct(p.pScore)}</td>
+                          <td className="text-right">{pct(p.pShot1)}</td>
+                          <td className="text-right">{pct(p.pShot2)}</td>
+                          <td className="text-right">{p.rating ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+                {layer.absent.length > 0 && (
+                  <p className="text-[10px] text-error">
+                    Bajas:{" "}
+                    {layer.absent
+                      .map((a: any) => `${a.name}${a.xgPerMatch !== null ? ` (${a.xgPerMatch} xG/partido)` : ""}${a.expectedReturn ? `, vuelve ${a.expectedReturn}` : ""}`)
+                      .join(" · ")}
+                  </p>
+                )}
+              </div>
+            );
+          })}
+          <p className="text-[9px] text-on-surface-variant">
+            "Marca" = 1 − e^(−xG) (a largo plazo, un gol por cada xG). Las bajas restan la mitad de su xG al ataque del equipo (el sustituto cubre
+            el resto; suposición sin validar todavía). ↺ = vuelve de lesión.
           </p>
           <p className="text-[9px] text-on-surface-variant">
             Study Score = incertidumbre {pct(m.studyParts.uncertainty)}
