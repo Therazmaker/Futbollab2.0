@@ -121,3 +121,56 @@ export function parseResults(text: string, defaultDate: string): { rows: ParsedR
   flushBlock();
   return { rows, skipped };
 }
+
+export interface ParsedFixture {
+  date: string;
+  home: string;
+  away: string;
+}
+
+/**
+ * Próximos partidos pegados (sin marcador):
+ *   2026-11-25 Real Madrid - Liverpool
+ *   25/11 21:00 Inter vs Barcelona
+ *   Bloques: [fecha] / local / visitante   (FlashScore, Sofascore)
+ */
+export function parseFixtures(text: string, defaultDate: string): { rows: ParsedFixture[]; skipped: string[] } {
+  const year = Number(defaultDate.slice(0, 4)) || new Date().getFullYear();
+  const rows: ParsedFixture[] = [];
+  const skipped: string[] = [];
+  let date = defaultDate;
+  let names: string[] = [];
+  const flush = () => {
+    if (names.length === 1) skipped.push(names[0]);
+    names = [];
+  };
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.replace(/ /g, " ").trim();
+    if (!line) continue;
+    let rest = line;
+    const dm = line.match(DATE_PREFIX);
+    if (dm) {
+      const d = parseDate(dm[1] + " ", year);
+      if (d) {
+        flush();
+        date = d;
+        rest = line.slice(dm[0].length).trim();
+        if (!rest) continue;
+      }
+    }
+    if (NOISE.test(rest) || /^\d{1,2}$/.test(rest) || /^-$/.test(rest)) continue;
+    const one = rest.match(/^(.+?)\s+(?:-|–|vs\.?|v)\s+(.+)$/i);
+    if (one && !/\d+\s*[-:–]\s*\d+/.test(rest)) {
+      flush();
+      rows.push({ date, home: one[1].trim(), away: one[2].trim() });
+      continue;
+    }
+    names.push(rest);
+    if (names.length === 2) {
+      rows.push({ date, home: names[0], away: names[1] });
+      names = [];
+    }
+  }
+  flush();
+  return { rows, skipped };
+}

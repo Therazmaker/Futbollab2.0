@@ -106,7 +106,8 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
       const r = await refreshFd({});
       setFdState(
         `Temporada ${r.season}: ${r.inserted} partidos nuevos, ${r.enriched} con tiros/xG o cuotas de cierre añadidos (${r.rows} leídos).` +
-          (r.leagues.length ? ` Fuerza recalculada en: ${r.leagues.join(", ")}.` : " No había nada nuevo.") +
+          (r.leagues.length ? ` Fuerza recalculada en: ${r.leagues.join(", ")}.` : " Sin resultados nuevos.") +
+          (r.fixtures ? ` Próximos partidos: ${r.fixtures.created} nuevos, ${r.fixtures.updated} con cuota media actualizada (${r.fixtures.read} en la semana).` : "") +
           (r.unknownTeams.length ? ` ⚠ Equipos que no reconozco: ${r.unknownTeams.join(", ")}.` : "") +
           (r.errors.length ? ` ⚠ Errores: ${r.errors.join("; ")}.` : "")
       );
