@@ -307,9 +307,17 @@ function PickList({ rows }: { rows: any[] }) {
             <div className="text-on-surface truncate">
               {r.home} – {r.away} {r.score ? <span className="text-on-surface-variant">· {r.score}</span> : null}
             </div>
-            <div className="text-on-surface-variant truncate">
+            <div className="text-on-surface-variant leading-snug">
               {r.date} · {r.label}
               {r.odds ? ` @${r.odds}` : ""}
+              {r.confidence !== null ? (
+                <>
+                  {" · "}
+                  <span className="text-on-surface">
+                    {r.source === "ai" ? "IA" : "tu confianza"} {pct(r.confidence)}
+                  </span>
+                </>
+              ) : null}
               {r.systemProb !== null ? ` · Radar ${pct(r.systemProb)}` : ""}
             </div>
           </div>
