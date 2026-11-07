@@ -1,7 +1,7 @@
 import type { GenericDatabaseReader } from "convex/server";
 import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { analyzeRadarMatch } from "./radar";
-import { buildTeamPlayerLayer, LayerCaches, newLayerCaches } from "./playerLayer";
+import { buildTeamPlayerLayer, LayerCaches, newLayerCaches, relevantPlayers } from "./playerLayer";
 import { loadRatingParams } from "./ratingStore";
 import { RatingParams, teamStrength } from "./ratingModel";
 import { computeMarkets } from "./markets";
@@ -18,7 +18,7 @@ export interface RadarContext {
 }
 
 export async function newRadarContext(db: Reader): Promise<RadarContext> {
-  return { teams: new Map(), leagues: new Map(), layer: newLayerCaches(), ratingParams: await loadRatingParams(db) };
+  return { teams: new Map(), leagues: new Map(), layer: newLayerCaches(await relevantPlayers(db)), ratingParams: await loadRatingParams(db) };
 }
 
 /** Análisis completo de un partido para el Radar (equipos, mercados, cuotas, alertas, jugadores). */
