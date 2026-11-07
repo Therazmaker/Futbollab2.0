@@ -511,3 +511,10 @@ describe("próximos partidos", () => {
     expect((await t.mutation(api.results.addFixturesBulk, { competition: "ucl", rows: [{ date: "2026-11-25", home: "Real Madrid", away: "Valencia" }] })).existing).toBe(1);
   });
 });
+
+describe("despliegue", () => {
+  test("las tareas programadas cargan (Convex rechaza nombres no ASCII)", async () => {
+    const mod = await import("./crons");
+    expect(Object.keys((mod.default as any).crons)).toEqual(["actualizar-jornadas-manana", "actualizar-jornadas-noche"]);
+  });
+});
