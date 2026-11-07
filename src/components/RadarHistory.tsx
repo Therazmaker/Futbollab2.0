@@ -77,7 +77,7 @@ export function RadarHistory({ competition }: { competition: string }) {
         </>
       )}
 
-      {data.previewSignals.length > 0 && <PreviewSignals rows={data.previewSignals} />}
+      {data.previewSignals.length > 0 && <PreviewSignals rows={data.previewSignals} previews={data.previews} />}
 
       {data.rows.length > 0 && <PickList rows={data.rows} />}
     </div>
@@ -272,23 +272,95 @@ function Calibration({ rows }: { rows: any[] }) {
   );
 }
 
-function PreviewSignals({ rows }: { rows: any[] }) {
+/** Qué dice cada señal de la previa y qué cuenta como acierto. */
+const SIGNAL_INFO: Record<string, { says: string; event: string; icon: string }> = {
+  draw_high: { says: "La previa pinta un partido cerrado, de empate", event: "acabó en empate", icon: "🤝" },
+  upset_high: { says: "La previa ve motivos para una sorpresa", event: "el no favorito no perdió", icon: "⚡" },
+  narr_home: { says: "El relato de la previa favorece al local", event: "ganó el local", icon: "🏠" },
+  narr_away: { says: "El relato de la previa favorece al visitante", event: "ganó el visitante", icon: "✈️" },
+  emotional_high: { says: "La previa habla de mucha tensión (derbi, presión, crisis…)", event: "hubo más de 2,5 goles", icon: "🔥" },
+};
+const MIN_SAMPLE = 30;
+
+function signalVerdict(r: any): { text: string; cls: string } {
+  if (!r.nActive) return { text: "Aún no ha salido en ninguna previa.", cls: "text-on-surface-variant" };
+  if (r.nActive < 10) return { text: `Con ${r.nActive} ${r.nActive === 1 ? "partido" : "partidos"} todavía no dice nada: es pura suerte.`, cls: "text-on-surface-variant" };
+  if (r.marketActive === null) return { text: "Sin cuotas para comparar con el mercado.", cls: "text-on-surface-variant" };
+  if (r.ciActive.low > r.marketActive) return { text: "Va por encima de lo que espera el mercado: señal prometedora.", cls: "text-primary" };
+  if (r.ciActive.high < r.marketActive) return { text: "Sale menos de lo que espera el mercado: esta señal engaña.", cls: "text-error" };
+  return {
+    text: r.nActive < MIN_SAMPLE ? "Por ahora parecido al mercado; faltan partidos para decidir." : "Igual que el mercado: el mercado ya lo ve.",
+    cls: "text-on-surface-variant",
+  };
+}
+
+export function PreviewSignals({ rows, previews }: { rows: any[]; previews: number }) {
+  const sorted = [...rows].sort((a, b) => b.nActive - a.nActive);
+  const ready = sorted.filter((r) => r.nActive >= MIN_SAMPLE).length;
   return (
-    <div className={card}>
-      <p className="text-on-surface font-bold mb-1">🔬 Poder predictivo de la previa</p>
-      <div className="flex flex-col gap-1">
-        {rows.map((r) => (
-          <div key={r.key} className="border-b border-surface-container-high/40 pb-1">
-            <div className="text-on-surface">{r.label}</div>
-            <div className="text-[10px] text-on-surface-variant">
-              activa: {pct(r.rateActive)} ({r.nActive}){r.marketActive !== null ? ` · mercado esperaba ${pct(r.marketActive)}` : ""} · sin ella:{" "}
-              {pct(r.rateRest)} ({r.nRest})
-            </div>
-          </div>
-        ))}
+    <div className={`${card} flex flex-col gap-3`}>
+      <div>
+        <p className="text-on-surface font-bold text-sm font-sans">🔬 ¿Acierta la previa?</p>
+        <p className="text-[10px] text-on-surface-variant mt-0.5 leading-snug">
+          Cada vez que pegas una previa, la IA marca señales (empate, sorpresa, a quién favorece el relato…). Aquí se mira si, cuando la previa lo
+          dice, pasa <b className="text-on-surface">más de lo que ya esperaba el mercado</b>. Si pasa lo mismo, la previa no te dice nada que las
+          cuotas no supieran.
+        </p>
+        <p className="text-[10px] text-on-surface mt-1">
+          {previews} {previews === 1 ? "previa guardada" : "previas guardadas"} ·{" "}
+          {ready ? `${ready} señal${ready === 1 ? "" : "es"} con muestra suficiente` : `hacen falta ~${MIN_SAMPLE} partidos por señal para fiarse`}
+        </p>
       </div>
-      <p className="text-[9px] text-on-surface-variant mt-1">
-        Una señal sirve si, cuando está activa, el resultado sale más que lo que el mercado esperaba. Con menos de ~30 casos, aún no se puede afirmar.
+      {sorted.map((r) => {
+        const info = SIGNAL_INFO[r.key] ?? { says: r.label, event: "pasó", icon: "•" };
+        const v = signalVerdict(r);
+        const hits = r.rateActive !== null ? Math.round(r.rateActive * r.nActive) : 0;
+        return (
+          <div key={r.key} className="flex flex-col gap-1 border-t border-surface-container-high/50 pt-2">
+            <p className="text-on-surface text-[12px] font-sans leading-snug">
+              {info.icon} {info.says}
+            </p>
+            {r.nActive ? (
+              <>
+                <p className="text-[10px] text-on-surface-variant">
+                  ¿{info.event.charAt(0).toUpperCase() + info.event.slice(1)}? <b className="text-on-surface">{hits} de {r.nActive}</b> ({pct(r.rateActive)})
+                  {r.marketActive !== null ? (
+                    <>
+                      {" "}
+                      · el mercado esperaba <b className="text-on-surface">{pct(r.marketActive)}</b>
+                    </>
+                  ) : null}
+                </p>
+                {/* Barra: lo que pasó; raya blanca: lo que esperaba el mercado */}
+                <div className="relative h-2 rounded bg-surface-container" title={`Margen 90 %: ${pct(r.ciActive.low)}–${pct(r.ciActive.high)}`}>
+                  <div className="absolute inset-y-0 rounded bg-surface-container-highest" style={{ left: `${r.ciActive.low * 100}%`, width: `${(r.ciActive.high - r.ciActive.low) * 100}%` }} />
+                  <div className="absolute inset-y-0 left-0 rounded" style={{ width: `${Math.max(2, (r.rateActive ?? 0) * 100)}%`, background: SERIES.ai.color }} />
+                  {r.marketActive !== null && (
+                    <div className="absolute -top-0.5 -bottom-0.5 w-[2px] bg-on-surface rounded" style={{ left: `calc(${r.marketActive * 100}% - 1px)` }} />
+                  )}
+                </div>
+              </>
+            ) : null}
+            <p className={`text-[10px] leading-snug ${v.cls}`}>{v.text}</p>
+            <div className="flex items-center gap-2 text-[9px] text-on-surface-variant">
+              <div className="flex-1 h-1 rounded bg-surface-container overflow-hidden">
+                <div className="h-full bg-secondary/60" style={{ width: `${Math.min(100, (r.nActive / MIN_SAMPLE) * 100)}%` }} />
+              </div>
+              <span>
+                {Math.min(r.nActive, MIN_SAMPLE)}/{MIN_SAMPLE} para fiarse
+              </span>
+            </div>
+            {r.nRest >= 5 && (
+              <p className="text-[9px] text-on-surface-variant">
+                En las previas que no lo decían: {info.event} {pct(r.rateRest)} de {r.nRest}.
+              </p>
+            )}
+          </div>
+        );
+      })}
+      <p className="text-[9px] text-on-surface-variant leading-snug">
+        Barra azul = cuántas veces pasó · zona gris = margen de error · raya blanca = lo que esperaba el mercado. Una señal vale la pena cuando la
+        barra (y su margen) queda claramente a la derecha de la raya.
       </p>
     </div>
   );
