@@ -7,6 +7,6 @@ import { internal } from "./_generated/api";
  * día, en horas sin partidos (UTC).
  */
 const crons = cronJobs();
-crons.cron("actualizar jornadas (mañana)", "17 6 * * *", internal.footballData.refreshScheduled, {});
-crons.cron("actualizar jornadas (noche)", "47 23 * * *", internal.footballData.refreshScheduled, {});
+crons.cron("actualizar-jornadas-manana", "17 6 * * *", internal.footballData.refreshScheduled, {});
+crons.cron("actualizar-jornadas-noche", "47 23 * * *", internal.footballData.refreshScheduled, {});
 export default crons;
