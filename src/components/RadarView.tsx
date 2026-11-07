@@ -459,6 +459,19 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
   const rows = useQuery(api.radar.getRadar, { fromDate, toDate, competition });
   const ruleHits = useQuery(api.rules.ruleHits, { fromDate, toDate }) ?? {};
   const [onlyRules, setOnlyRules] = useState(false);
+  // Terminados plegados por defecto (se recuerda en este navegador)
+  const [showFinished, setShowFinished] = useState(false);
+  useEffect(() => {
+    try {
+      setShowFinished(localStorage.getItem("radar.showFinished") === "1");
+    } catch {}
+  }, []);
+  const toggleFinished = (v: boolean) => {
+    setShowFinished(v);
+    try {
+      localStorage.setItem("radar.showFinished", v ? "1" : "0");
+    } catch {}
+  };
 
   // Foto previa de los partidos sin marcador que se están viendo (para el entrenamiento)
   useEffect(() => {
@@ -606,9 +619,39 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
           No hay partidos en estas fechas. Prográmalos con "+ Partido" aquí o con "+ Próximo" en el perfil de cada equipo.
         </div>
       ) : (
-        sorted
-          .filter((m) => !onlyRules || (ruleHits as any)[m._id]?.length)
-          .map((m) => <RadarCard key={m._id} m={m} onOpenTeam={onOpenTeam} hits={(ruleHits as any)[m._id] ?? []} />)
+        <>
+          {(() => {
+            const visible = sorted.filter((m) => !onlyRules || (ruleHits as any)[m._id]?.length);
+            const pending = visible.filter((m) => !m.result);
+            const finished = visible.filter((m) => m.result);
+            return (
+              <>
+                {pending.length === 0 && finished.length > 0 && (
+                  <p className="font-mono text-[11px] text-on-surface-variant px-1">No queda ningún partido por jugar en estas fechas.</p>
+                )}
+                {pending.map((m) => (
+                  <RadarCard key={m._id} m={m} onOpenTeam={onOpenTeam} hits={(ruleHits as any)[m._id] ?? []} />
+                ))}
+                {finished.length > 0 && (
+                  <button
+                    onClick={() => toggleFinished(!showFinished)}
+                    className="flex items-center justify-between px-3 h-9 rounded-xl bg-surface-container border border-surface-container-high font-mono text-[11px] text-on-surface-variant"
+                  >
+                    <span>
+                      ✓ Terminados ({finished.length})
+                      {finished.some((m) => m.result && mostLikely(m.markets.probabilities) === m.result.outcome)
+                        ? ` · acertó el más probable en ${finished.filter((m) => mostLikely(m.markets.probabilities) === m.result!.outcome).length}`
+                        : ""}
+                    </span>
+                    <span className="material-symbols-outlined text-[18px]">{showFinished ? "expand_less" : "expand_more"}</span>
+                  </button>
+                )}
+                {showFinished &&
+                  finished.map((m) => <RadarCard key={m._id} m={m} onOpenTeam={onOpenTeam} hits={(ruleHits as any)[m._id] ?? []} />)}
+              </>
+            );
+          })()}
+        </>
       )}
 
       </>
