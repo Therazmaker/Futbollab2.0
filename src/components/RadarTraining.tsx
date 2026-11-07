@@ -18,6 +18,54 @@ const FLAG_LABEL: Record<string, string> = {
   FAVORITO_FRAGIL: "Favorito frágil",
 };
 
+/** Intervalo de Wilson al 90 % (igual que en el servidor). */
+function wilsonCi(p: number, n: number, z = 1.645) {
+  if (!n) return { low: 0, high: 1 };
+  const d = 1 + (z * z) / n;
+  const c = (p + (z * z) / (2 * n)) / d;
+  const h = (z * Math.sqrt((p * (1 - p)) / n + (z * z) / (4 * n * n))) / d;
+  return { low: Math.max(0, c - h), high: Math.min(1, c + h) };
+}
+
+/** Lectura en palabras de una fila de la calibración. */
+function calibReading(b: { n: number; predicted: number; observed: number }) {
+  const diff = Math.round((b.observed - b.predicted) * 100);
+  const ci = wilsonCi(b.observed, b.n);
+  const fits = b.predicted >= ci.low && b.predicted <= ci.high;
+  if (b.n < 10) return { text: `Solo ${b.n} ${b.n === 1 ? "vez" : "veces"}: todavía no dice nada.`, tone: "text-on-surface-variant" };
+  const base =
+    Math.abs(diff) <= 4
+      ? "Bien calibrado: pasa lo que dice."
+      : diff > 0
+      ? `Pasó más de lo que dijo (+${diff} pts): aquí el Radar se queda corto.`
+      : `Pasó menos de lo que dijo (−${-diff} pts): aquí el Radar exagera.`;
+  const noise =
+    Math.abs(diff) <= 4
+      ? ""
+      : fits
+      ? ` Con n=${b.n} puede ser suerte (lo real estaría entre ${Math.round(ci.low * 100)} y ${Math.round(ci.high * 100)} %).`
+      : b.n < 50
+      ? ` Fuera del margen de error, pero con n=${b.n} aún hay que esperar.`
+      : " Ya es una desviación clara: conviene corregirla.";
+  return { text: base + noise, tone: Math.abs(diff) <= 4 ? "text-primary" : fits || b.n < 50 ? "text-on-surface-variant" : "text-amber-300" };
+}
+
+/** Resumen: ¿demasiado prudente, demasiado confiado o bien? (solo filas con n ≥ 10) */
+function calibSummary(rows: Array<{ n: number; predicted: number; observed: number }>) {
+  const ok = rows.filter((r) => r.n >= 10);
+  if (ok.length < 2) return null;
+  const low = ok.filter((r) => r.predicted < 0.35);
+  const high = ok.filter((r) => r.predicted >= 0.35);
+  const gap = (rs: typeof ok) => (rs.length ? rs.reduce((a, r) => a + (r.observed - r.predicted) * r.n, 0) / rs.reduce((a, r) => a + r.n, 0) : 0);
+  const gl = gap(low), gh = gap(high);
+  const n = ok.reduce((a, r) => a + r.n, 0);
+  const sure = n >= 150 ? "" : " Con esta muestra todavía puede ser casualidad.";
+  if (gl < -0.04 && gh > 0.04) return `En resumen: el Radar está siendo demasiado prudente — los favoritos pasan más de lo que dice y las sorpresas menos.${sure}`;
+  if (gl > 0.04 && gh < -0.04) return `En resumen: el Radar está siendo demasiado confiado — las sorpresas pasan más de lo que dice y los favoritos menos.${sure}`;
+  if (Math.abs(gl) <= 0.04 && Math.abs(gh) <= 0.04) return "En resumen: bien calibrado — lo que dice el Radar es lo que pasa.";
+  return `En resumen: desviaciones sueltas, sin un patrón claro.${sure}`;
+}
+
 export function RadarTraining({ competition }: { competition: string }) {
   const data = useQuery(api.radar.getTraining, { competition });
   if (data === undefined) return <div className={`${card} font-mono text-xs text-on-surface-variant`}>Calculando…</div>;
@@ -134,7 +182,8 @@ export function TrainingReport({ data, competition }: { data: any; competition: 
           <span className="font-mono text-xs uppercase text-primary font-bold">Calibración 1X2</span>
           <div className="flex flex-col gap-1 mt-2 font-mono text-[10px]">
             {data.calibration.map((b: any) => (
-              <div key={b.range} className="flex items-center gap-2">
+              <div key={b.range} className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-2">
                 <span className="w-16 text-on-surface-variant">{b.range}</span>
                 <div className="relative flex-1 h-3 bg-surface-container rounded">
                   <div className="absolute top-0 bottom-0 bg-secondary/40 rounded" style={{ width: pct(b.predicted) }} title="Predicho" />
@@ -144,7 +193,12 @@ export function TrainingReport({ data, competition }: { data: any; competition: 
                   {pct(b.predicted)} → <b className="text-primary">{pct(b.observed)}</b> <span className="text-on-surface-variant">n={b.n}</span>
                 </span>
               </div>
+              <p className={`pl-[4.5rem] text-[10px] leading-snug ${calibReading(b).tone}`}>{calibReading(b).text}</p>
+              </div>
             ))}
+            {calibSummary(data.calibration) && (
+              <p className="text-[11px] text-on-surface leading-snug border-t border-surface-container-high pt-1.5 mt-1">{calibSummary(data.calibration)}</p>
+            )}
             <p className="text-[9px] text-on-surface-variant">Barra = probabilidad media que dio el modelo; marca verde = cuántas veces pasó de verdad.</p>
           </div>
         </div>
