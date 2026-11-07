@@ -4,6 +4,8 @@ import { api } from "../../../../convex/_generated/api";
 import type { Id } from "../../../../convex/_generated/dataModel";
 import { callAi, HttpError } from "@/lib/aiCall";
 import { PREVIEW_SCHEMA, PREVIEW_SYSTEM, previewPrompt, normalizePreview } from "../../../../convex/lib/preview";
+import { ruleSchema, ruleSystem, rulePrompt } from "../../../../convex/lib/ruleAi";
+import { validateRule, type Condition } from "../../../../convex/lib/features";
 import { AI_PREDICT_SCHEMA, AI_PREDICT_SYSTEM, aiPredictPrompt, normalizeAiPicks } from "../../../../convex/lib/aiPredict";
 
 export const runtime = "nodejs";
@@ -24,9 +26,38 @@ export async function POST(req: NextRequest) {
   } catch {
     return NextResponse.json({ error: "Cuerpo de la petición no válido" }, { status: 400 });
   }
+  const convex = new ConvexHttpClient(convexUrl);
+  // Traducir una regla del Detector (no necesita partido)
+  if (body?.action === "rule") {
+    try {
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      if (text.length < 10) return NextResponse.json({ error: "Escribe la regla con un poco más de detalle." }, { status: 422 });
+      const settings = await convex.query(api.narratives.getAiSettings, {});
+      const { raw, model } = await callAi(settings, ruleSystem(), rulePrompt(text, typeof body.context === "string" ? body.context.slice(0, 3000) : undefined), ruleSchema() as unknown as Record<string, unknown>);
+      const conditions: Condition[] = (Array.isArray(raw?.conditions) ? raw.conditions : [])
+        .map((c: any) => ({ feature: String(c?.feature ?? ""), op: c?.op === "<=" || c?.op === "=" ? c.op : ">=", value: Number(c?.value) }))
+        .slice(0, 6);
+      const teamName = typeof raw?.teamName === "string" ? raw.teamName.trim() : "";
+      const team = teamName ? await convex.query(api.rules.resolveTeam, { name: teamName }) : null;
+      const rule = {
+        name: typeof raw?.name === "string" ? raw.name.slice(0, 80) : "Regla",
+        teamName,
+        team,
+        conditions,
+        target: typeof raw?.target === "string" ? raw.target : "draw",
+        manualChecks: Array.isArray(raw?.manualChecks) ? raw.manualChecks.filter((x: unknown) => typeof x === "string").slice(0, 6) : [],
+        explanation: typeof raw?.explanation === "string" ? raw.explanation.slice(0, 600) : "",
+      };
+      const errors = validateRule({ conditions, target: rule.target, teamScoped: !!team });
+      if (teamName && !team) errors.unshift(`No encuentro el equipo "${teamName}" en la base.`);
+      return NextResponse.json({ ok: true, rule, errors, model });
+    } catch (err: any) {
+      const status = err instanceof HttpError ? err.status : 500;
+      return NextResponse.json({ error: err?.message ?? String(err) }, { status });
+    }
+  }
   const matchId = body?.matchId as Id<"matches"> | undefined;
   if (!matchId) return NextResponse.json({ error: "Falta el partido" }, { status: 400 });
-  const convex = new ConvexHttpClient(convexUrl);
   const [settings, ctx] = await Promise.all([
     convex.query(api.narratives.getAiSettings, {}),
     convex.query(api.radarAi.aiContext, { matchId }),

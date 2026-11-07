@@ -73,6 +73,14 @@ async function refresh(ctx: ActionCtx) {
       report.errors.push(`próximos partidos: ${e?.message ?? e}`);
     }
     report.unknownTeams = Array.from(unknown);
+    // Con resultados nuevos, las reglas del Detector se vuelven a probar
+    if (report.leagues.length) {
+      try {
+        await ctx.runAction(internal.rules.runBacktestInternal, {});
+      } catch (e: any) {
+        report.errors.push(`detector: ${e?.message ?? e}`);
+      }
+    }
     return { ...report, fixtures };
   }
 }

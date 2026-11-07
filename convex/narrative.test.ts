@@ -518,3 +518,74 @@ describe("despliegue", () => {
     expect(Object.keys((mod.default as any).crons)).toEqual(["actualizar-jornadas-manana", "actualizar-jornadas-noche"]);
   });
 });
+
+import { computeFeatures, targetOutcome, validateRule, featureCatalog } from "./lib/features";
+import { backtestRules } from "./lib/ruleBacktest";
+
+describe("Detector de reglas", () => {
+  const g = (date: string, gf: number, ga: number, league = "laliga") => ({ date, league, gf, ga, xgf: 1.2, xga: 1.0, home: true });
+  const hist = (n: number, gf: number, ga: number) => Array.from({ length: n }, (_, i) => g(`2026-10-${String(1 + i).padStart(2, "0")}`, gf, ga));
+
+  test("datos desde favorito / local / equipo concreto, y objetivos", () => {
+    const fair = { home: 0.7, draw: 0.18, away: 0.12 };
+    const f = computeFeatures("2026-11-01", "laliga", fair, hist(6, 3, 0), [...hist(5, 0, 3), g("2026-10-30", 1, 1, "ucl")], "away")!;
+    expect(f.fav_prob).toBeCloseTo(0.7);
+    expect(f.fav_is_home).toBe(1);
+    expect(f.dog_ga10).toBeGreaterThan(2);
+    expect(f.dog_midweek).toBe(1); // jugó UCL 2 días antes
+    expect(f.team_ga_last).toBe(1); // el equipo de la regla (visitante): último partido 1-1
+    expect(f.team_is_fav).toBe(0);
+    expect(computeFeatures("2026-11-01", "laliga", fair, hist(3, 1, 1), hist(6, 1, 1))).toBeNull(); // pocos partidos
+    expect(targetOutcome("fav_not_win", 1, 1, fair, null).hit).toBe(true);
+    expect(targetOutcome("team_not_lose", 0, 0, fair, null, "away")).toMatchObject({ hit: true });
+    expect(targetOutcome("team_not_lose", 0, 0, fair, null, "away").p).toBeCloseTo(0.3);
+    expect(Object.keys(featureCatalog()).length).toBeGreaterThan(80);
+  });
+
+  test("valida lo que proponga la IA", () => {
+    expect(validateRule({ conditions: [{ feature: "fav_prob", op: ">=", value: 0.7 }], target: "fav_win", teamScoped: false })).toEqual([]);
+    expect(validateRule({ conditions: [{ feature: "team_ga_last", op: ">=", value: 3 }], target: "draw", teamScoped: false }).length).toBe(1);
+    expect(validateRule({ conditions: [{ feature: "inventado", op: ">=", value: 1 }], target: "team_win", teamScoped: false }).length).toBe(2);
+  });
+
+  test("backtest: cuenta, compara con el mercado y separa lo de después de crearla", () => {
+    const ms: any[] = [];
+    // A gana siempre en casa a B; con cuotas de cierre que le dan 60 %
+    for (let i = 0; i < 40; i++) {
+      const d = new Date(Date.UTC(2025, 0, 1 + i * 3)).toISOString().slice(0, 10);
+      ms.push({ _id: `m${i}`, date: d, league: "laliga", homeTeamId: i % 2 ? "B" : "A", awayTeamId: i % 2 ? "A" : "B", homeGoals: i % 2 ? 0 : 2, awayGoals: i % 2 ? 1 : 0, closingOdds: { home: i % 2 ? 4 : 1.6, draw: 4, away: i % 2 ? 1.6 : 4 } });
+    }
+    const [r] = backtestRules(ms, [{ _id: "x", conditions: [{ feature: "fav_prob", op: ">=", value: 0.5 }], target: "fav_win", createdAt: Date.UTC(2025, 2, 1) } as any]);
+    expect(r.n).toBeGreaterThan(25);
+    expect(r.rate).toBe(1);
+    expect(r.market).toBeGreaterThan(0.5);
+    expect(r.verdict).toBe("better");
+    expect(r.live.n).toBeGreaterThan(0);
+    expect(r.live.n).toBeLessThan(r.n);
+  });
+
+  test("Convex: reglas de ejemplo, validación y partidos del Radar que las cumplen", async () => {
+    const t = convexTest(schema, modules);
+    expect(await t.mutation(api.rules.seedStarterRules, {})).toBe(5);
+    expect(await t.mutation(api.rules.seedStarterRules, {})).toBe(0);
+    await expect(t.mutation(api.rules.saveRule, { name: "x", text: "x", conditions: [{ feature: "team_ga_last", op: ">=", value: 3 }], target: "draw", manualChecks: [] })).rejects.toThrow(/equipo concreto/);
+    const a = await t.mutation(api.teams.createTeam, { name: "Equipo A", league: "laliga" });
+    const b = await t.mutation(api.teams.createTeam, { name: "Equipo B", league: "laliga" });
+    for (let i = 0; i < 6; i++) {
+      const d = new Date(Date.UTC(2026, 8, 1 + i * 7)).toISOString().slice(0, 10);
+      await t.run((c) => c.db.insert("matches", { league: "laliga", date: d, homeTeamId: i % 2 ? b : a, awayTeamId: i % 2 ? a : b, homeGoals: i % 2 ? 0 : 3, awayGoals: i % 2 ? 3 : 0 }));
+    }
+    const ruleId = await t.mutation(api.rules.saveRule, {
+      name: "B se conforma", text: "Si a B le metieron 3 en el último, no gana", teamId: b,
+      conditions: [{ feature: "team_ga_last", op: ">=", value: 3 }], target: "team_not_win", manualChecks: ["¿juega con suplentes?"],
+    });
+    const m = await t.run((c) => c.db.insert("matches", { league: "laliga", date: "2026-11-20", homeTeamId: a, awayTeamId: b, odds: { home: 1.5, draw: 4, away: 6 } }));
+    const hits = await t.query(api.rules.ruleHits, { fromDate: "2026-11-20", toDate: "2026-11-20" });
+    expect(hits[m].map((h) => h.ruleId)).toContain(ruleId);
+    expect(hits[m].find((h) => h.ruleId === ruleId)!.manualChecks).toEqual(["¿juega con suplentes?"]);
+    const res = await t.action(api.rules.runBacktest, { ruleId });
+    expect(res[0].n).toBe(0); // sin cuotas de cierre en el histórico de este test
+    const list = await t.query(api.rules.listRules, {});
+    expect(list.find((r) => r._id === ruleId)!.teamName).toBe("Equipo B");
+  });
+});

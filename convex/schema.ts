@@ -287,4 +287,18 @@ export default defineSchema({
     analysis: v.any(), // ver convex/lib/preview.ts
     createdAt: v.number(),
   }).index("by_match", ["matchId"]),
+
+  // Detector: reglas que dictas tú (la IA las traduce a datos) y su prueba en el histórico
+  radarRules: defineTable({
+    name: v.string(),
+    text: v.string(), // tu regla, con tus palabras
+    teamId: v.optional(v.id("teams")), // regla de un equipo concreto
+    conditions: v.array(v.object({ feature: v.string(), op: v.string(), value: v.number() })),
+    target: v.string(),
+    manualChecks: v.array(v.string()), // lo que no se puede medir con datos: se revisa a mano
+    active: v.boolean(),
+    originMatchId: v.optional(v.id("matches")), // partido que la inspiró ("¿qué me faltó mirar?")
+    backtest: v.optional(v.any()),
+    createdAt: v.number(),
+  }),
 });
