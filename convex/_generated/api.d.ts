@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as crons from "../crons.js";
 import type * as footballData from "../footballData.js";
 import type * as legacy from "../legacy.js";
 import type * as lib_competitionTable from "../lib/competitionTable.js";
@@ -50,6 +51,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  crons: typeof crons;
   footballData: typeof footballData;
   legacy: typeof legacy;
   "lib/competitionTable": typeof lib_competitionTable;

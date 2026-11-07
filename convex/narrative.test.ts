@@ -1,7 +1,7 @@
 /// <reference types="vite/client" />
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
-import { api } from "./_generated/api";
+import { api, internal } from "./_generated/api";
 import schema from "./schema";
 import { matchPlayerName, narrativeMinutes, normalizeAnalysis, roleFor, teamTrends, TrendRow } from "./lib/narrative";
 
@@ -467,5 +467,47 @@ describe("Entrenamiento / Histórico del Radar (del FutbolLab viejo)", () => {
     expect(h.summary.roi).toBeGreaterThan(0);
     expect(h.previewSignals.find((s) => s.key === "draw_high")).toMatchObject({ nActive: 1, rateActive: 1 });
     expect(h.rows[0].score).toBe("1-1 (0-0)");
+  });
+});
+
+import { parseFixturesCsv } from "./lib/footballData";
+import { parseFixtures } from "../src/lib/parse-results";
+
+describe("próximos partidos", () => {
+  test("lee fixtures.csv de football-data y pegados a mano", () => {
+    const csv = ["Div,Date,Time,HomeTeam,AwayTeam,AvgH,AvgD,AvgA", "SP1,08/11/2026,21:00,Valencia,Real Madrid,4.8,4.1,1.7", "SC0,08/11/2026,15:00,Celtic,Rangers,2,3,4"].join("\n");
+    const r = parseFixturesCsv(csv);
+    expect(r.rows).toEqual([{ league: "laliga", date: "2026-11-08", homeLegacyId: "sp_valencia", awayLegacyId: "sp_real_madrid", odds: { home: 4.8, draw: 4.1, away: 1.7 } }]);
+    const p = parseFixtures("2026-11-25 Real Madrid - Liverpool\n26/11 21:00 Inter vs Barcelona\n27.11.\nPSG\nBayern Múnich", "2026-11-20");
+    expect(p.rows).toEqual([
+      { date: "2026-11-25", home: "Real Madrid", away: "Liverpool" },
+      { date: "2026-11-26", home: "Inter", away: "Barcelona" },
+      { date: "2026-11-27", home: "PSG", away: "Bayern Múnich" },
+    ]);
+  });
+
+  test("Convex: crea los próximos partidos con cuota media sin pisar las tuyas", async () => {
+    const t = convexTest(schema, modules);
+    const v = await t.mutation(api.teams.createTeam, { name: "Valencia", league: "laliga" });
+    const m = await t.mutation(api.teams.createTeam, { name: "Real Madrid", league: "laliga" });
+    await t.run(async (c) => {
+      await c.db.patch(v, { legacyId: "sp_valencia" });
+      await c.db.patch(m, { legacyId: "sp_real_madrid" });
+    });
+    const fx = [{ league: "laliga", date: "2026-11-08", homeLegacyId: "sp_valencia", awayLegacyId: "sp_real_madrid", odds: { home: 4.8, draw: 4.1, away: 1.7 } }];
+    expect(await t.mutation(internal.legacy.scheduleFixturesChunk, { fixtures: fx })).toMatchObject({ created: 1 });
+    const match = (await t.run((c) => c.db.query("matches").collect()))[0];
+    expect(match.odds).toMatchObject({ home: 4.8, source: "football-data" });
+    expect(await t.run((c) => c.db.query("radarSnapshots").collect())).toHaveLength(1);
+    // Tus cuotas no se pisan
+    await t.mutation(api.radar.setOdds, { matchId: match._id, home: 5, draw: 4, away: 1.65 });
+    expect(await t.mutation(internal.legacy.scheduleFixturesChunk, { fixtures: [{ ...fx[0], date: "2026-11-09" }] })).toMatchObject({ created: 0, skipped: 1 });
+    expect((await t.run((c) => c.db.get(match._id)))!.odds!.home).toBe(5);
+    // Pegados a mano (Champions)
+    const pre = await t.mutation(api.results.addFixturesBulk, { competition: "ucl", preview: true, rows: [{ date: "2026-11-25", home: "Real Madrid", away: "Valencia" }, { date: "2026-11-25", home: "Liverpool", away: "Valencia" }] });
+    expect(pre).toMatchObject({ recognized: 1, unmatched: ["Liverpool"] });
+    const r = await t.mutation(api.results.addFixturesBulk, { competition: "ucl", rows: [{ date: "2026-11-25", home: "Real Madrid", away: "Valencia" }] });
+    expect(r.added).toBe(1);
+    expect((await t.mutation(api.results.addFixturesBulk, { competition: "ucl", rows: [{ date: "2026-11-25", home: "Real Madrid", away: "Valencia" }] })).existing).toBe(1);
   });
 });

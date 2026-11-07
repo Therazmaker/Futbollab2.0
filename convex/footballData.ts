@@ -1,7 +1,7 @@
-import { action } from "./_generated/server";
+import { action, internalAction, ActionCtx } from "./_generated/server";
 import { internal } from "./_generated/api";
 import { currentSeason } from "./lib/season";
-import { DIVS, parseFootballDataCsv } from "./lib/footballData";
+import { DIVS, parseFootballDataCsv, parseFixturesCsv } from "./lib/footballData";
 
 /**
  * Actualiza la temporada actual desde football-data.co.uk: resultados nuevos,
@@ -15,7 +15,17 @@ import { DIVS, parseFootballDataCsv } from "./lib/footballData";
 
 export const refreshCurrentSeason = action({
   args: {},
-  handler: async (ctx) => {
+  handler: async (ctx) => refresh(ctx),
+});
+
+/** Lo mismo, lanzado por la tarea programada (convex/crons.ts). */
+export const refreshScheduled = internalAction({
+  args: {},
+  handler: async (ctx) => refresh(ctx),
+});
+
+async function refresh(ctx: ActionCtx) {
+  {
     const season = currentSeason(); // "2026-27"
     const code = season.slice(2, 4) + season.slice(5, 7); // "2627"
     const report = { season, inserted: 0, enriched: 0, rows: 0, unknownTeams: [] as string[], errors: [] as string[], leagues: [] as string[] };
@@ -46,7 +56,23 @@ export const refreshCurrentSeason = action({
       }
     }
     if (report.leagues.length) await ctx.runMutation(internal.legacy.refreshRatingModelInternal, {});
+    // Próximos partidos de la semana, con cuota media de apertura
+    const fixtures = { created: 0, updated: 0, read: 0 };
+    try {
+      const res = await fetch("https://football-data.co.uk/fixtures.csv");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const { rows, unknown: u } = parseFixturesCsv(await res.text());
+      u.forEach((x) => unknown.add(x));
+      fixtures.read = rows.length;
+      for (let i = 0; i < rows.length; i += 25) {
+        const r = await ctx.runMutation(internal.legacy.scheduleFixturesChunk, { fixtures: rows.slice(i, i + 25) });
+        fixtures.created += r.created;
+        fixtures.updated += r.updated;
+      }
+    } catch (e: any) {
+      report.errors.push(`próximos partidos: ${e?.message ?? e}`);
+    }
     report.unknownTeams = Array.from(unknown);
-    return report;
-  },
-});
+    return { ...report, fixtures };
+  }
+}

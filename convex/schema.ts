@@ -127,6 +127,7 @@ export default defineSchema({
         draw: v.optional(v.number()),
         away: v.optional(v.number()),
         updatedAt: v.optional(v.number()),
+        source: v.optional(v.string()), // "football-data" (cuota media) o ausente (las pusiste tú)
       })
     ),
   })

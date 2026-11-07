@@ -75,3 +75,44 @@ export function parseFootballDataCsv(text: string, div: string, seasonCode: stri
   return { rows, unknown: Array.from(unknown) };
 }
 
+
+export type FdFixture = {
+  league: string;
+  date: string;
+  homeLegacyId: string;
+  awayLegacyId: string;
+  odds?: { home: number; draw: number; away: number };
+};
+
+/** fixtures.csv de football-data (partidos de la semana, con cuotas medias) → próximos partidos de las 5 ligas. */
+export function parseFixturesCsv(text: string) {
+  const lines = text.replace(/^﻿/, "").split(/\r?\n/).filter((l) => l.trim());
+  const head = lines[0]?.split(",") ?? [];
+  const ix = (k: string) => head.indexOf(k);
+  const rows: FdFixture[] = [];
+  const unknown = new Set<string>();
+  for (const line of lines.slice(1)) {
+    const c = line.split(",");
+    const g = (k: string) => (ix(k) >= 0 ? (c[ix(k)] ?? "").trim() : "");
+    const div = g("Div");
+    if (!DIVS[div]) continue;
+    const names = NAMES[div] ?? {};
+    const [home, away] = [g("HomeTeam"), g("AwayTeam")];
+    const [h, a] = [names[home], names[away]];
+    if (!h) unknown.add(`${home} (${DIVS[div]})`);
+    if (!a) unknown.add(`${away} (${DIVS[div]})`);
+    if (!h || !a) continue;
+    const [dd, mm, yy] = g("Date").split("/");
+    if (!dd || !mm || !yy) continue;
+    const date = `${yy.length === 2 ? "20" + yy : yy}-${mm.padStart(2, "0")}-${dd.padStart(2, "0")}`;
+    const [oh, od, oa] = [Number(g("AvgH")), Number(g("AvgD")), Number(g("AvgA"))];
+    rows.push({
+      league: DIVS[div],
+      date,
+      homeLegacyId: h,
+      awayLegacyId: a,
+      ...(oh > 1 && od > 1 && oa > 1 ? { odds: { home: oh, draw: od, away: oa } } : {}),
+    });
+  }
+  return { rows, unknown: Array.from(unknown) };
+}

@@ -7,7 +7,7 @@ import type { DataModel } from "./_generated/dataModel";
 import { recomputeLeague } from "./lib/leagueTable";
 import { refreshRatingModel } from "./lib/ratingStore";
 import { currentSeason } from "./lib/season";
-import { ensureSnapshotBeforeScore } from "./lib/radarSnapshot";
+import { ensureSnapshotBeforeScore, upsertSnapshot } from "./lib/radarSnapshot";
 import legacyLeagues from "../data/legacy/leagues.json";
 import legacyTeams from "../data/legacy/teams.json";
 import legacyMatches from "../data/legacy/matches.json";
@@ -280,6 +280,71 @@ export const importMatchesChunk = internalMutation({
       inserted++;
     }
     return { inserted, skipped, enriched, noTeam, missingTeams: Array.from(missingTeams) };
+  },
+});
+
+/**
+ * Próximos partidos (fixtures.csv de football-data): los crea sin marcador, o
+ * reutiliza el que ya exista (mismo cruce, ±1 día). Pone la cuota media solo si
+ * no tienes cuotas tuyas, y toma la foto previa del Radar.
+ */
+export const scheduleFixturesChunk = internalMutation({
+  args: {
+    fixtures: v.array(
+      v.object({
+        league: v.string(),
+        date: v.string(),
+        homeLegacyId: v.string(),
+        awayLegacyId: v.string(),
+        odds: v.optional(v.object({ home: v.number(), draw: v.number(), away: v.number() })),
+      })
+    ),
+  },
+  handler: async (ctx, { fixtures }) => {
+    let created = 0;
+    let updated = 0;
+    let skipped = 0;
+    const day = 86_400_000;
+    const iso = (t: number) => new Date(t).toISOString().slice(0, 10);
+    for (const f of fixtures) {
+      const home = await teamByLegacyId(ctx.db, f.homeLegacyId);
+      const away = await teamByLegacyId(ctx.db, f.awayLegacyId);
+      if (!home || !away) {
+        skipped++;
+        continue;
+      }
+      const t0 = Date.parse(f.date);
+      const existing = (
+        await ctx.db
+          .query("matches")
+          .withIndex("by_home_and_date", (q) => q.eq("homeTeamId", home._id).gte("date", iso(t0 - day)).lte("date", iso(t0 + day)))
+          .collect()
+      ).find((x) => x.awayTeamId === away._id);
+      const odds = f.odds ? { ...f.odds, updatedAt: Date.now(), source: "football-data" } : undefined;
+      if (existing) {
+        if (existing.homeGoals !== undefined) {
+          skipped++;
+          continue;
+        }
+        // Solo se rellenan las cuotas si no hay o si las anteriores también eran de football-data
+        if (odds && (!existing.odds || existing.odds.source === "football-data")) {
+          await ctx.db.patch(existing._id, { odds });
+          await upsertSnapshot(ctx.db, existing._id);
+          updated++;
+        } else skipped++;
+        continue;
+      }
+      const id = await ctx.db.insert("matches", {
+        league: f.league,
+        date: f.date,
+        homeTeamId: home._id,
+        awayTeamId: away._id,
+        ...(odds ? { odds } : {}),
+      });
+      await upsertSnapshot(ctx.db, id);
+      created++;
+    }
+    return { created, updated, skipped };
   },
 });
 

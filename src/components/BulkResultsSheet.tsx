@@ -4,7 +4,7 @@ import React, { useMemo, useState } from "react";
 import { useMutation } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { COMPETITIONS } from "@/lib/competitions";
-import { parseResults } from "@/lib/parse-results";
+import { parseResults, parseFixtures } from "@/lib/parse-results";
 
 type Preview = {
   recognized: number;
@@ -18,6 +18,8 @@ type Preview = {
 /** Pegar una lista de resultados (una jornada o la temporada) y guardarlos de golpe. */
 export function BulkResultsSheet({ defaultCompetition, onClose }: { defaultCompetition: string; onClose: () => void }) {
   const bulk = useMutation(api.results.addResultsBulk);
+  const bulkFixtures = useMutation(api.results.addFixturesBulk);
+  const [mode, setMode] = useState<"results" | "fixtures">("results");
   const [competition, setCompetition] = useState(
     COMPETITIONS.some((c) => c.code === defaultCompetition) ? defaultCompetition : "laliga"
   );
@@ -29,12 +31,22 @@ export function BulkResultsSheet({ defaultCompetition, onClose }: { defaultCompe
   const [error, setError] = useState<string | null>(null);
 
   const parsed = useMemo(() => parseResults(text, date), [text, date]);
+  const parsedFx = useMemo(() => parseFixtures(text, date), [text, date]);
+  const count = mode === "results" ? parsed.rows.length : parsedFx.rows.length;
 
   const run = async (dry: boolean) => {
     setBusy(true);
     setError(null);
     try {
-      const r = await bulk({ competition, preview: dry, rows: parsed.rows });
+      const r: any =
+        mode === "results"
+          ? await bulk({ competition, preview: dry, rows: parsed.rows })
+          : await bulkFixtures({ competition, preview: dry, rows: parsedFx.rows }).then((x) => ({
+              ...x,
+              updated: 0,
+              unchanged: x.existing,
+              rows: x.rows.map((rr) => ({ ...rr, homeGoals: null, awayGoals: null })),
+            }));
       if (dry) setPreview(r);
       else {
         setDone(r);
@@ -52,12 +64,32 @@ export function BulkResultsSheet({ defaultCompetition, onClose }: { defaultCompe
     <div className="fixed inset-0 z-[70] overflow-y-auto overscroll-contain flex justify-center bg-black/80 backdrop-blur-sm p-4">
       <div className="bg-surface-container-low border border-primary/40 rounded-2xl w-full max-w-md p-5 shadow-2xl my-auto flex flex-col gap-3 font-mono text-xs">
         <div className="flex items-center justify-between">
-          <span className="text-sm font-bold text-on-surface font-sans">Pegar resultados</span>
+          <span className="text-sm font-bold text-on-surface font-sans">{mode === "results" ? "Pegar resultados" : "Pegar próximos partidos"}</span>
           <button onClick={onClose} className="w-8 h-8 rounded-lg bg-surface-container text-on-surface-variant">
             ✕
           </button>
         </div>
 
+        <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-surface-container">
+          {(
+            [
+              ["results", "Resultados"],
+              ["fixtures", "Próximos partidos"],
+            ] as const
+          ).map(([k, l]) => (
+            <button
+              key={k}
+              onClick={() => {
+                setMode(k);
+                setPreview(null);
+                setDone(null);
+              }}
+              className={`h-8 rounded-lg font-bold ${mode === k ? "bg-primary text-on-primary" : "text-on-surface-variant"}`}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
         <div className="grid grid-cols-2 gap-2">
           <label className="text-[10px] text-on-surface-variant uppercase">
             Competición
@@ -95,13 +127,22 @@ export function BulkResultsSheet({ defaultCompetition, onClose }: { defaultCompe
             setDone(null);
           }}
           rows={9}
-          placeholder={"Pega la jornada (Sofascore, FlashScore, tabla…). Ejemplos:\n2026-11-07 Valencia 1-2 Real Madrid\n08/11 Betis 2-2 Sevilla"}
+          placeholder={
+            mode === "results"
+              ? "Pega la jornada (Sofascore, FlashScore, tabla…). Ejemplos:\n2026-11-07 Valencia 1-2 Real Madrid\n08/11 Betis 2-2 Sevilla"
+              : "Pega los próximos partidos. Ejemplos:\n2026-11-25 Real Madrid - Liverpool\n26/11 21:00 Inter vs Barcelona"
+          }
           className="w-full p-2 rounded-lg bg-surface-container text-on-surface border border-surface-container-high text-[11px]"
         />
         <p className="text-[10px] text-on-surface-variant">
-          {parsed.rows.length} partidos leídos
-          {parsed.skipped.length ? ` · ${parsed.skipped.length} líneas sin entender` : ""}. Los partidos que ya existan solo
-          reciben el marcador; no se duplican.
+          {count} partidos leídos
+          {(mode === "results" ? parsed.skipped : parsedFx.skipped).length
+            ? ` · ${(mode === "results" ? parsed.skipped : parsedFx.skipped).length} líneas sin entender`
+            : ""}
+          .{" "}
+          {mode === "results"
+            ? "Los partidos que ya existan solo reciben el marcador; no se duplican."
+            : "Entran sin marcador, con su foto previa en el Radar. Los cinco grandes ligas llegan solas con «Actualizar jornadas»; esto es para la Champions y demás."}
         </p>
 
         {preview && (
@@ -120,7 +161,7 @@ export function BulkResultsSheet({ defaultCompetition, onClose }: { defaultCompe
                 <div key={i} className="flex gap-2 text-[10px] border-t border-surface-container-high/40 py-0.5">
                   <span className="text-on-surface-variant">{r.date}</span>
                   <span className="text-on-surface truncate">
-                    {r.homeName} {r.homeGoals}-{r.awayGoals} {r.awayName}
+                    {r.homeName} {r.homeGoals === null ? "vs" : `${r.homeGoals}-${r.awayGoals}`} {r.awayName}
                   </span>
                 </div>
               ))}
@@ -129,8 +170,8 @@ export function BulkResultsSheet({ defaultCompetition, onClose }: { defaultCompe
         )}
         {done && (
           <p className="text-primary">
-            Listo: {done.added} nuevos, {done.updated} con marcador actualizado, {done.unchanged} ya estaban. Tabla y fuerza
-            recalculadas.
+            Listo: {done.added} nuevos{mode === "results" ? `, ${done.updated} con marcador actualizado` : ""}, {done.unchanged} ya estaban.
+            {mode === "results" ? " Tabla y fuerza recalculadas." : " Ya salen en el Radar."}
           </p>
         )}
         {error && <p className="text-error">{error}</p>}
@@ -142,7 +183,7 @@ export function BulkResultsSheet({ defaultCompetition, onClose }: { defaultCompe
           {!preview ? (
             <button
               onClick={() => run(true)}
-              disabled={busy || parsed.rows.length === 0}
+              disabled={busy || count === 0}
               className="px-4 h-8 rounded-lg bg-secondary text-on-secondary font-bold disabled:opacity-50"
             >
               {busy ? "Revisando…" : "Revisar"}
