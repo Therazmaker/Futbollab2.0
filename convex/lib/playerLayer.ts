@@ -1,5 +1,5 @@
 import type { GenericDatabaseReader } from "convex/server";
-import type { DataModel, Id } from "../_generated/dataModel";
+import type { DataModel, Doc, Id } from "../_generated/dataModel";
 import { fitProfile, forecast, FittedState, ModelLog } from "./engine";
 import { loadPlayerModelInput } from "./playerModel";
 import { availabilityOn } from "./injuries";
@@ -41,10 +41,31 @@ export interface TeamPlayerLayer {
 export interface LayerCaches {
   input: Map<string, Awaited<ReturnType<typeof loadPlayerModelInput>>>;
   state: Map<string, FittedState>;
+  /**
+   * Jugadores con algún partido registrado o alguna lesión. Los demás no aportan
+   * nada a la capa (ni xG ni bajas), así que ni se cargan: con muchos partidos en
+   * el Radar, cargar plantillas enteras jugador a jugador superaba los límites de Convex.
+   */
+  relevant?: Map<string, Doc<"players">[]>; // por equipo
 }
 
-export function newLayerCaches(): LayerCaches {
-  return { input: new Map(), state: new Map() };
+export function newLayerCaches(relevant?: Map<string, Doc<"players">[]>): LayerCaches {
+  return { input: new Map(), state: new Map(), relevant };
+}
+
+/** Jugadores con partidos o lesiones, agrupados por equipo (una sola lectura de cada tabla). */
+export async function relevantPlayers(db: Reader): Promise<Map<string, Doc<"players">[]>> {
+  const ids = new Set<string>();
+  for (const l of await db.query("playerMatchLogs").collect()) ids.add(l.playerId);
+  for (const i of await db.query("injuries").collect()) ids.add(i.playerId);
+  const byTeam = new Map<string, Doc<"players">[]>();
+  for (const id of Array.from(ids)) {
+    const p = await db.get(id as Id<"players">);
+    if (!p) continue;
+    if (!byTeam.has(p.teamId)) byTeam.set(p.teamId, []);
+    byTeam.get(p.teamId)!.push(p);
+  }
+  return byTeam;
 }
 
 function ratingHistory(logs: ModelLog[]): PlayerRatingLog[] {
@@ -68,10 +89,12 @@ export async function buildTeamPlayerLayer(
   ratingParams: RatingParams,
   caches: LayerCaches
 ): Promise<TeamPlayerLayer> {
-  const roster = await db
-    .query("players")
-    .withIndex("by_team", (q) => q.eq("teamId", teamId))
-    .collect();
+  const roster = caches.relevant
+    ? caches.relevant.get(teamId) ?? []
+    : await db
+        .query("players")
+        .withIndex("by_team", (q) => q.eq("teamId", teamId))
+        .collect();
   const players: PlayerProp[] = [];
   const absent: TeamPlayerLayer["absent"] = [];
   let playersXg = 0;
