@@ -5,6 +5,7 @@ import { useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { PICK_MARKETS, pickLabel } from "../../convex/lib/picks";
+import { RuleEditor } from "./RadarRules";
 
 const pct = (x: number | null | undefined) => (x === null || x === undefined ? "—" : `${Math.round(x * 100)} %`);
 
@@ -14,12 +15,14 @@ export function PredictionsSheet({
   homeName,
   awayName,
   played,
+  score,
   onClose,
 }: {
   matchId: Id<"matches">;
   homeName: string;
   awayName: string;
   played: boolean;
+  score?: string;
   onClose: () => void;
 }) {
   const picks = useQuery(api.radarAi.getPicks, { matchId }) ?? [];
@@ -31,6 +34,7 @@ export function PredictionsSheet({
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<Record<string, { pick: string; odds: string; conf: string }>>({});
   const [editingMine, setEditingMine] = useState(false);
+  const [missed, setMissed] = useState(false);
 
   const ai = picks.filter((p: any) => p.source === "ai");
   const mine = picks.filter((p: any) => p.source === "user");
@@ -217,6 +221,22 @@ export function PredictionsSheet({
           </>
         )}
         {error && <p className="text-error">{error}</p>}
+        {played && (
+          <button onClick={() => setMissed(true)} className="self-start px-3 h-8 rounded-lg bg-surface-container-high text-secondary border border-secondary/30">
+            🔎 ¿Qué me faltó mirar?
+          </button>
+        )}
+        {missed && (
+          <RuleEditor
+            initial={{
+              originMatchId: matchId,
+              context: `${homeName} ${score ?? ""} ${awayName}\n${picks
+                .map((p: any) => `${p.source === "ai" ? "IA" : "Tú"}: ${p.label} ${p.verdict === "won" ? "✓" : p.verdict === "lost" ? "✗" : ""}`)
+                .join(" · ")}`,
+            }}
+            onClose={() => setMissed(false)}
+          />
+        )}
         <p className="text-[9px] text-on-surface-variant">
           Se resuelven solas al llegar el marcador (y el del descanso para los mercados de 1ª parte). «Radar» = la probabilidad que el Radar daba a ese
           pick: si aciertas más que eso, le estás ganando.

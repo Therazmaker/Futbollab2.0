@@ -11,6 +11,7 @@ import { TeamNarrativeTrends } from "./NarrativePanel";
 import { RadarAnalysisEditor } from "./RadarAnalysisEditor";
 import { PredictionsSheet } from "./PredictionsSheet";
 import { RadarHistory } from "./RadarHistory";
+import { RadarRules } from "./RadarRules";
 
 interface RadarViewProps {
   onOpenTeam: (teamId: Id<"teams">) => void;
@@ -118,7 +119,7 @@ function clvText(m: any) {
   return parts.length ? ` · CLV ${parts.join(" · ")}` : "";
 }
 
-export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"teams">) => void }) {
+export function RadarCard({ m, onOpenTeam, hits = [] }: { m: any; onOpenTeam: (id: Id<"teams">) => void; hits?: any[] }) {
   const [editingOdds, setEditingOdds] = useState(false);
   const [editingClose, setEditingClose] = useState(false);
   const [reading, setReading] = useState(false);
@@ -197,6 +198,34 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
         </p>
       )}
 
+      {/* Reglas del Detector que cumple este partido */}
+      {hits.length > 0 && (
+        <div className="mt-2 flex flex-col gap-1">
+          {hits.map((h: any) => (
+            <div
+              key={h.ruleId}
+              title={h.n ? `Histórico: ${h.n} veces, pasó ${Math.round((h.rate ?? 0) * 100)} % (mercado ${h.market !== null ? Math.round(h.market * 100) + " %" : "—"})` : "Sin probar"}
+              className={`px-2 py-1 rounded-lg border font-mono text-[10px] ${
+                h.verdict === "better" ? "border-primary/50 text-primary" : h.verdict === "worse" ? "border-error/40 text-error" : "border-secondary/40 text-secondary"
+              }`}
+            >
+              🔎 {h.name} → {h.targetLabel}
+              {h.n ? (
+                <span className="text-on-surface-variant">
+                  {" "}
+                  · histórico {Math.round((h.rate ?? 0) * 100)} % vs mercado {h.market !== null ? `${Math.round(h.market * 100)} %` : "—"}
+                </span>
+              ) : null}
+              {h.manualChecks.map((c: string, i: number) => (
+                <div key={i} className="text-on-surface-variant">
+                  ✋ Revisa: {c}
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Lectura en lenguaje normal */}
       {m.reading && (
         <div className="mt-2 p-2 rounded-lg bg-surface-container border border-surface-container-high">
@@ -240,7 +269,14 @@ export function RadarCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"team
         <RadarAnalysisEditor matchId={m._id} homeName={m.home.name} awayName={m.away.name} played={!!m.result} onClose={() => setSheet(null)} />
       )}
       {sheet === "picks" && (
-        <PredictionsSheet matchId={m._id} homeName={m.home.name} awayName={m.away.name} played={!!m.result} onClose={() => setSheet(null)} />
+        <PredictionsSheet
+          matchId={m._id}
+          homeName={m.home.name}
+          awayName={m.away.name}
+          played={!!m.result}
+          score={m.result ? `${m.result.home}-${m.result.away}` : undefined}
+          onClose={() => setSheet(null)}
+        />
       )}
 
       {/* Alertas */}
@@ -409,7 +445,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
   const [sort, setSort] = useState<"study" | "date" | "value">("study");
   const [adding, setAdding] = useState(false);
   const [showRules, setShowRules] = useState(false);
-  const [mode, setMode] = useState<"matches" | "training" | "history">("matches");
+  const [mode, setMode] = useState<"matches" | "training" | "history" | "rules">("matches");
   const snapshotRange = useMutation(api.radar.snapshotRange);
 
   const { fromDate, toDate } = useMemo(() => {
@@ -421,6 +457,8 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
   }, [range, day]);
 
   const rows = useQuery(api.radar.getRadar, { fromDate, toDate, competition });
+  const ruleHits = useQuery(api.rules.ruleHits, { fromDate, toDate }) ?? {};
+  const [onlyRules, setOnlyRules] = useState(false);
 
   // Foto previa de los partidos sin marcador que se están viendo (para el entrenamiento)
   useEffect(() => {
@@ -462,6 +500,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
             ["matches", "Partidos"],
             ["training", "Entrenamiento"],
             ["history", "Histórico"],
+            ["rules", "Detector"],
           ] as const
         ).map(([k, label]) => (
           <button
@@ -474,7 +513,9 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
         ))}
       </div>
 
-      {mode === "training" || mode === "history" ? (
+      {mode === "rules" ? (
+        <RadarRules />
+      ) : mode === "training" || mode === "history" ? (
         <>
           <select value={competition} onChange={(e) => setCompetition(e.target.value)} className={input} aria-label="Competición">
             <option value="all">Todas las competiciones</option>
@@ -525,6 +566,10 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
         </select>
       </div>
 
+      <label className="flex items-center gap-2 font-mono text-[11px] text-on-surface-variant cursor-pointer">
+        <input type="checkbox" checked={onlyRules} onChange={(e) => setOnlyRules(e.target.checked)} />
+        Solo partidos que cumplen alguna regla del Detector ({Object.keys(ruleHits).length})
+      </label>
       <button onClick={() => setShowRules(!showRules)} className="self-start font-mono text-[10px] text-secondary">
         {showRules ? "Ocultar" : "¿Cómo se calcula?"}
       </button>
@@ -561,7 +606,9 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
           No hay partidos en estas fechas. Prográmalos con "+ Partido" aquí o con "+ Próximo" en el perfil de cada equipo.
         </div>
       ) : (
-        sorted.map((m) => <RadarCard key={m._id} m={m} onOpenTeam={onOpenTeam} />)
+        sorted
+          .filter((m) => !onlyRules || (ruleHits as any)[m._id]?.length)
+          .map((m) => <RadarCard key={m._id} m={m} onOpenTeam={onOpenTeam} hits={(ruleHits as any)[m._id] ?? []} />)
       )}
 
       </>
