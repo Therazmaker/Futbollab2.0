@@ -12,6 +12,7 @@ import { RadarAnalysisEditor } from "./RadarAnalysisEditor";
 import { PredictionsSheet } from "./PredictionsSheet";
 import { RadarHistory } from "./RadarHistory";
 import { RadarRules } from "./RadarRules";
+import { BoldCard } from "./BoldCard";
 
 interface RadarViewProps {
   onOpenTeam: (teamId: Id<"teams">) => void;
@@ -445,7 +446,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
   const [sort, setSort] = useState<"study" | "date" | "value">("study");
   const [adding, setAdding] = useState(false);
   const [showRules, setShowRules] = useState(false);
-  const [mode, setMode] = useState<"matches" | "training" | "history" | "rules">("matches");
+  const [mode, setMode] = useState<"matches" | "bold" | "training" | "history" | "rules">("matches");
   const snapshotRange = useMutation(api.radar.snapshotRange);
 
   const { fromDate, toDate } = useMemo(() => {
@@ -456,7 +457,8 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
     return { fromDate: day, toDate: day };
   }, [range, day]);
 
-  const rows = useQuery(api.radar.getRadar, { fromDate, toDate, competition });
+  const rows = useQuery(api.radar.getRadar, { fromDate, toDate, competition, ...(mode === "bold" ? { bold: true } : {}) });
+  const [onlyCrazy, setOnlyCrazy] = useState(false);
   const ruleHits = useQuery(api.rules.ruleHits, { fromDate, toDate }) ?? {};
   const [onlyRules, setOnlyRules] = useState(false);
   // Terminados plegados por defecto (se recuerda en este navegador)
@@ -511,6 +513,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
         {(
           [
             ["matches", "Partidos"],
+            ["bold", "🔥 Audaz"],
             ["training", "Entrenamiento"],
             ["history", "Histórico"],
             ["rules", "Detector"],
@@ -579,6 +582,22 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
         </select>
       </div>
 
+      {mode === "bold" && (
+        <div className="p-2.5 rounded-xl border border-error/30 bg-error/5 font-mono text-[10px] text-on-surface-variant flex flex-col gap-1">
+          <p>
+            <b className="text-on-surface">🔥 Radar Audaz:</b> parte del mercado y se deja empujar por todo lo que el conservador no se atreve a usar:
+            el modelo, tus bajas a peso completo, las reglas del Detector, las narraciones y la previa. Cada empujón se ve en la tarjeta.
+          </p>
+          <p>
+            Sus pesos no están validados: es el experimento. En Entrenamiento ves si su locura acierta más que el conservador, y sobre todo si cuando
+            coincide contigo ganáis.
+          </p>
+          <label className="flex items-center gap-2 cursor-pointer text-[11px]">
+            <input type="checkbox" checked={onlyCrazy} onChange={(e) => setOnlyCrazy(e.target.checked)} />
+            Solo los que se alejan del mercado (atrevidos y locos)
+          </label>
+        </div>
+      )}
       <label className="flex items-center gap-2 font-mono text-[11px] text-on-surface-variant cursor-pointer">
         <input type="checkbox" checked={onlyRules} onChange={(e) => setOnlyRules(e.target.checked)} />
         Solo partidos que cumplen alguna regla del Detector ({Object.keys(ruleHits).length})
@@ -621,7 +640,15 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
       ) : (
         <>
           {(() => {
-            const visible = sorted.filter((m) => !onlyRules || (ruleHits as any)[m._id]?.length);
+            const visible = sorted
+              .filter((m) => !onlyRules || (ruleHits as any)[m._id]?.length)
+              .filter((m: any) => mode !== "bold" || !onlyCrazy || (m.bold && m.bold.level !== "mercado"));
+            const Card = (m: any) =>
+              mode === "bold" ? (
+                <BoldCard key={m._id} m={m} onOpenTeam={onOpenTeam} />
+              ) : (
+                <RadarCard key={m._id} m={m} onOpenTeam={onOpenTeam} hits={(ruleHits as any)[m._id] ?? []} />
+              );
             const pending = visible.filter((m) => !m.result);
             const finished = visible.filter((m) => m.result);
             return (
@@ -629,9 +656,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
                 {pending.length === 0 && finished.length > 0 && (
                   <p className="font-mono text-[11px] text-on-surface-variant px-1">No queda ningún partido por jugar en estas fechas.</p>
                 )}
-                {pending.map((m) => (
-                  <RadarCard key={m._id} m={m} onOpenTeam={onOpenTeam} hits={(ruleHits as any)[m._id] ?? []} />
-                ))}
+                {pending.map((m) => Card(m))}
                 {finished.length > 0 && (
                   <button
                     onClick={() => toggleFinished(!showFinished)}
@@ -646,8 +671,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
                     <span className="material-symbols-outlined text-[18px]">{showFinished ? "expand_less" : "expand_more"}</span>
                   </button>
                 )}
-                {showFinished &&
-                  finished.map((m) => <RadarCard key={m._id} m={m} onOpenTeam={onOpenTeam} hits={(ruleHits as any)[m._id] ?? []} />)}
+                {showFinished && finished.map((m) => Card(m))}
               </>
             );
           })()}

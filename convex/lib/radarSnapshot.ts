@@ -1,6 +1,7 @@
 import type { GenericDatabaseWriter } from "convex/server";
 import type { DataModel, Id } from "../_generated/dataModel";
 import { analyzeStoredMatch, newRadarContext, RadarContext } from "./radarMatch";
+import { BoldContext, boldForMatch, newBoldContext } from "./boldMatch";
 
 type Db = GenericDatabaseWriter<DataModel>;
 
@@ -10,7 +11,7 @@ type Db = GenericDatabaseWriter<DataModel>;
  * guardar el marcador (`late`). Nunca se reescribe una vez hay marcador: así
  * la evaluación compara con lo que el modelo decía ANTES.
  */
-export async function upsertSnapshot(db: Db, matchId: Id<"matches">, opts: { late?: boolean; rc?: RadarContext } = {}) {
+export async function upsertSnapshot(db: Db, matchId: Id<"matches">, opts: { late?: boolean; rc?: RadarContext; bc?: BoldContext } = {}) {
   const m = await db.get(matchId);
   if (!m) return null;
   const existing = await db
@@ -22,6 +23,8 @@ export async function upsertSnapshot(db: Db, matchId: Id<"matches">, opts: { lat
   const a = await analyzeStoredMatch(db, m, opts.rc ?? (await newRadarContext(db)));
   if (!a) return null;
   const mk = a.markets;
+  // Foto del Radar Audaz (para medir si su "locura" acierta)
+  const bold = a.fair ? await boldForMatch(db, opts.bc ?? (await newBoldContext(db)), m, a) : null;
   const doc = {
     matchId,
     date: m.date,
@@ -65,6 +68,7 @@ export async function upsertSnapshot(db: Db, matchId: Id<"matches">, opts: { lat
       }))
     ),
     studyScore: a.studyScore,
+    bold: bold ? { probs: bold.probs, pick: bold.pick, craziness: bold.craziness, level: bold.level, parts: bold.parts.map((p) => p.source) } : undefined,
   };
   if (existing) {
     await db.patch(existing._id, doc);

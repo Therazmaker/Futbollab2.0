@@ -11,6 +11,8 @@
 import type * as crons from "../crons.js";
 import type * as footballData from "../footballData.js";
 import type * as legacy from "../legacy.js";
+import type * as lib_bold from "../lib/bold.js";
+import type * as lib_boldMatch from "../lib/boldMatch.js";
 import type * as lib_competitionTable from "../lib/competitionTable.js";
 import type * as lib_engine from "../lib/engine.js";
 import type * as lib_features from "../lib/features.js";
@@ -35,6 +37,7 @@ import type * as lib_ratingModel from "../lib/ratingModel.js";
 import type * as lib_ratingStore from "../lib/ratingStore.js";
 import type * as lib_ruleAi from "../lib/ruleAi.js";
 import type * as lib_ruleBacktest from "../lib/ruleBacktest.js";
+import type * as lib_ruleMatch from "../lib/ruleMatch.js";
 import type * as lib_season from "../lib/season.js";
 import type * as lib_teamMatches from "../lib/teamMatches.js";
 import type * as lib_teamRatings from "../lib/teamRatings.js";
@@ -58,6 +61,8 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   footballData: typeof footballData;
   legacy: typeof legacy;
+  "lib/bold": typeof lib_bold;
+  "lib/boldMatch": typeof lib_boldMatch;
   "lib/competitionTable": typeof lib_competitionTable;
   "lib/engine": typeof lib_engine;
   "lib/features": typeof lib_features;
@@ -82,6 +87,7 @@ declare const fullApi: ApiFromModules<{
   "lib/ratingStore": typeof lib_ratingStore;
   "lib/ruleAi": typeof lib_ruleAi;
   "lib/ruleBacktest": typeof lib_ruleBacktest;
+  "lib/ruleMatch": typeof lib_ruleMatch;
   "lib/season": typeof lib_season;
   "lib/teamMatches": typeof lib_teamMatches;
   "lib/teamRatings": typeof lib_teamRatings;

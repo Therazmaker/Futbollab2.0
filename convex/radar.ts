@@ -1,4 +1,5 @@
 import { mutation, query } from "./_generated/server";
+import { boldForMatch, newBoldContext } from "./lib/boldMatch";
 import { v } from "convex/values";
 import { analyzeStoredMatch, newRadarContext } from "./lib/radarMatch";
 import { upsertSnapshot } from "./lib/radarSnapshot";
@@ -11,8 +12,8 @@ import { homeCompetition } from "./lib/noLeague";
  * probabilidades por mercado, cuotas, alertas y Study Score.
  */
 export const getRadar = query({
-  args: { fromDate: v.string(), toDate: v.string(), competition: v.optional(v.string()) },
-  handler: async (ctx, { fromDate, toDate, competition }) => {
+  args: { fromDate: v.string(), toDate: v.string(), competition: v.optional(v.string()), bold: v.optional(v.boolean()) },
+  handler: async (ctx, { fromDate, toDate, competition, bold }) => {
     const rows = (
       await ctx.db
         .query("matches")
@@ -22,10 +23,12 @@ export const getRadar = query({
       .filter((m) => !competition || competition === "all" || m.league === competition)
       .slice(0, 120);
     const rc = await newRadarContext(ctx.db);
+    const bc = bold ? await newBoldContext(ctx.db) : null;
     const out = [];
     for (const m of rows) {
       const a = await analyzeStoredMatch(ctx.db, m, rc);
-      if (a) out.push(a);
+      if (!a) continue;
+      out.push(bc ? { ...a, bold: await boldForMatch(ctx.db, bc, m, a) } : a);
     }
     out.sort((a, b) => b.studyScore - a.studyScore || (a.date < b.date ? -1 : 1));
     return out;
@@ -117,8 +120,9 @@ export const snapshotRange = mutation({
       .filter((m) => m.homeGoals === undefined)
       .slice(0, 60);
     const rc = await newRadarContext(ctx.db);
+    const bc = await newBoldContext(ctx.db);
     let n = 0;
-    for (const m of rows) if (await upsertSnapshot(ctx.db, m._id, { rc })) n++;
+    for (const m of rows) if (await upsertSnapshot(ctx.db, m._id, { rc, bc })) n++;
     return n;
   },
 });
@@ -145,6 +149,9 @@ export const getTraining = query({
           homeGoals: m.homeGoals,
           awayGoals: m.awayGoals,
           closingOdds: m.closingOdds ?? null,
+          userPicks: (await ctx.db.query("radarPicks").withIndex("by_match", (q) => q.eq("matchId", m._id)).collect())
+            .filter((p) => p.source === "user" && (p.market === "result" || p.market === "doubleChance"))
+            .map((p) => ({ market: p.market, pick: p.pick, odds: p.odds ?? null })),
           playerLogs: logs.map((l) => ({ playerId: l.playerId as string, goals: num(l.rawStats?.goals), shots: num(l.rawStats?.totalShots ?? l.rawStats?.shots) })),
         },
       });
