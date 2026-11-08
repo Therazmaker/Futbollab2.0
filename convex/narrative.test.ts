@@ -660,3 +660,61 @@ describe("Radar Audaz", () => {
     expect(s.bold.probs.home).toBeGreaterThan(0);
   });
 });
+
+import { thesisSchema, learnSchema } from "./lib/thesisAi";
+
+describe("Mi tesis", () => {
+  test("esquemas para la IA bien formados", () => {
+    const s: any = thesisSchema();
+    expect(s.required).toEqual(["market", "pick", "confidence", "reasons", "feedback", "rule"]);
+    expect(s.properties.rule.required).not.toContain("explanation");
+    expect((learnSchema() as any).properties.rules.items.required).toContain("basedOn");
+  });
+
+  test("Convex: la tesis crea tu pronóstico y una regla propuesta; se resuelve y alimenta el aprendizaje", async () => {
+    const t = convexTest(schema, modules);
+    const a = await t.mutation(api.teams.createTeam, { name: "Forest", league: "premier" });
+    const b = await t.mutation(api.teams.createTeam, { name: "City", league: "premier" });
+    await t.mutation(api.teams.addMatchResult, { homeTeamId: a, awayTeamId: b, homeGoals: 1, awayGoals: 1, date: "2026-09-01" });
+    const m = await t.mutation(api.radar.addRadarMatch, { homeTeamId: a, awayTeamId: b, date: "2026-11-07", competition: "premier" });
+    await t.mutation(api.radar.setOdds, { matchId: m, home: 4.5, draw: 3.9, away: 1.7 });
+    const args = {
+      matchId: m, text: "El City viene de Champions y el Forest se encierra: el City no gana", market: "doubleChance", pick: "home_draw",
+      confidence: 0.6, reasons: ["City cansado", "Forest a la contra"], feedback: "El mercado ya da 41 % a que no gane.", model: "gemini:x",
+      rule: { name: "Favorito cansado", conditions: [{ feature: "fav_midweek", op: "=", value: 1 }], target: "fav_not_win", manualChecks: ["¿rota?"] },
+    };
+    const r1 = await t.mutation(api.theses.saveThesis, args);
+    expect(r1.ruleId).not.toBeNull();
+    // Reescribir: sustituye tesis, pronóstico de ese mercado y la regla propuesta no activada
+    const r2 = await t.mutation(api.theses.saveThesis, { ...args, rule: { ...args.rule, conditions: [{ feature: "team_ga_last", op: ">=", value: 3 }] } });
+    expect(r2.ruleId).toBeNull(); // regla de equipo sin equipo → no válida, no se guarda
+    expect(await t.run((c) => c.db.query("radarRules").collect())).toHaveLength(0);
+    await t.mutation(api.theses.saveThesis, args);
+    const picks = await t.query(api.radarAi.getPicks, { matchId: m });
+    expect(picks.filter((p) => p.source === "user")).toHaveLength(1);
+    expect(picks[0]).toMatchObject({ market: "doubleChance", pick: "home_draw", confidence: 0.6 });
+    expect(picks[0].systemProb).toBeGreaterThan(0.3);
+    let th = await t.query(api.theses.getTheses, { matchId: m });
+    expect(th[0]).toMatchObject({ label: "Forest o empate (1X)", verdict: null });
+    expect(th[0].rule!.active).toBe(false);
+
+    await t.mutation(api.teams.setMatchScore, { matchId: m, homeGoals: 3, awayGoals: 1 });
+    th = await t.query(api.theses.getTheses, { matchId: m });
+    expect(th[0]).toMatchObject({ verdict: "won", score: "3-1" });
+    await expect(t.mutation(api.theses.saveThesis, args)).rejects.toThrow(/antes de jugarse/);
+    await expect(t.mutation(api.theses.deleteThesis, { thesisId: th[0]._id })).rejects.toThrow(/aprender/);
+    const learning = await t.query(api.theses.thesesForLearning, {});
+    expect(learning[0]).toMatchObject({ verdict: "won", prediction: "Forest o empate (1X)" });
+    expect(learning[0].match).toContain("3-1");
+
+    const ids = await t.mutation(api.theses.saveLearnedRules, {
+      rules: [
+        { name: "Bien", text: "x", conditions: [{ feature: "fav_prob", op: ">=", value: 0.6 }], target: "fav_not_win", manualChecks: [] },
+        { name: "Mal", text: "x", conditions: [{ feature: "inventado", op: ">=", value: 1 }], target: "draw", manualChecks: [] },
+      ],
+    });
+    expect(ids).toHaveLength(1);
+    const rules = await t.query(api.rules.listRules, {});
+    expect(rules.find((r) => r.name === "Bien")).toMatchObject({ origin: "learned", active: false });
+  });
+});

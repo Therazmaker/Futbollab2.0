@@ -5,6 +5,8 @@ import type { Id } from "../../../../convex/_generated/dataModel";
 import { callAi, HttpError } from "@/lib/aiCall";
 import { PREVIEW_SCHEMA, PREVIEW_SYSTEM, previewPrompt, normalizePreview } from "../../../../convex/lib/preview";
 import { ruleSchema, ruleSystem, rulePrompt } from "../../../../convex/lib/ruleAi";
+import { thesisSchema, thesisSystem, thesisPrompt, learnSchema, learnSystem } from "../../../../convex/lib/thesisAi";
+import { isValidPick } from "../../../../convex/lib/picks";
 import { validateRule, type Condition } from "../../../../convex/lib/features";
 import { AI_PREDICT_SCHEMA, AI_PREDICT_SYSTEM, aiPredictPrompt, normalizeAiPicks } from "../../../../convex/lib/aiPredict";
 
@@ -56,6 +58,44 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: err?.message ?? String(err) }, { status });
     }
   }
+  // Aprender de las tesis resueltas → reglas nuevas (inactivas) probadas en el histórico
+  if (body?.action === "learn") {
+    try {
+      const theses = await convex.query(api.theses.thesesForLearning, {});
+      if (theses.length < 3) return NextResponse.json({ error: `Hacen falta al menos 3 tesis resueltas (tienes ${theses.length}).` }, { status: 422 });
+      const settings = await convex.query(api.narratives.getAiSettings, {});
+      const { raw, model } = await callAi(
+        settings,
+        learnSystem(),
+        `TESIS RESUELTAS (${theses.length}):\n${theses
+          .map((t, i) => `${i + 1}. ${t.match}\n   Tesis: ${t.thesis}\n   Pronóstico: ${t.prediction} → ${t.verdict === "won" ? "ACERTÓ" : "FALLÓ"}\n   Razones: ${t.reasons.join("; ")}`)
+          .join("\n")}`,
+        learnSchema() as unknown as Record<string, unknown>
+      );
+      const rules = [];
+      for (const r of (Array.isArray(raw?.rules) ? raw.rules : []).slice(0, 3)) {
+        const teamName = typeof r?.teamName === "string" ? r.teamName.trim() : "";
+        const team = teamName ? await convex.query(api.rules.resolveTeam, { name: teamName }) : null;
+        if (teamName && !team) continue;
+        const conditions = (Array.isArray(r?.conditions) ? r.conditions : []).map((c: any) => ({ feature: String(c?.feature ?? ""), op: c?.op === "<=" || c?.op === "=" ? c.op : ">=", value: Number(c?.value) }));
+        if (validateRule({ conditions, target: String(r?.target ?? ""), teamScoped: !!team }).length) continue;
+        rules.push({
+          name: String(r?.name ?? "Regla aprendida").slice(0, 80),
+          text: `Aprendida de tus tesis: ${String(r?.basedOn ?? "").slice(0, 400)}`,
+          teamId: team?._id,
+          conditions,
+          target: String(r.target),
+          manualChecks: Array.isArray(r?.manualChecks) ? r.manualChecks.filter((x: unknown) => typeof x === "string") : [],
+        });
+      }
+      const ids = rules.length ? await convex.mutation(api.theses.saveLearnedRules, { rules }) : [];
+      for (const ruleId of ids) await convex.action(api.rules.runBacktest, { ruleId });
+      return NextResponse.json({ ok: true, summary: typeof raw?.summary === "string" ? raw.summary : "", created: ids.length, model });
+    } catch (err: any) {
+      const status = err instanceof HttpError ? err.status : 500;
+      return NextResponse.json({ error: err?.message ?? String(err) }, { status });
+    }
+  }
   const matchId = body?.matchId as Id<"matches"> | undefined;
   if (!matchId) return NextResponse.json({ error: "Falta el partido" }, { status: 400 });
   const [settings, ctx] = await Promise.all([
@@ -79,6 +119,45 @@ export async function POST(req: NextRequest) {
       const analysis = normalizePreview(raw);
       await convex.mutation(api.radarAi.savePreview, { matchId, text, provider: settings.provider, model, analysis });
       return NextResponse.json({ ok: true, analysis, model });
+    }
+    if (body.action === "thesis") {
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      if (text.length < 15) return NextResponse.json({ error: "Cuéntale un poco más: qué ves y qué crees que va a pasar." }, { status: 422 });
+      const context = [
+        `${ctx.home} vs ${ctx.away} · ${ctx.date} · ${ctx.competition}`,
+        `1X2 (${ctx.fair ? "mercado + correcciones" : "modelo"}): ${Math.round(ctx.probs.home * 100)}% / ${Math.round(ctx.probs.draw * 100)}% / ${Math.round(ctx.probs.away * 100)}% · modelo solo ${Math.round(ctx.modelProbs.home * 100)}/${Math.round(ctx.modelProbs.draw * 100)}/${Math.round(ctx.modelProbs.away * 100)}`,
+        ctx.odds ? `Cuotas: ${ctx.odds.home} / ${ctx.odds.draw} / ${ctx.odds.away}` : "Sin cuotas",
+        ...ctx.reading,
+        `Bajas: ${ctx.home}: ${ctx.absences.home.join(", ") || "ninguna"} · ${ctx.away}: ${ctx.absences.away.join(", ") || "ninguna"}`,
+        `Narraciones ${ctx.home}: ${ctx.trends.home.join(" ") || "sin datos"}`,
+        `Narraciones ${ctx.away}: ${ctx.trends.away.join(" ") || "sin datos"}`,
+        ctx.preview ? `Previa: ${ctx.preview.summary}` : "",
+      ].filter(Boolean).join("\n");
+      const { raw, model } = await callAi(settings, thesisSystem(), thesisPrompt(context, text), thesisSchema() as unknown as Record<string, unknown>);
+      const market = String(raw?.market ?? "");
+      const pick = String(raw?.pick ?? "");
+      if (!isValidPick(market, pick)) throw new HttpError(502, "La IA no entendió bien el pronóstico; prueba a decirlo más claro (p. ej. «el Sevilla no gana»).");
+      const r = raw?.rule ?? {};
+      const teamName = typeof r?.teamName === "string" ? r.teamName.trim() : "";
+      const team = teamName ? await convex.query(api.rules.resolveTeam, { name: teamName }) : null;
+      const conditions = (Array.isArray(r?.conditions) ? r.conditions : []).map((c: any) => ({ feature: String(c?.feature ?? ""), op: c?.op === "<=" || c?.op === "=" ? c.op : ">=", value: Number(c?.value) }));
+      const ruleOk = conditions.length > 0 && (!teamName || team) && !validateRule({ conditions, target: String(r?.target ?? ""), teamScoped: !!team }).length;
+      const c = Number(raw?.confidence);
+      const saved = await convex.mutation(api.theses.saveThesis, {
+        matchId,
+        text,
+        market,
+        pick,
+        confidence: Number.isFinite(c) ? Math.min(0.99, Math.max(0.01, c > 1 ? c / 100 : c)) : undefined,
+        reasons: Array.isArray(raw?.reasons) ? raw.reasons.filter((x: unknown) => typeof x === "string").slice(0, 8) : [],
+        feedback: typeof raw?.feedback === "string" ? raw.feedback : "",
+        model: `${settings.provider}:${model}`,
+        rule: ruleOk
+          ? { name: String(r.name ?? "Regla de mi tesis"), teamId: team?._id, conditions, target: String(r.target), manualChecks: Array.isArray(r.manualChecks) ? r.manualChecks.filter((x: unknown) => typeof x === "string") : [] }
+          : undefined,
+      });
+      if (saved.ruleId) await convex.action(api.rules.runBacktest, { ruleId: saved.ruleId });
+      return NextResponse.json({ ok: true, ...saved, model });
     }
     if (body.action === "predict") {
       const { raw, model } = await callAi(settings, AI_PREDICT_SYSTEM, aiPredictPrompt(ctx), AI_PREDICT_SCHEMA as unknown as Record<string, unknown>);

@@ -1,6 +1,7 @@
 "use client";
 
-import React from "react";
+import React, { useState } from "react";
+import { ThesisSheet } from "./ThesisSheet";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -37,6 +38,9 @@ function Bar({ p, label }: { p: { home: number; draw: number; away: number }; la
 /** Tarjeta del Radar Audaz: mercado vs audaz, por qué se aleja, su apuesta y si coincide contigo. */
 export function BoldCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"teams">) => void }) {
   const picks = useQuery(api.radarAi.getPicks, { matchId: m._id }) ?? [];
+  const theses = useQuery(api.theses.getTheses, { matchId: m._id }) ?? [];
+  const [thesisOpen, setThesisOpen] = useState(false);
+  const th: any = theses[0];
   const b = m.bold;
   const name = (o: string) => (o === "home" ? m.home.name : o === "away" ? m.away.name : "Empate");
   const mine = picks.filter((p: any) => p.source === "user" && (p.market === "result" || p.market === "doubleChance"));
@@ -124,6 +128,19 @@ export function BoldCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"teams
             ))}
         </>
       )}
+      <div className="flex items-center gap-2 font-mono text-[10px]">
+        <button onClick={() => setThesisOpen(true)} className="px-2 h-7 rounded-lg bg-surface-container-high text-secondary border border-secondary/30">
+          💬 {th ? "Mi tesis" : m.result ? "Tesis" : "Escribir mi tesis"}
+        </button>
+        {th && (
+          <span className="text-on-surface-variant truncate">
+            {th.label}
+            {th.verdict ? (th.verdict === "won" ? " ✓" : " ✗") : ""}
+            {th.rule ? (th.rule.active ? " · regla activa" : " · regla propuesta") : ""}
+          </span>
+        )}
+      </div>
+      {thesisOpen && <ThesisSheet matchId={m._id} homeName={m.home.name} awayName={m.away.name} played={!!m.result} onClose={() => setThesisOpen(false)} />}
     </div>
   );
 }
