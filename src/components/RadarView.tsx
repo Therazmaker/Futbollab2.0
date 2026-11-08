@@ -13,6 +13,7 @@ import { PredictionsSheet } from "./PredictionsSheet";
 import { RadarHistory } from "./RadarHistory";
 import { RadarRules } from "./RadarRules";
 import { BoldCard } from "./BoldCard";
+import { QuickResultSheet } from "./QuickResultSheet";
 import { ThesesSummary } from "./ThesisSheet";
 
 interface RadarViewProps {
@@ -121,11 +122,21 @@ function clvText(m: any) {
   return parts.length ? ` · CLV ${parts.join(" · ")}` : "";
 }
 
-export function RadarCard({ m, onOpenTeam, hits = [] }: { m: any; onOpenTeam: (id: Id<"teams">) => void; hits?: any[] }) {
+export function RadarCard({
+  m,
+  onOpenTeam,
+  hits = [],
+  onRegister,
+}: {
+  m: any;
+  onOpenTeam: (id: Id<"teams">) => void;
+  hits?: any[];
+  onRegister?: (m: any) => void;
+}) {
   const [editingOdds, setEditingOdds] = useState(false);
   const [editingClose, setEditingClose] = useState(false);
   const [reading, setReading] = useState(false);
-  const [sheet, setSheet] = useState<null | "preview" | "picks">(null);
+  const [sheet, setSheet] = useState<null | "preview" | "picks" | "result">(null);
   const picks = useQuery(api.radarAi.getPicks, { matchId: m._id }) ?? [];
   const [open, setOpen] = useState(false);
   const P = m.markets.probabilities;
@@ -247,6 +258,12 @@ export function RadarCard({ m, onOpenTeam, hits = [] }: { m: any; onOpenTeam: (i
 
       {/* Análisis previo + predicciones (Radar Analysis Editor / Entrenamiento del FutbolLab viejo) */}
       <div className="mt-2 flex flex-wrap items-center gap-1.5 font-mono text-[10px]">
+        <button
+          onClick={() => (onRegister ? onRegister(m) : setSheet("result"))}
+          className={`px-2 h-7 rounded-lg border font-bold ${m.result ? "bg-surface-container-high text-on-surface-variant border-surface-container-high" : "bg-primary text-on-primary border-primary"}`}
+        >
+          {m.result ? `✓ ${m.result.home}-${m.result.away}` : "✓ Registrar resultado"}
+        </button>
         <button onClick={() => setSheet("preview")} className="px-2 h-7 rounded-lg bg-surface-container-high text-secondary border border-secondary/30">
           📝 Previa
         </button>
@@ -267,6 +284,7 @@ export function RadarCard({ m, onOpenTeam, hits = [] }: { m: any; onOpenTeam: (i
             </span>
           ))}
       </div>
+      {sheet === "result" && <QuickResultSheet match={m} onClose={() => setSheet(null)} />}
       {sheet === "preview" && (
         <RadarAnalysisEditor matchId={m._id} homeName={m.home.name} awayName={m.away.name} played={!!m.result} onClose={() => setSheet(null)} />
       )}
@@ -460,6 +478,8 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
 
   const rows = useQuery(api.radar.getRadar, { fromDate, toDate, competition, ...(mode === "bold" ? { bold: true } : {}) });
   const [onlyCrazy, setOnlyCrazy] = useState(false);
+  // Hoja de registro fuera de las tarjetas: al guardar, el partido pasa a "Terminados" y su tarjeta se pliega
+  const [registering, setRegistering] = useState<any | null>(null);
   const ruleHits = useQuery(api.rules.ruleHits, { fromDate, toDate }) ?? {};
   const [onlyRules, setOnlyRules] = useState(false);
   // Terminados plegados por defecto (se recuerda en este navegador)
@@ -497,6 +517,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
 
   return (
     <div className="flex flex-col w-full gap-space-md">
+      {registering && <QuickResultSheet match={registering} onClose={() => setRegistering(null)} />}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-bold text-on-surface flex items-center gap-1.5">
@@ -647,9 +668,9 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
               .filter((m: any) => mode !== "bold" || !onlyCrazy || (m.bold && m.bold.level !== "mercado"));
             const Card = (m: any) =>
               mode === "bold" ? (
-                <BoldCard key={m._id} m={m} onOpenTeam={onOpenTeam} />
+                <BoldCard key={m._id} m={m} onOpenTeam={onOpenTeam} onRegister={setRegistering} />
               ) : (
-                <RadarCard key={m._id} m={m} onOpenTeam={onOpenTeam} hits={(ruleHits as any)[m._id] ?? []} />
+                <RadarCard key={m._id} m={m} onOpenTeam={onOpenTeam} hits={(ruleHits as any)[m._id] ?? []} onRegister={setRegistering} />
               );
             const pending = visible.filter((m) => !m.result);
             const finished = visible.filter((m) => m.result);
