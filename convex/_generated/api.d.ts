@@ -40,6 +40,7 @@ import type * as lib_ruleBacktest from "../lib/ruleBacktest.js";
 import type * as lib_ruleMatch from "../lib/ruleMatch.js";
 import type * as lib_season from "../lib/season.js";
 import type * as lib_teamMatches from "../lib/teamMatches.js";
+import type * as lib_thesisAi from "../lib/thesisAi.js";
 import type * as lib_teamRatings from "../lib/teamRatings.js";
 import type * as lib_xgBlend from "../lib/xgBlend.js";
 import type * as narratives from "../narratives.js";
@@ -50,6 +51,7 @@ import type * as results from "../results.js";
 import type * as rules from "../rules.js";
 import type * as predictions from "../predictions.js";
 import type * as teams from "../teams.js";
+import type * as theses from "../theses.js";
 
 import type {
   ApiFromModules,
@@ -90,6 +92,7 @@ declare const fullApi: ApiFromModules<{
   "lib/ruleMatch": typeof lib_ruleMatch;
   "lib/season": typeof lib_season;
   "lib/teamMatches": typeof lib_teamMatches;
+  "lib/thesisAi": typeof lib_thesisAi;
   "lib/teamRatings": typeof lib_teamRatings;
   "lib/xgBlend": typeof lib_xgBlend;
   narratives: typeof narratives;
@@ -100,6 +103,7 @@ declare const fullApi: ApiFromModules<{
   rules: typeof rules;
   predictions: typeof predictions;
   teams: typeof teams;
+  theses: typeof theses;
 }>;
 
 /**

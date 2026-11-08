@@ -13,6 +13,7 @@ import { PredictionsSheet } from "./PredictionsSheet";
 import { RadarHistory } from "./RadarHistory";
 import { RadarRules } from "./RadarRules";
 import { BoldCard } from "./BoldCard";
+import { ThesesSummary } from "./ThesisSheet";
 
 interface RadarViewProps {
   onOpenTeam: (teamId: Id<"teams">) => void;
@@ -592,6 +593,7 @@ export function RadarView({ onOpenTeam }: RadarViewProps) {
             Sus pesos no están validados: es el experimento. En Entrenamiento ves si su locura acierta más que el conservador, y sobre todo si cuando
             coincide contigo ganáis.
           </p>
+          <ThesesSummary />
           <label className="flex items-center gap-2 cursor-pointer text-[11px]">
             <input type="checkbox" checked={onlyCrazy} onChange={(e) => setOnlyCrazy(e.target.checked)} />
             Solo los que se alejan del mercado (atrevidos y locos)

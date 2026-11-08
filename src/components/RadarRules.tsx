@@ -88,6 +88,8 @@ export function RadarRules() {
                   {r.name}
                   {r.teamName && <span className="text-secondary"> · {r.teamName}</span>}
                 </p>
+                {r.origin === "thesis" && <p className="text-[9px] text-secondary">💬 Sale de una tesis tuya{r.active ? "" : " · propuesta, actívala si te convence"}</p>}
+                {r.origin === "learned" && <p className="text-[9px] text-secondary">🧠 La IA la aprendió de tus tesis{r.active ? "" : " · propuesta, actívala si te convence"}</p>}
                 <p className="text-[10px] text-on-surface-variant italic">«{r.text}»</p>
               </div>
               {v && <span className={`shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold ${v.cls}`}>{v.label}</span>}
