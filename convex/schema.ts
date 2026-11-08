@@ -203,6 +203,7 @@ export default defineSchema({
     bestEdge: v.optional(v.any()),
     players: v.any(), // [{ playerId, teamId, pScore, pShot1, pShot2, xG, minutes, rating }]
     studyScore: v.number(),
+    bold: v.optional(v.any()), // foto del Radar Audaz: probs, pick, craziness, level, fuentes
   }).index("by_match", ["matchId"]),
 
   // Lesiones de jugadores (la abierta = sin endDate)
@@ -298,7 +299,26 @@ export default defineSchema({
     manualChecks: v.array(v.string()), // lo que no se puede medir con datos: se revisa a mano
     active: v.boolean(),
     originMatchId: v.optional(v.id("matches")), // partido que la inspiró ("¿qué me faltó mirar?")
+    origin: v.optional(v.string()), // "manual" | "thesis" (de una tesis tuya) | "learned" (la IA aprendiendo de tus tesis)
+    thesisId: v.optional(v.id("radarTheses")),
     backtest: v.optional(v.any()),
     createdAt: v.number(),
   }),
+
+  // "Mi tesis" (Radar Audaz): lo que ves en un partido y lo que crees que pasará, antes de jugarse
+  radarTheses: defineTable({
+    matchId: v.id("matches"),
+    matchDate: v.string(),
+    text: v.string(),
+    market: v.string(),
+    pick: v.string(),
+    confidence: v.optional(v.number()),
+    reasons: v.array(v.string()),
+    feedback: v.string(), // lo que la IA ve a favor y en contra
+    ruleId: v.optional(v.id("radarRules")), // regla general propuesta a partir de la tesis
+    model: v.string(),
+    createdAt: v.number(),
+  })
+    .index("by_match", ["matchId"])
+    .index("by_date", ["matchDate"]),
 });

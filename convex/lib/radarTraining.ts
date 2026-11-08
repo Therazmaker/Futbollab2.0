@@ -21,6 +21,8 @@ export interface EvalSnapshot {
   bestEdge?: { outcome: "home" | "draw" | "away"; odds: number; model: number; fair: number } | null;
   players: Array<{ playerId: string; pScore: number; pShot1: number; pShot2: number }>;
   late: boolean;
+  /** Foto del Radar Audaz */
+  bold?: { probs: { home: number; draw: number; away: number }; pick: { outcome: "home" | "draw" | "away"; prob: number; market: number; odds: number | null } | null; level: string } | null;
 }
 
 export interface EvalResult {
@@ -28,6 +30,8 @@ export interface EvalResult {
   awayGoals: number;
   /** Cuotas de cierre del mercado (para el CLV) */
   closingOdds?: { home: number; draw: number; away: number } | null;
+  /** Tus pronósticos de 1X2 / doble oportunidad (para ver si coincides con el Audaz) */
+  userPicks?: Array<{ market: string; pick: string; odds: number | null }>;
   /** Partidos de jugadores de ese partido: goles y tiros reales */
   playerLogs: Array<{ playerId: string; goals: number | null; shots: number | null }>;
 }
@@ -100,6 +104,14 @@ export function evaluate(rows: Array<{ snap: EvalSnapshot; result: EvalResult }>
   const vsClose = { n: 0, llModel: 0, llClose: 0, llFinal: 0 };
   // ¿Tus correcciones (bajas) mejoran al mercado? Δ log-loss = final − mercado
   const corr = { n: 0, sum: 0, sum2: 0 };
+  // Radar Audaz
+  const bold = {
+    n: 0, llBold: 0, llFinal: 0, nClose: 0, llClose: 0,
+    picks: { n: 0, hits: 0, staked: 0, profit: 0, clv: 0, nClv: 0 },
+    agree: { n: 0, hits: 0, staked: 0, profit: 0 },
+    disagree: { n: 0, hits: 0, staked: 0, profit: 0 },
+    levels: {} as Record<string, { n: number; hits: number; staked: number; profit: number }>,
+  };
 
   for (const { snap, result } of rows) {
     if (snap.late) late++;
@@ -179,6 +191,31 @@ export function evaluate(rows: Array<{ snap: EvalSnapshot; result: EvalResult }>
         corr.n++;
         corr.sum += d;
         corr.sum2 += d * d;
+      }
+    }
+    if (snap.bold) {
+      const B = snap.bold.probs;
+      bold.n++;
+      bold.llBold += -Math.log(Math.max(1e-6, B[out]));
+      bold.llFinal += -Math.log(Math.max(1e-6, P[out]));
+      const cl = fairOf(result.closingOdds);
+      if (cl) { bold.nClose++; bold.llClose += -Math.log(Math.max(1e-6, cl[out])); }
+      const bp = snap.bold.pick;
+      if (bp) {
+        const hit = bp.outcome === out;
+        const k = bold.picks;
+        k.n++; if (hit) k.hits++;
+        if (bp.odds) { k.staked++; k.profit += hit ? bp.odds - 1 : -1; if (cl) { k.clv += bp.odds * cl[bp.outcome] - 1; k.nClv++; } }
+        const lv = (bold.levels[snap.bold.level] ??= { n: 0, hits: 0, staked: 0, profit: 0 });
+        lv.n++; if (hit) lv.hits++; if (bp.odds) { lv.staked++; lv.profit += hit ? bp.odds - 1 : -1; }
+        // ¿Coincide tu pronóstico con la apuesta audaz?
+        for (const up of result.userPicks ?? []) {
+          const covers = up.market === "result" ? up.pick === bp.outcome : up.market === "doubleChance" ? up.pick.split("_").includes(bp.outcome) || (up.pick === "home_away" && bp.outcome !== "draw") : false;
+          const userHit = up.market === "result" ? up.pick === out : up.pick === "home_draw" ? out !== "away" : up.pick === "away_draw" ? out !== "home" : out !== "draw";
+          const g = covers ? bold.agree : bold.disagree;
+          g.n++; if (userHit) g.hits++;
+          if (up.odds) { g.staked++; g.profit += userHit ? up.odds - 1 : -1; }
+        }
       }
     }
     // CLV y movimiento de la cuota
@@ -329,7 +366,25 @@ export function evaluate(rows: Array<{ snap: EvalSnapshot; result: EvalResult }>
     );
   }
 
+  const grp = (g: { n: number; hits: number; staked: number; profit: number }) => ({
+    n: g.n, hits: g.hits, rate: g.n ? g.hits / g.n : null, ci: wilson(g.hits, g.n), roi: g.staked ? g.profit / g.staked : null, staked: g.staked,
+  });
+  const boldRow = bold.n
+    ? {
+        n: bold.n,
+        logLossBold: bold.llBold / bold.n,
+        logLossFinal: bold.llFinal / bold.n,
+        logLossClose: bold.nClose ? bold.llClose / bold.nClose : null,
+        nClose: bold.nClose,
+        picks: { ...grp(bold.picks), clv: bold.picks.nClv ? bold.picks.clv / bold.picks.nClv : null, nClv: bold.picks.nClv },
+        agree: grp(bold.agree),
+        disagree: grp(bold.disagree),
+        levels: Object.fromEntries(Object.entries(bold.levels).map(([k, g]) => [k, grp(g)])),
+      }
+    : null;
+
   return {
+    bold: boldRow,
     corrections: corrRow,
     clv: clvRow,
     towardModel: toward.n ? { n: toward.n, rate: toward.hits / toward.n, ci: wilson(toward.hits, toward.n) } : null,

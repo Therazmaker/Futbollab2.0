@@ -92,6 +92,7 @@ export function TrainingReport({ data, competition }: { data: any; competition: 
   return (
     <div className="flex flex-col gap-3">
       <ClvCard data={data} />
+      <BoldTrainCard data={data} />
       <div className={`${card} font-mono text-[11px] flex flex-col gap-1`}>
         <div className="flex justify-between items-baseline">
           <span className="text-on-surface font-bold text-sm">{data.matches} partidos evaluados</span>
@@ -311,6 +312,62 @@ function ClvCard({ data }: { data: any }) {
         Es decir: con solo resultados el modelo no le gana al mercado. Lo que mide este panel es si TUS datos (bajas, narraciones, jugadores) sí lo
         hacen.
       </p>
+    </div>
+  );
+}
+
+/** Radar Audaz frente al conservador y al mercado, y cuando coincide contigo. */
+function BoldTrainCard({ data }: { data: any }) {
+  const b = data.bold;
+  const roi = (x: number | null) => (x === null ? "sin cuotas" : `ROI ${x >= 0 ? "+" : ""}${(x * 100).toFixed(1)}%`);
+  const g = (x: any, label: string) =>
+    x && x.n ? (
+      <p className="text-on-surface-variant">
+        {label}: <b className="text-on-surface">{x.hits} de {x.n}</b> ({pct(x.rate)}) · {roi(x.roi)}
+        {x.n < 30 ? <span className="text-[9px]"> · margen {pct(x.ci.low)}–{pct(x.ci.high)}</span> : null}
+      </p>
+    ) : null;
+  return (
+    <div className={`${card} font-mono text-[11px] flex flex-col gap-1.5 border-error/30`}>
+      <span className="text-on-surface font-bold text-sm">🔥 Audaz vs conservador</span>
+      {!b ? (
+        <p className="text-on-surface-variant">
+          Aún no hay partidos evaluados con foto del Audaz. Se guarda sola antes de cada partido con cuotas; en cuanto haya resultados, aquí verás si su
+          locura acierta.
+        </p>
+      ) : (
+        <>
+          <p className="text-on-surface-variant">
+            1X2 en {b.n} partidos (log-loss, menor = mejor): <b className="text-on-surface">Audaz {b.logLossBold.toFixed(3)}</b> · conservador{" "}
+            {b.logLossFinal.toFixed(3)}
+            {b.logLossClose !== null ? ` · cierre ${b.logLossClose.toFixed(3)}` : ""}
+          </p>
+          <p className={b.logLossBold < b.logLossFinal ? "text-primary" : "text-on-surface-variant"}>
+            {b.logLossBold < b.logLossFinal
+              ? "Por ahora el Audaz predice mejor que el conservador."
+              : "Por ahora el conservador predice mejor: la locura todavía no paga."}
+            {b.n < 100 ? " Con menos de 100 partidos puede cambiar mucho." : ""}
+          </p>
+          {g(b.picks, "Apuestas audaces")}
+          {b.picks.clv !== null && (
+            <p className="text-on-surface-variant">
+              CLV de las apuestas audaces ({b.picks.nClv}): <b className={b.picks.clv >= 0 ? "text-primary" : "text-error"}>{b.picks.clv >= 0 ? "+" : ""}{(b.picks.clv * 100).toFixed(1)}%</b>
+            </p>
+          )}
+          {Object.entries(b.levels ?? {}).map(([k, v]: any) => g(v, k === "loco" ? "Cuando está 🔥 loco" : k === "atrevido" ? "Cuando es atrevido" : "Cuando va con el mercado"))}
+          {(b.agree.n > 0 || b.disagree.n > 0) && (
+            <div className="border-t border-surface-container-high pt-1.5 flex flex-col gap-1">
+              <span className="text-on-surface font-bold">Tu intuición + el Audaz</span>
+              {g(b.agree, "🤝 Cuando coincides con el Audaz, tú aciertas")}
+              {g(b.disagree, "↔️ Cuando vas por otro lado, tú aciertas")}
+              <p className="text-[10px] text-on-surface-variant">
+                Si cuando coincidís aciertas claramente más (y con ROI positivo), ahí hay una idea con potencial: tu intuición y los datos audaces
+                diciendo lo mismo.
+              </p>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

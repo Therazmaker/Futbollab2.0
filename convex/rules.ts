@@ -7,6 +7,7 @@ import {
 } from "./lib/features";
 import { backtestRules, M } from "./lib/ruleBacktest";
 import { normalizeName } from "./lib/teamMatches";
+import { HistoryCache, RuleHit, rulesForMatch } from "./lib/ruleMatch";
 
 const condV = v.object({ feature: v.string(), op: v.string(), value: v.number() });
 
@@ -171,46 +172,11 @@ export const ruleHits = query({
     const rules = (await ctx.db.query("radarRules").collect()).filter((r) => r.active);
     if (!rules.length) return {};
     const matches = (await ctx.db.query("matches").withIndex("by_date", (q) => q.gte("date", fromDate).lte("date", toDate)).collect()).slice(0, 120);
-    const cache = new Map<string, TeamGame[]>();
-    const history = async (teamId: Id<"teams">, before: string) => {
-      const key = `${teamId}|${before}`;
-      if (cache.has(key)) return cache.get(key)!;
-      const [h, a] = await Promise.all([
-        ctx.db.query("matches").withIndex("by_home_and_date", (q) => q.eq("homeTeamId", teamId).lt("date", before)).order("desc").take(12),
-        ctx.db.query("matches").withIndex("by_away_and_date", (q) => q.eq("awayTeamId", teamId).lt("date", before)).order("desc").take(12),
-      ]);
-      const games = [...h.map((m) => teamGame(m, true)), ...a.map((m) => teamGame(m, false))]
-        .filter((g): g is TeamGame => !!g)
-        .sort((x, y) => (x.date < y.date ? -1 : 1))
-        .slice(-12);
-      cache.set(key, games);
-      return games;
-    };
-    const out: Record<string, Array<{ ruleId: string; name: string; targetLabel: string; verdict: string | null; rate: number | null; market: number | null; n: number; manualChecks: string[]; conditionsMet: boolean }>> = {};
+    const cache: HistoryCache = new Map();
+    const out: Record<string, RuleHit[]> = {};
     for (const m of matches) {
-      const fair = fairOf(m.odds ?? m.closingOdds);
-      const [hh, ah] = [await history(m.homeTeamId, m.date), await history(m.awayTeamId, m.date)];
-      for (const r of rules) {
-        let side: "home" | "away" | undefined;
-        if (r.teamId) {
-          if (r.teamId === m.homeTeamId) side = "home";
-          else if (r.teamId === m.awayTeamId) side = "away";
-          else continue;
-        }
-        let met = r.conditions.length === 0;
-        if (r.conditions.length) {
-          if (!fair) continue;
-          const f = computeFeatures(m.date, m.league, fair, hh, ah, side);
-          met = !!f && matchesConditions(f, r.conditions as Condition[]);
-        }
-        if (!met) continue;
-        const bt = r.backtest as any;
-        (out[m._id] ??= []).push({
-          ruleId: r._id, name: r.name, targetLabel: (TARGETS as Record<string, string>)[r.target] ?? r.target,
-          verdict: bt?.verdict ?? null, rate: bt?.rate ?? null, market: bt?.market ?? null, n: bt?.n ?? 0,
-          manualChecks: r.manualChecks, conditionsMet: true,
-        });
-      }
+      const hits = await rulesForMatch(ctx.db, cache, m, rules);
+      if (hits.length) out[m._id] = hits;
     }
     return out;
   },

@@ -589,3 +589,74 @@ describe("Detector de reglas", () => {
     expect(list.find((r) => r._id === ruleId)!.teamName).toBe("Equipo B");
   });
 });
+
+import { computeBold } from "./lib/bold";
+
+describe("Radar Audaz", () => {
+  const base = {
+    market: { home: 0.5, draw: 0.28, away: 0.22 },
+    odds: { home: 1.92, draw: 3.4, away: 4.25 },
+    modelBase: { home: 0.44, draw: 0.27, away: 0.29 },
+    modelWithAbsences: { home: 0.44, draw: 0.27, away: 0.29 },
+    rules: [] as any[],
+    trends: { home: null, away: null },
+    preview: null,
+    names: { home: "Sevilla", away: "Alavés" },
+  };
+  test("solo el modelo: se mueve pero NO apuesta", () => {
+    const r = computeBold(base);
+    expect(r.probs.home).toBeLessThan(0.5);
+    expect(r.parts.map((p) => p.source)).toEqual(["modelo"]);
+    expect(r.pick).toBeNull();
+  });
+  test("una regla con muestra + la previa: apuesta audaz con su porqué", () => {
+    const r = computeBold({
+      ...base,
+      rules: [{ ruleId: "r", name: "Underdog que empata", target: "draw", teamSide: null, rate: 0.36, market: 0.27, n: 120 } as any, { ruleId: "s", name: "Poca muestra", target: "draw", teamSide: null, rate: 0.6, market: 0.27, n: 5 } as any],
+      preview: { signals: { drawSignal: "high", upsetAlert: "low", narrativeFavours: "neutral", motivationGap: "neutral" } } as any,
+    });
+    expect(r.parts.map((p) => p.source)).toEqual(["modelo", "regla", "previa"]); // la de 5 casos no empuja
+    expect(r.probs.draw).toBeGreaterThan(0.36);
+    expect(r.pick).toMatchObject({ outcome: "draw", odds: 3.4 });
+    expect(r.pick!.ev).toBeGreaterThan(0.2);
+    expect(r.level).toBe("loco");
+    expect(r.probs.home + r.probs.draw + r.probs.away).toBeCloseTo(1, 2);
+  });
+  test("bajas a peso completo (el conservador las usa a medio)", () => {
+    const r = computeBold({ ...base, modelBase: base.market, modelWithAbsences: { home: 0.4, draw: 0.3, away: 0.3 } });
+    const b = r.parts.find((p) => p.source === "bajas")!;
+    expect(b.delta.home).toBeLessThan(-0.05);
+    expect(r.pick?.outcome).toBe("away");
+  });
+  test("Entrenamiento: Audaz vs conservador y cuando coincides con él", () => {
+    const snap = (bold: any) => ({
+      probs: { home: 0.5, draw: 0.28, away: 0.22 }, base: null, expectedGoals: { home: 1.3, away: 1 }, attackFactor: { home: 1, away: 1 },
+      fair: { home: 0.5, draw: 0.28, away: 0.22 }, flags: [], favorite: "home" as const, players: [], late: false, bold,
+    });
+    const bold = { probs: { home: 0.4, draw: 0.37, away: 0.23 }, pick: { outcome: "draw", prob: 0.37, market: 0.28, odds: 3.4 }, level: "loco" };
+    const r = evaluate([
+      { snap: snap(bold), result: { homeGoals: 1, awayGoals: 1, playerLogs: [], userPicks: [{ market: "doubleChance", pick: "away_draw", odds: 1.9 }] } },
+      { snap: snap(bold), result: { homeGoals: 2, awayGoals: 0, playerLogs: [], userPicks: [{ market: "result", pick: "home", odds: 1.92 }] } },
+    ]);
+    expect(r.bold!.n).toBe(2);
+    expect(r.bold!.picks).toMatchObject({ n: 2, hits: 1 });
+    expect(r.bold!.picks.roi).toBeCloseTo(((3.4 - 1) - 1) / 2);
+    expect(r.bold!.agree).toMatchObject({ n: 1, hits: 1 });
+    expect(r.bold!.disagree).toMatchObject({ n: 1, hits: 1 });
+    expect(r.bold!.levels.loco.n).toBe(2);
+  });
+  test("Convex: el Radar devuelve el Audaz solo si se pide, y lo guarda en la foto previa", async () => {
+    const t = convexTest(schema, modules);
+    const a = await t.mutation(api.teams.createTeam, { name: "Sevilla", league: "laliga" });
+    const b = await t.mutation(api.teams.createTeam, { name: "Alavés", league: "laliga" });
+    await t.mutation(api.teams.addMatchResult, { homeTeamId: a, awayTeamId: b, homeGoals: 0, awayGoals: 2, date: "2026-09-01" });
+    const m = await t.mutation(api.radar.addRadarMatch, { homeTeamId: a, awayTeamId: b, date: "2026-11-20", competition: "laliga" });
+    await t.mutation(api.radar.setOdds, { matchId: m, home: 1.92, draw: 3.4, away: 4.25 });
+    expect((await t.query(api.radar.getRadar, { fromDate: "2026-11-20", toDate: "2026-11-20" }))[0]).not.toHaveProperty("bold");
+    const r = await t.query(api.radar.getRadar, { fromDate: "2026-11-20", toDate: "2026-11-20", bold: true });
+    expect((r[0] as any).bold.market.home).toBeCloseTo(0.497, 2);
+    await t.mutation(api.radar.snapshotRange, { fromDate: "2026-11-20", toDate: "2026-11-20" });
+    const s = (await t.run((c) => c.db.query("radarSnapshots").collect())).find((x) => x.matchId === m)!;
+    expect(s.bold.probs.home).toBeGreaterThan(0);
+  });
+});
