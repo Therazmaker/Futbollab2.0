@@ -718,3 +718,19 @@ describe("Mi tesis", () => {
     expect(rules.find((r) => r.name === "Bien")).toMatchObject({ origin: "learned", active: false });
   });
 });
+
+describe("registrar desde el Radar", () => {
+  test("marcador final + descanso en un paso, con su foto previa", async () => {
+    const t = convexTest(schema, modules);
+    const a = await t.mutation(api.teams.createTeam, { name: "Colonia", league: "bundesliga" });
+    const b = await t.mutation(api.teams.createTeam, { name: "Leverkusen", league: "bundesliga" });
+    const m = await t.mutation(api.radar.addRadarMatch, { homeTeamId: a, awayTeamId: b, date: "2026-11-08", competition: "bundesliga" });
+    await expect(t.mutation(api.teams.setMatchScore, { matchId: m, homeGoals: 1, awayGoals: 1, htHome: 2, htAway: 0 })).rejects.toThrow(/descanso/);
+    await t.mutation(api.teams.setMatchScore, { matchId: m, homeGoals: 1, awayGoals: 2, htHome: 1, htAway: 0 });
+    const doc = await t.run((c) => c.db.get(m));
+    expect(doc).toMatchObject({ homeGoals: 1, awayGoals: 2, halfTime: { home: 1, away: 0 } });
+    expect(await t.run((c) => c.db.query("radarSnapshots").collect())).toHaveLength(1);
+    const r = await t.query(api.radar.getRadar, { fromDate: "2026-11-08", toDate: "2026-11-08" });
+    expect(r[0].halfTime).toEqual({ home: 1, away: 0 });
+  });
+});

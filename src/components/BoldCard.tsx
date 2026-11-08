@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { ThesisSheet } from "./ThesisSheet";
+import { QuickResultSheet } from "./QuickResultSheet";
 import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
@@ -36,10 +37,11 @@ function Bar({ p, label }: { p: { home: number; draw: number; away: number }; la
 }
 
 /** Tarjeta del Radar Audaz: mercado vs audaz, por qué se aleja, su apuesta y si coincide contigo. */
-export function BoldCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"teams">) => void }) {
+export function BoldCard({ m, onOpenTeam, onRegister }: { m: any; onOpenTeam: (id: Id<"teams">) => void; onRegister?: (m: any) => void }) {
   const picks = useQuery(api.radarAi.getPicks, { matchId: m._id }) ?? [];
   const theses = useQuery(api.theses.getTheses, { matchId: m._id }) ?? [];
   const [thesisOpen, setThesisOpen] = useState(false);
+  const [resultOpen, setResultOpen] = useState(false);
   const th: any = theses[0];
   const b = m.bold;
   const name = (o: string) => (o === "home" ? m.home.name : o === "away" ? m.away.name : "Empate");
@@ -129,6 +131,12 @@ export function BoldCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"teams
         </>
       )}
       <div className="flex items-center gap-2 font-mono text-[10px]">
+        <button
+          onClick={() => (onRegister ? onRegister(m) : setResultOpen(true))}
+          className={`px-2 h-7 rounded-lg border font-bold ${m.result ? "bg-surface-container-high text-on-surface-variant border-surface-container-high" : "bg-primary text-on-primary border-primary"}`}
+        >
+          {m.result ? `✓ ${m.result.home}-${m.result.away}` : "✓ Resultado"}
+        </button>
         <button onClick={() => setThesisOpen(true)} className="px-2 h-7 rounded-lg bg-surface-container-high text-secondary border border-secondary/30">
           💬 {th ? "Mi tesis" : m.result ? "Tesis" : "Escribir mi tesis"}
         </button>
@@ -140,6 +148,7 @@ export function BoldCard({ m, onOpenTeam }: { m: any; onOpenTeam: (id: Id<"teams
           </span>
         )}
       </div>
+      {resultOpen && <QuickResultSheet match={m} onClose={() => setResultOpen(false)} />}
       {thesisOpen && <ThesisSheet matchId={m._id} homeName={m.home.name} awayName={m.away.name} played={!!m.result} onClose={() => setThesisOpen(false)} />}
     </div>
   );

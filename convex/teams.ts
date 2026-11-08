@@ -1345,13 +1345,24 @@ export const seedChampionsLeagueRound4 = mutation({
 
 /** Pone o cambia el marcador de un partido del equipo. */
 export const setMatchScore = mutation({
-  args: { matchId: v.id("matches"), homeGoals: v.number(), awayGoals: v.number() },
-  handler: async (ctx, { matchId, homeGoals, awayGoals }) => {
+  args: {
+    matchId: v.id("matches"),
+    homeGoals: v.number(),
+    awayGoals: v.number(),
+    // Marcador al descanso (opcional: para los mercados de 1ª parte)
+    htHome: v.optional(v.number()),
+    htAway: v.optional(v.number()),
+  },
+  handler: async (ctx, { matchId, homeGoals, awayGoals, htHome, htAway }) => {
     const m = await ctx.db.get(matchId);
     if (!m) throw new Error("Partido no encontrado");
     if (homeGoals < 0 || awayGoals < 0) throw new Error("Goles no válidos");
+    const ht = htHome !== undefined && htAway !== undefined ? { home: htHome, away: htAway } : undefined;
+    if (ht && (ht.home < 0 || ht.away < 0 || ht.home > homeGoals || ht.away > awayGoals)) {
+      throw new Error("El marcador al descanso no puede tener más goles que el final.");
+    }
     if (m.homeGoals === undefined) await ensureSnapshotBeforeScore(ctx.db, matchId);
-    await ctx.db.patch(matchId, { homeGoals, awayGoals });
+    await ctx.db.patch(matchId, { homeGoals, awayGoals, ...(ht ? { halfTime: ht } : {}) });
     await recomputeLeague(ctx.db, m.league);
     await refreshRatingModel(ctx.db);
     return matchId;
