@@ -734,3 +734,21 @@ describe("registrar desde el Radar", () => {
     expect(r[0].halfTime).toEqual({ home: 1, away: 0 });
   });
 });
+
+describe("descanso al editar", () => {
+  test("se pone, viaja al intercambiar local/visitante, se valida y se quita", async () => {
+    const t = convexTest(schema, modules);
+    const a = await t.mutation(api.teams.createTeam, { name: "Roma", league: "seriea" });
+    const b = await t.mutation(api.teams.createTeam, { name: "Sassuolo", league: "seriea" });
+    const m = await t.mutation(api.teams.addMatchResult, { homeTeamId: a, awayTeamId: b, homeGoals: 2, awayGoals: 1, date: "2026-11-07" });
+    await t.run((c) => c.db.insert("radarPicks", { matchId: m, matchDate: "2026-11-07", competition: "seriea", source: "ai", market: "htResult", pick: "home", createdAt: 0 }));
+    expect((await t.query(api.radarAi.getPicks, { matchId: m }))[0].verdict).toBeNull();
+    await expect(t.mutation(api.teams.updateMatch, { matchId: m, htHome: 3, htAway: 0 })).rejects.toThrow(/descanso/);
+    await t.mutation(api.teams.updateMatch, { matchId: m, htHome: 1, htAway: 0 });
+    expect((await t.query(api.radarAi.getPicks, { matchId: m }))[0].verdict).toBe("won");
+    await t.mutation(api.teams.updateMatch, { matchId: m, swapHomeAway: true, homeGoals: 1, awayGoals: 2 });
+    expect((await t.run((c) => c.db.get(m)))!.halfTime).toEqual({ home: 0, away: 1 });
+    await t.mutation(api.teams.updateMatch, { matchId: m, htHome: null, htAway: null });
+    expect((await t.run((c) => c.db.get(m)))!.halfTime).toBeUndefined();
+  });
+});

@@ -5,6 +5,7 @@ import { useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { PICK_MARKETS, pickLabel } from "../../convex/lib/picks";
 import { competitionLabel } from "@/lib/competitions";
+import { QuickResultSheet } from "./QuickResultSheet";
 
 /* Colores de serie validados (dataviz validate_palette, modo oscuro sobre #181c24):
    IA azul / tú naranja — ΔE CVD 21, ΔE normal 27, contraste ≥ 3:1. */
@@ -366,12 +367,29 @@ export function PreviewSignals({ rows, previews }: { rows: any[]; previews: numb
   );
 }
 
+/** Pendiente solo porque falta el marcador al descanso (mercado de 1ª parte en un partido ya jugado). */
+const needsHalfTime = (r: any) => r.verdict === null && r.score && !r.score.includes("(") && (r.market === "htGoalless" || r.market === "htResult");
+
 function PickList({ rows }: { rows: any[] }) {
   const [all, setAll] = useState(false);
-  const shown = useMemo(() => (all ? rows : rows.slice(0, 15)), [rows, all]);
+  const [ht, setHt] = useState<any | null>(null);
+  // Primero los que solo esperan el descanso, para resolverlos rápido
+  const ordered = useMemo(() => [...rows.filter(needsHalfTime), ...rows.filter((r) => !needsHalfTime(r))], [rows]);
+  const shown = useMemo(() => (all ? ordered : ordered.slice(0, 15)), [ordered, all]);
+  const waiting = new Set(rows.filter(needsHalfTime).map((r) => r.matchId)).size;
+  const openHt = (r: any) => {
+    const [h, a] = String(r.score).split("-").map((x: string) => Number(x));
+    setHt({ _id: r.matchId, home: { name: r.home }, away: { name: r.away }, result: { home: h, away: a }, halfTime: null });
+  };
   return (
     <div className={card}>
+      {ht && <QuickResultSheet match={ht} onClose={() => setHt(null)} />}
       <p className="text-on-surface font-bold mb-1">Predicciones</p>
+      {waiting > 0 && (
+        <p className="text-[10px] text-amber-300 mb-1">
+          {waiting} {waiting === 1 ? "partido espera" : "partidos esperan"} solo el marcador al descanso para resolver sus pronósticos de 1ª parte: pulsa «⏱ Poner descanso».
+        </p>
+      )}
       {shown.map((r) => (
         <div key={r.id} className="flex items-center gap-2 border-b border-surface-container-high/40 py-1 text-[10px]">
           <span className="w-4">{r.source === "ai" ? "🤖" : "✋"}</span>
@@ -393,9 +411,15 @@ function PickList({ rows }: { rows: any[] }) {
               {r.systemProb !== null ? ` · Radar ${pct(r.systemProb)}` : ""}
             </div>
           </div>
-          <span className={r.verdict === "won" ? "text-primary" : r.verdict === "lost" ? "text-error" : "text-on-surface-variant"}>
-            {r.verdict === "won" ? "✓" : r.verdict === "lost" ? "✗" : "…"}
-          </span>
+          {needsHalfTime(r) ? (
+            <button onClick={() => openHt(r)} className="shrink-0 px-2 h-6 rounded bg-amber-900/40 text-amber-300 border border-amber-700/40">
+              ⏱ Poner descanso
+            </button>
+          ) : (
+            <span className={r.verdict === "won" ? "text-primary" : r.verdict === "lost" ? "text-error" : "text-on-surface-variant"}>
+              {r.verdict === "won" ? "✓" : r.verdict === "lost" ? "✗" : "…"}
+            </span>
+          )}
         </div>
       ))}
       {rows.length > 15 && (
