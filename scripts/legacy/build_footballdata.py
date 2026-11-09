@@ -158,6 +158,9 @@ def main(csv_dir):
                 hth, hta = num(r, "HTHG"), num(r, "HTAG")
                 if hth is not None and hta is not None:
                     row["halfTime"] = {"home": int(hth), "away": int(hta)}
+                cd = {k: num(r, c) for k, c in (("hy", "HY"), ("ay", "AY"), ("hr", "HR"), ("ar", "AR"))}
+                if all(v is not None for v in cd.values()):
+                    row["cards"] = {k: int(v) for k, v in cd.items()}
                 co = {k: num(r, c) for k, c in (("home", "AvgCH"), ("draw", "AvgCD"), ("away", "AvgCA"), ("over25", "AvgC>2.5"), ("under25", "AvgC<2.5"))}
                 co = {k: v for k, v in co.items() if v and v > 1}
                 if {"home", "draw", "away"} <= co.keys():

@@ -110,6 +110,8 @@ export default defineSchema({
     ),
     // Marcador al descanso (football-data)
     halfTime: v.optional(v.object({ home: v.number(), away: v.number() })),
+    // Tarjetas (football-data): amarillas y rojas de cada equipo
+    cards: v.optional(v.object({ hy: v.number(), ay: v.number(), hr: v.number(), ar: v.number() })),
     // Cuotas medias de cierre del mercado (para medir CLV)
     closingOdds: v.optional(
       v.object({

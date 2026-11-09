@@ -6,6 +6,7 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { TeamMatchSheet } from "./TeamMatchSheet";
 import { TeamNarrativeTrends } from "./NarrativePanel";
+import { SeasonStory } from "./SeasonStory";
 import { RivalPicker } from "./RivalPicker";
 import { COMPETITIONS, competitionLabel } from "@/lib/competitions";
 
@@ -302,6 +303,8 @@ export function TeamProfile({ teamId, onBack, onOpenTeam, onOpenPlayer }: TeamPr
           </span>
         </div>
       </div>
+
+      <SeasonStory teamId={team._id} onOpenMatch={(id) => setOpenMatchId(id)} />
 
       <TeamNarrativeTrends teamId={team._id} />
 
