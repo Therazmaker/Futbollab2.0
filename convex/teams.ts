@@ -1383,6 +1383,9 @@ export const updateMatch = mutation({
     // null = quitar el marcador
     homeGoals: v.optional(v.union(v.number(), v.null())),
     awayGoals: v.optional(v.union(v.number(), v.null())),
+    // Marcador al descanso, en el orden que se ve (tras intercambiar). null = quitarlo
+    htHome: v.optional(v.union(v.number(), v.null())),
+    htAway: v.optional(v.union(v.number(), v.null())),
   },
   handler: async (ctx, args) => {
     const m = await ctx.db.get(args.matchId);
@@ -1398,6 +1401,17 @@ export const updateMatch = mutation({
     if (args.awayGoals !== undefined) awayGoals = args.awayGoals ?? undefined;
     if ((homeGoals === undefined) !== (awayGoals === undefined)) throw new Error("Pon los goles de los dos equipos (o ninguno).");
     if ((homeGoals ?? 0) < 0 || (awayGoals ?? 0) < 0) throw new Error("Goles no válidos");
+    // Descanso: viaja con su equipo si se intercambia; se puede poner, cambiar o quitar
+    let halfTime = m.halfTime ? (swap ? { home: m.halfTime.away, away: m.halfTime.home } : m.halfTime) : undefined;
+    if (args.htHome !== undefined || args.htAway !== undefined) {
+      if (args.htHome === null || args.htAway === null || args.htHome === undefined || args.htAway === undefined) {
+        if ((args.htHome ?? null) !== null || (args.htAway ?? null) !== null) throw new Error("El descanso: pon los dos goles o ninguno.");
+        halfTime = undefined;
+      } else halfTime = { home: args.htHome, away: args.htAway };
+    }
+    if (halfTime && (homeGoals === undefined || halfTime.home > homeGoals || halfTime.away > (awayGoals ?? 0) || halfTime.home < 0 || halfTime.away < 0)) {
+      throw new Error("El marcador al descanso no puede tener más goles que el final (ni existir sin marcador final).");
+    }
     const league = (args.competition || m.league).toLowerCase();
 
     if (date !== m.date || swap) {
@@ -1406,7 +1420,7 @@ export const updateMatch = mutation({
     }
 
     if (m.homeGoals === undefined && homeGoals !== undefined) await ensureSnapshotBeforeScore(ctx.db, args.matchId);
-    await ctx.db.patch(args.matchId, { homeTeamId, awayTeamId, date, league, homeGoals, awayGoals });
+    await ctx.db.patch(args.matchId, { homeTeamId, awayTeamId, date, league, homeGoals, awayGoals, halfTime });
 
     // Partidos de jugadores de este partido: misma competición, fecha y casa/fuera
     const logs = await ctx.db

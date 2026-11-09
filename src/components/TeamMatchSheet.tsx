@@ -53,7 +53,7 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
   const data = useQuery(api.teams.getMatchDetail, { matchId });
   const updateMatch = useMutation(api.teams.updateMatch);
   const [editing, setEditing] = useState(false);
-  const [form, setForm] = useState({ competition: "", date: "", home: "", away: "", swap: false });
+  const [form, setForm] = useState({ competition: "", date: "", home: "", away: "", swap: false, htHome: "", htAway: "" });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -70,6 +70,8 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
       home: data.match.homeGoals === undefined ? "" : String(data.match.homeGoals),
       away: data.match.awayGoals === undefined ? "" : String(data.match.awayGoals),
       swap: false,
+      htHome: data.match.halfTime ? String(data.match.halfTime.home) : "",
+      htAway: data.match.halfTime ? String(data.match.halfTime.away) : "",
     });
     setEditing(true);
   };
@@ -77,6 +79,7 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
   const save = async (e: React.FormEvent) => {
     e.preventDefault();
     if ((form.home === "") !== (form.away === "")) return setError("Pon los goles de los dos equipos, o deja los dos vacíos.");
+    if ((form.htHome === "") !== (form.htAway === "")) return setError("El descanso: pon los dos goles o deja los dos vacíos.");
     setBusy(true);
     setError(null);
     try {
@@ -88,6 +91,8 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
         swapHomeAway: form.swap,
         homeGoals: form.home === "" ? null : Number(form.home),
         awayGoals: form.away === "" ? null : Number(form.away),
+        htHome: form.htHome === "" ? null : Number(form.htHome),
+        htAway: form.htAway === "" ? null : Number(form.htAway),
       });
       setEditing(false);
     } catch (err: any) {
@@ -138,6 +143,11 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
                 {data.away.name}
               </button>
             </div>
+            {hasScore && data.match.halfTime && (
+              <p className="font-mono text-[10px] text-on-surface-variant text-center">
+                Descanso {data.match.halfTime.home}-{data.match.halfTime.away}
+              </p>
+            )}
             {!hasScore && !editing && (
               <p className="font-mono text-[10px] text-tertiary text-center">
                 Sin marcador: toca "? - ?" o "Editar" para ponerlo (cuenta para la tabla si es de liga).
@@ -178,7 +188,7 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
                   <input
                     type="checkbox"
                     checked={form.swap}
-                    onChange={(e) => setForm({ ...form, swap: e.target.checked, home: form.away, away: form.home })}
+                    onChange={(e) => setForm({ ...form, swap: e.target.checked, home: form.away, away: form.home, htHome: form.htAway, htAway: form.htHome })}
                   />
                   Intercambiar local y visitante (local: {form.swap ? data.away.name : data.home.name})
                 </label>
@@ -202,6 +212,27 @@ export function TeamMatchSheet({ matchId, teamId, onClose, onOpenPlayer, onOpenT
                     aria-label="Goles visitante"
                   />
                   <span className="truncate flex-1">{form.swap ? data.home.name : data.away.name}</span>
+                </div>
+                <div className="flex items-center justify-center gap-2 text-[10px] text-on-surface-variant">
+                  Descanso
+                  <input
+                    type="number"
+                    min="0"
+                    value={form.htHome}
+                    onChange={(e) => setForm({ ...form, htHome: e.target.value })}
+                    className="w-12 h-8 text-center rounded-lg bg-surface-container-low text-on-surface border border-surface-container-high"
+                    aria-label="Descanso local"
+                  />
+                  <span>-</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={form.htAway}
+                    onChange={(e) => setForm({ ...form, htAway: e.target.value })}
+                    className="w-12 h-8 text-center rounded-lg bg-surface-container-low text-on-surface border border-surface-container-high"
+                    aria-label="Descanso visitante"
+                  />
+                  <span>(opcional; resuelve los pronósticos de 1ª parte)</span>
                 </div>
                 <p className="text-[10px] text-on-surface-variant">
                   Deja los goles vacíos si aún no se jugó. Los partidos de los jugadores de este partido se actualizan
