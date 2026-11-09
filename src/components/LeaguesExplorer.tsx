@@ -663,7 +663,7 @@ export function LeaguesExplorer({ onSelectTeam }: LeaguesExplorerProps) {
                   (legacyStatus.missingTeams.length
                     ? `. No se pueden importar porque no encuentro estos equipos en la base: ${legacyStatus.missingTeams.join(", ")}.`
                     : `, p. ej. ${legacyStatus.missingSample.join(" · ")}. Pulsa para importarlos.`)
-                : `Hay ${legacyStatus.statsPending} partidos sin sus tiros/xG (p. ej. ${legacyStatus.statsPendingSample.join(" · ")}). Pulsa para añadirlos.`)}
+                : `Hay ${legacyStatus.statsPending} partidos sin sus tiros, xG o tarjetas (p. ej. ${legacyStatus.statsPendingSample.join(" · ")}). Pulsa para añadirlos.`)}
           </span>
           {!importState?.startsWith("Importando") && (
             <button

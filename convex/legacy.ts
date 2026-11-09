@@ -29,6 +29,7 @@ type MatchRow = {
   awayGoals: number;
   stats?: { hs: number; as: number; hst: number; ast: number; hxg?: number; axg?: number };
   halfTime?: { home: number; away: number };
+  cards?: { hy: number; ay: number; hr: number; ar: number };
   closingOdds?: { home: number; draw: number; away: number; over25?: number; under25?: number };
 };
 const ALL_TEAMS: TeamRow[] = [...legacyTeams, ...(fdTeams as TeamRow[])];
@@ -203,6 +204,7 @@ export const importMatchesChunk = internalMutation({
           v.object({ home: v.number(), draw: v.number(), away: v.number(), over25: v.optional(v.number()), under25: v.optional(v.number()) })
         ),
         halfTime: v.optional(v.object({ home: v.number(), away: v.number() })),
+        cards: v.optional(v.object({ hy: v.number(), ay: v.number(), hr: v.number(), ar: v.number() })),
       })
     ),
   },
@@ -228,10 +230,11 @@ export const importMatchesChunk = internalMutation({
         ...(m.stats ? { stats: m.stats } : {}),
         ...(m.closingOdds ? { closingOdds: m.closingOdds } : {}),
         ...(m.halfTime ? { halfTime: m.halfTime } : {}),
+        ...(m.cards ? { cards: m.cards } : {}),
       };
       if (exists) {
         // Ya importado: solo se le añaden las estadísticas si le faltan
-        if ((m.stats && !exists.stats) || (m.closingOdds && !exists.closingOdds) || (m.halfTime && !exists.halfTime)) {
+        if ((m.stats && !exists.stats) || (m.closingOdds && !exists.closingOdds) || (m.halfTime && !exists.halfTime) || (m.cards && !exists.cards)) {
           await ctx.db.patch(exists._id, extra);
           enriched++;
         } else skipped++;
@@ -433,7 +436,10 @@ export const legacyStatus = query({
     // Diagnóstico: qué partidos faltan o siguen sin estadísticas, y por qué
     const byId = new Map(imported.map((m) => [m.legacyId as string, m]));
     const missingRows = ALL_MATCHES.filter((m) => !byId.has(m.legacyId));
-    const noStatsRows = ALL_MATCHES.filter((m) => m.stats && byId.has(m.legacyId) && !byId.get(m.legacyId)!.stats);
+    // Sin estadísticas o sin tarjetas (las tarjetas llegaron después: se completan al importar de nuevo)
+    const noStatsRows = ALL_MATCHES.filter(
+      (m) => byId.has(m.legacyId) && ((m.stats && !byId.get(m.legacyId)!.stats) || (m.cards && !byId.get(m.legacyId)!.cards))
+    );
     const teamExists = new Map<string, boolean>();
     const exists = async (id: string) => {
       if (!teamExists.has(id)) {
